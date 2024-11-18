@@ -13,7 +13,34 @@ from rich import print as rprint
 
 from .config import settings
 
-MAX_SIZE_IN_BYTES = 25 * 1024 * 1024  # 25 MB
+
+def get_audio_duration(path) -> float:
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",  # Suppress unnecessary output
+        "-show_entries",
+        "format=duration",  # Show only the duration
+        "-of",
+        "json",  # Output in JSON format for easy parsing
+        path,
+    ]
+    # Execute the command
+    result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,  # Return output as string
+        check=True,  # Raise CalledProcessError on non-zero exit
+    )
+    # Parse the JSON output
+    metadata = json.loads(result.stdout)
+    duration = float(metadata["format"]["duration"])
+    return duration
+
+
+# 25MB max bytes are allowed
+MAX_SIZE_IN_BYTES = 25 * 1024 * 1024
 
 
 class AudioUrl:
@@ -45,8 +72,10 @@ class AudioUrl:
         return self.resampled_episode_path.exists()
 
     @property
-    def exceeds_file_size_limit(self) -> bool:
-        return self.resampled_episode_path.stat().st_size > MAX_SIZE_IN_BYTES
+    def exceeds_size_limit(self) -> bool:
+        too_many_bytes = self.resampled_episode_path.stat().st_size > MAX_SIZE_IN_BYTES
+        too_long_duration = get_audio_duration(self.resampled_episode_path) > 7200
+        return too_many_bytes or too_long_duration
 
     @staticmethod
     def get_title_from_url(url: str) -> str:
@@ -92,8 +121,7 @@ def split_into_chunks(audio: AudioUrl) -> list[Path]:
     If the audio file exceeds the size limit, split it into smaller chunks.
     If not, just create a link to the resampled audio file.
     """
-    chunk_paths = list(audio.episode_chunks_dir.glob("*.mp3"))
-    if audio.exceeds_file_size_limit:
+    if audio.exceeds_size_limit:
         rprint(f"Splitting {audio.resampled_episode_path} into chunks")
         subprocess.run(
             [
@@ -103,7 +131,7 @@ def split_into_chunks(audio: AudioUrl) -> list[Path]:
                 "-f",
                 "segment",
                 "-segment_time",
-                "7200",
+                "7200",  # 7200 seconds is the maximum duration allowed by Groq
                 "-c",
                 "copy",
                 audio.episode_chunks_dir / "chunk_%03d.mp3",
