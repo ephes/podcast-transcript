@@ -79,7 +79,6 @@ class Settings:
             "TRANSCRIPT_LANGUAGE",
         }
         for key, value in os.environ.items():
-            print("k, v: ", key, value)
             if key in transcript_keys:
                 setattr(self, key.lower(), value)
 
