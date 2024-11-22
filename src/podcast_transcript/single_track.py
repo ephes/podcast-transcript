@@ -121,6 +121,9 @@ def split_into_chunks(audio: AudioUrl) -> list[Path]:
     If the audio file exceeds the size limit, split it into smaller chunks.
     If not, just create a link to the resampled audio file.
     """
+    chunk_paths = sorted(list(audio.episode_chunks_dir.glob("chunk_*.mp3")))
+    if len(chunk_paths) > 0:
+        return chunk_paths
     if audio.exceeds_size_limit:
         rprint(f"Splitting {audio.resampled_episode_path} into chunks")
         subprocess.run(
@@ -135,8 +138,10 @@ def split_into_chunks(audio: AudioUrl) -> list[Path]:
                 "-c",
                 "copy",
                 audio.episode_chunks_dir / "chunk_%03d.mp3",
-            ]
-        )  # , stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     else:
         rprint(f"Creating symlink to {audio.resampled_episode_path}")
         try:
@@ -145,7 +150,7 @@ def split_into_chunks(audio: AudioUrl) -> list[Path]:
             )
         except FileExistsError:
             pass
-    chunk_paths = list(audio.episode_chunks_dir.glob("chunk_*.mp3"))
+    chunk_paths = sorted(list(audio.episode_chunks_dir.glob("chunk_*.mp3")))
     return chunk_paths
 
 
@@ -310,12 +315,12 @@ def combine_dote_chunks(dote_chunks: list[Path], output_path: Path) -> None:
             new_line["endTime"] = format_timecode(end_time + offset)
             combined_lines.append(new_line)
 
-            # Update offset with the last endTime of this file
-            if len(data["lines"]) > 0:
-                last_end_time = parse_timecode(data["lines"][-1]["endTime"])
-                # print("last_end_time: ", last_end_time)
-                offset += last_end_time
-                # print("offset: ", offset)
+        # Update offset with the last endTime of this file
+        if len(data["lines"]) > 0:
+            last_end_time = parse_timecode(data["lines"][-1]["endTime"])
+            # print("last_end_time: ", last_end_time)
+            offset += last_end_time
+            # print("offset: ", offset)
 
     with open(output_path, "w") as f:
         json.dump({"lines": combined_lines}, f)
