@@ -65,6 +65,7 @@ class Settings:
             for line in f:
                 try:
                     key, value = line.strip().split("=")
+                    value = value.strip('"')
                     setattr(self, key.lower(), value)
                 except ValueError:
                     pass
