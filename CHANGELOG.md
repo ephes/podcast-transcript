@@ -10,6 +10,7 @@
 ### Features
 
 - Show generated transcript files in the output.
+- Make the model, prompt, and language configurable via environment variables / .env file.
 
 0.1.0 - 2024-11-17
 ==================

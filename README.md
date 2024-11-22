@@ -72,6 +72,14 @@ You can change this by setting the TRANSCRIPT_DIR environment variable:
 export TRANSCRIPT_DIR=/path/to/your/transcripts
 ```
 
+### Other Configuration Options
+
+You can also set the following environment variables or specify them in the .env file:
+
+- **TRANSCRIPT_MODEL_NAME**: The name of the model to use for the transcript (default is "whisper-large-v3").
+- **TRANSCRIPT_PROMPT**: The prompt to use for the transcription (default is "podcast-transcript").
+- **TRANSCRIPT_LANGUAGE**: The language code for the transcription (default is en, you could set it to de for example).
+
 ## Usage
 
 To transcribe a podcast episode, run the transcribe command followed by the URL of the MP3 file:

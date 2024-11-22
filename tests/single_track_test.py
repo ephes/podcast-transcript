@@ -78,6 +78,9 @@ def test_split_into_chunks_exceeds_limit(mocker, audio_url):
     # Mock 'subprocess.run' to prevent actual subprocess calls
     mock_subprocess_run = mocker.patch("subprocess.run")
 
+    # Mock get_audio_duration to return 1 second
+    mocker.patch("podcast_transcript.single_track.get_audio_duration", return_value=1)
+
     # Create the resampled audio file directory
     audio_url.resampled_episode_path.parent.mkdir(parents=True, exist_ok=True)
     # Write dummy data to the resampled audio path
@@ -94,6 +97,9 @@ def test_split_into_chunks_exceeds_limit(mocker, audio_url):
 def test_split_into_chunks_within_limit(mocker, audio_url):
     # Mock 'subprocess.run' to prevent actual subprocess calls
     mock_subprocess_run = mocker.patch("subprocess.run")
+
+    # Mock get_audio_duration to return 1 second
+    mocker.patch("podcast_transcript.single_track.get_audio_duration", return_value=1)
 
     # Create the resampled audio file directory
     audio_url.resampled_episode_path.parent.mkdir(parents=True, exist_ok=True)

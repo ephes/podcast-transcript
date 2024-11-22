@@ -14,9 +14,15 @@ class Settings:
 
     transcript_dir: Path
     groq_api_key: str
+    transcript_prompt: str = "podcast-transcript"
+    transcript_model_name: str = "whisper-large-v3"
+    transcript_language: str = "en"
 
     def __init__(self):
         self.console = Console()
+
+        # Set the transcript directory - this is special because we want to create
+        # the directory if it does not exist which is why we cannot wait until read_env_vars()
         if (transcript_dir := os.getenv("TRANSCRIPT_DIR")) is not None:
             self.transcript_dir = Path(transcript_dir)
         else:
@@ -30,7 +36,10 @@ class Settings:
         if env_file.exists():
             self.read_env_file(env_file)
 
-        # Make sure the groq api key is set
+        # Read environment variables
+        self.read_env_vars()
+
+        # Make sure the groq api key is set - this is special because the api key is required
         if not hasattr(self, "groq_api_key"):
             self.groq_api_key = os.getenv("GROQ_API_KEY")
             if self.groq_api_key is None:
@@ -54,7 +63,24 @@ class Settings:
         """
         with env_file.open("r") as f:
             for line in f:
-                key, value = line.strip().split("=")
+                try:
+                    key, value = line.strip().split("=")
+                    setattr(self, key.lower(), value)
+                except ValueError:
+                    pass
+
+    def read_env_vars(self):
+        """
+        Read the environment variables and set the attributes accordingly.
+        """
+        transcript_keys = {
+            "TRANSCRIPT_PROMPT",
+            "TRANSCRIPT_MODEL_NAME",
+            "TRANSCRIPT_LANGUAGE",
+        }
+        for key, value in os.environ.items():
+            print("k, v: ", key, value)
+            if key in transcript_keys:
                 setattr(self, key.lower(), value)
 
 

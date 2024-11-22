@@ -186,10 +186,10 @@ def audio_chunk_to_text(audio_chunk: Path, transcript_path: Path) -> None:
     files = {"file": audio_file}
     data = {
         # FIXME make this configurable
-        "model": "whisper-large-v3",
+        "model": settings.transcript_model_name,
         "response_format": "verbose_json",
-        "language": "de",
-        "prompt": "Florian, Dominik und Jochen sprechen über PyTest ein Testframework für Python",
+        "language": settings.transcript_language,
+        "prompt": settings.transcript_prompt,
     }
     with httpx.Client() as client:
         response = client.post(
