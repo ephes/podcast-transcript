@@ -156,7 +156,7 @@ wheels = [
 
 [[package]]
 name = "podcast-transcript"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
@@ -179,8 +179,8 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=1" },
-    { name = "pytest", specifier = ">=8.3.3" },
-    { name = "pytest-mock", specifier = ">=3.14.0" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-mock", specifier = ">=3" },
 ]
 
 [[package]]
