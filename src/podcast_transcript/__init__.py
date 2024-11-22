@@ -1,10 +1,9 @@
-import sys
 import argparse
 from rich.console import Console
 from .single_track import transcribe
 
 
-def transcribe_cli() -> str:
+def transcribe_cli():
     console = Console()
 
     # Initialize the argument parser
@@ -21,20 +20,24 @@ def transcribe_cli() -> str:
         mp3_url = args.mp3_url
     except argparse.ArgumentError as e:
         console.print(f"[red]Argument parsing error: {e}[/red]")
-        sys.exit(1)
+        exit(1)
     except Exception as e:
         console.print(f"[red]Unexpected error during argument parsing: {e}[/red]")
-        sys.exit(1)
+        exit(1)
 
     # Start transcription process
     try:
         console.print(f"[blue]Starting transcription for:[/blue] {mp3_url}")
-        transcribe(mp3_url)
+        transcript_paths = transcribe(mp3_url)
+        for name, path in transcript_paths.items():
+            console.print(
+                f"[green]Transcript in {name} format saved to:[/green] {path}"
+            )
         console.print("[green]Transcription complete![/green]")
-        return "Transcription complete!"
+        exit(0)
     except Exception as e:
         console.print(f"[red]Error during transcription: {e}[/red]")
-        sys.exit(1)
+        exit(1)
 
 
 if __name__ == "__main__":

@@ -373,7 +373,8 @@ def convert_to_webvtt(dote_path: Path, vtt_path: Path) -> None:
         f.write("\n".join(output))
 
 
-def transcribe(url: str) -> None:
+def transcribe(url: str) -> dict[str, Path]:
+    transcript_paths = {}
     audio = AudioUrl(base_dir=settings.transcript_dir, url=url)
     audio_chunks = prepare_audio_for_transcription(audio)
     text_chunks = audio_chunks_to_text(audio_chunks)
@@ -381,11 +382,13 @@ def transcribe(url: str) -> None:
     dote_path = audio.podcast_dir / f"{audio.prefix}.dote.json"
     if not dote_path.exists():
         combine_dote_chunks(dote_chunks, dote_path)
+    transcript_paths["DOTe"] = dote_path
     podlove_path = audio.podcast_dir / f"{audio.prefix}.podlove.json"
     if not podlove_path.exists():
         convert_dote_to_podlove(dote_path, podlove_path)
+    transcript_paths["podlove"] = podlove_path
     webvtt_path = audio.podcast_dir / f"{audio.prefix}.webvtt"
     if not webvtt_path.exists():
         convert_to_webvtt(dote_path, webvtt_path)
-    rprint(audio.url)
-    rprint("single track transcription!")
+    transcript_paths["WebVTT"] = webvtt_path
+    return transcript_paths
