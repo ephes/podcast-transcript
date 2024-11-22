@@ -1,4 +1,4 @@
-0.1.1 - 2024-11-19
+0.1.1 - 2024-11-23
 ==================
 
 ### Fixes
@@ -11,6 +11,10 @@
 
 - Show generated transcript files in the output.
 - Make the model, prompt, and language configurable via environment variables / .env file.
+
+### Documentation
+
+- Added a roadmap section to the README.
 
 0.1.0 - 2024-11-17
 ==================

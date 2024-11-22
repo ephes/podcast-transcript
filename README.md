@@ -113,6 +113,13 @@ The output files are saved in a directory named after the episode, within the tr
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.
 - **WebVTT (*.vtt)**: A subtitle format that can be used for captioning in media players.
 
+## Roadmap
+
+- [ ] Support for multitrack transcripts with speaker identification.
+- [ ] Add support for other transcription backends (e.g., openAI, speechmatics, local whisper).
+- [ ] Add support for other audio formats (e.g., AAC, WAV, FLAC).
+- [ ] Add more output formats (e.g., SRT, TTML).
+
 ## Development
 
 ### Install Development Version
