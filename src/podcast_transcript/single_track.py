@@ -1,6 +1,7 @@
 import io
 import json
 import re
+import time
 from datetime import timedelta
 
 import httpx
@@ -169,6 +170,35 @@ def prepare_audio_for_transcription(audio: AudioUrl) -> list[Path]:
     return split_into_chunks(audio)
 
 
+def parse_duration(duration_str):
+    """
+    Parses a duration string like "1h2m3.456s" and returns the total number of seconds as a float.
+    """
+    total_seconds = 0
+    # Match hours
+    match = re.search(r"(?P<hours>\d+)h", duration_str)
+    if match:
+        total_seconds += int(match.group("hours")) * 3600
+    # Match minutes
+    match = re.search(r"(?P<minutes>\d+)m", duration_str)
+    if match:
+        total_seconds += int(match.group("minutes")) * 60
+    # Match seconds
+    match = re.search(r"(?P<seconds>\d+(\.\d+)?)s", duration_str)
+    if match:
+        total_seconds += float(match.group("seconds"))
+    return total_seconds
+
+
+def sleep_until(end_time):
+    """Don't just sleep but also check whether sufficient time has passed."""
+    while True:
+        now = time.time()
+        if now >= end_time:
+            break
+        time.sleep(min(10, end_time - now))  # Sleep in small increments
+
+
 def audio_chunk_to_text(audio_chunk: Path, transcript_path: Path) -> None:
     """
     Convert an audio chunk to text using the Groq API. Use httpx instead of
@@ -185,28 +215,54 @@ def audio_chunk_to_text(audio_chunk: Path, transcript_path: Path) -> None:
     audio_file.name = "audio.mp3"
     files = {"file": audio_file}
     data = {
-        # FIXME make this configurable
         "model": settings.transcript_model_name,
         "response_format": "verbose_json",
         "language": settings.transcript_language,
         "prompt": settings.transcript_prompt,
     }
-    with httpx.Client() as client:
-        response = client.post(
-            url, headers=headers, files=files, data=data, timeout=None
-        )
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            if response.status_code == 429:
-                # rate limit exceeded
-                error = response.json()
-                rprint("rate limit exceeded: ", error["error"]["message"])
+    while True:
+        with httpx.Client() as client:
+            response = client.post(
+                url, headers=headers, files=files, data=data, timeout=None
+            )
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                if response.status_code == 429:
+                    # Rate limit exceeded
+                    error = response.json()
+                    error_message = error["error"]["message"]
+                    rprint("rate limit exceeded: ", error_message)
+                    # Extract wait time from error message
+                    match = re.search(r"Please try again in ([^.]+)\.", error_message)
+                    if match:
+                        wait_time_str = match.group(1)
+                        # Parse wait_time_str
+                        wait_seconds = parse_duration(wait_time_str)
+                        if wait_seconds is not None:
+                            rprint(
+                                f"Waiting for {wait_seconds} seconds before retrying..."
+                            )
+                            end_time = (
+                                time.time() + wait_seconds + 2
+                            )  # Add 2 seconds buffer
+                            sleep_until(end_time)
+                            continue  # Retry after waiting
+                        else:
+                            rprint("Could not parse wait time, exiting.")
+                            return None
+                    else:
+                        rprint("Could not find wait time in error message, exiting.")
+                        return None
+                else:
+                    rprint("HTTP error: ", e)
+                    rprint("response: ", response.text)
+                    return None
             else:
-                rprint("HTTP error: ", e)
-                rprint("response: ", response.text)
-            return None
-        json_transcript = response.json()
+                # Success
+                json_transcript = response.json()
+                break  # Exit the loop
+
     with transcript_path.open("w") as out_file:
         json.dump(json_transcript, out_file)
 
@@ -373,6 +429,21 @@ def convert_to_webvtt(dote_path: Path, vtt_path: Path) -> None:
         f.write("\n".join(output))
 
 
+def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
+    """Converts DOTe format to plain text."""
+    with open(dote_path, "r") as f:
+        dote_data = json.load(f)
+
+    lines = dote_data.get("lines", [])
+    output = []
+    for line in lines:
+        text = line["text"]
+        output.append(text)
+
+    with plaintext_path.open("w") as f:
+        f.write("\n".join(output))
+
+
 def transcribe(url: str) -> dict[str, Path]:
     transcript_paths = {}
     audio = AudioUrl(base_dir=settings.transcript_dir, url=url)
@@ -391,4 +462,8 @@ def transcribe(url: str) -> dict[str, Path]:
     if not webvtt_path.exists():
         convert_to_webvtt(dote_path, webvtt_path)
     transcript_paths["WebVTT"] = webvtt_path
+    plaintext_path = audio.podcast_dir / f"{audio.prefix}.txt"
+    if not plaintext_path.exists():
+        convert_to_plaintext(dote_path, plaintext_path)
+    transcript_paths["plain text"] = plaintext_path
     return transcript_paths

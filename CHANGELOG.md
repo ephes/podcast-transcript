@@ -1,9 +1,10 @@
-0.1.2 - 2024-11-24
+0.1.2 - 2024-11-30
 ==================
 
 ### Features
 
 - Support for plain text format output.
+- Retry logic for failed transcription requests when rate limited.
 
 0.1.1 - 2024-11-23
 ==================
