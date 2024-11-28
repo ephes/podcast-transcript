@@ -1,6 +1,7 @@
 import io
 import json
 import re
+import shutil
 import time
 from datetime import timedelta
 
@@ -328,11 +329,11 @@ def groq_text_chunks_to_dote(raw_text_chunks: list[Path]) -> list[Path]:
 def combine_dote_chunks(dote_chunks: list[Path], output_path: Path) -> None:
     """Combine the DOTe chunks into a single DOTe file."""
     if len(dote_chunks) == 1:
-        # Symlink and return early
+        # Copy and return early
         [source_dote_file] = dote_chunks
-        rprint(f"Symlink {source_dote_file} to {output_path}")
+        rprint(f"Copying {source_dote_file} to {output_path}")
         try:
-            output_path.symlink_to(source_dote_file)
+            shutil.copy(source_dote_file, output_path)
         except FileExistsError:
             pass
         return None
