@@ -172,22 +172,17 @@ def prepare_audio_for_transcription(audio: AudioUrl) -> list[Path]:
 
 
 def parse_duration(duration_str):
-    """
-    Parses a duration string like "1h2m3.456s" and returns the total number of seconds as a float.
-    """
     total_seconds = 0
-    # Match hours
-    match = re.search(r"(?P<hours>\d+)h", duration_str)
-    if match:
-        total_seconds += int(match.group("hours")) * 3600
-    # Match minutes
-    match = re.search(r"(?P<minutes>\d+)m", duration_str)
-    if match:
-        total_seconds += int(match.group("minutes")) * 60
-    # Match seconds
-    match = re.search(r"(?P<seconds>\d+(\.\d+)?)s", duration_str)
-    if match:
-        total_seconds += float(match.group("seconds"))
+    # Find all matches of number and unit
+    matches = re.findall(r"(\d+(?:\.\d+)?)([hms])", duration_str)
+    for value, unit in matches:
+        value = float(value)
+        if unit == "h":
+            total_seconds += value * 3600
+        elif unit == "m":
+            total_seconds += value * 60
+        elif unit == "s":
+            total_seconds += value
     return total_seconds
 
 
