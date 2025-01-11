@@ -28,8 +28,22 @@ dev-dependencies = [
     "mypy>=1",
     "pytest-mock>=3",
     "pytest>=8",
+    "coverage>7",
 ]
 
 [project.scripts]
 transcribe = "podcast_transcript:transcribe_cli"
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+
 

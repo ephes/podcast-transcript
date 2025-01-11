@@ -8,6 +8,7 @@
 - #7 Copy DOTe transcript JSON instead of creating a symlink.
 - #9 Local transcriptions using the MLX-Api
 - #10 Transcribe also from files not just from URLs and do not require MP3 format but convert automatically.
+- #11 Added coverage reporting.
 
 0.1.1 - 2024-11-23
 ==================

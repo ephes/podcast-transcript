@@ -158,6 +158,11 @@ The project uses pytest for testing. To run tests:
 pytest
 ```
 
+Show coverage:
+```shell
+coverage run -m pytest && coverage html && open htmlcov/index.html
+```
+
 ### Code Style and Linting
 
 Install pre-commit hooks to ensure code consistency:
