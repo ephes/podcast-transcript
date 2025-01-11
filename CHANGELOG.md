@@ -1,3 +1,10 @@
+0.1.3 - 2025-01-12
+==================
+
+### Features
+
+- #13 Add support for whisper-cpp as a local transcription option (new default).
+
 0.1.2 - 2025-01-11
 ==================
 
