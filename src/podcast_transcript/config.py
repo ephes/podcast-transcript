@@ -12,6 +12,7 @@ class Settings:
     in the users home directory.
     """
 
+    transcript_home: Path
     transcript_dir: Path
     groq_api_key: str
     transcript_prompt: str = "podcast-transcript"
@@ -20,19 +21,28 @@ class Settings:
 
     def __init__(self):
         self.console = Console()
+        # Set the transcript home directory - this is special because we want to create
+        # the directory if it does not exist which is why we cannot wait until read_env_vars()
+        if (transcript_home := os.getenv("TRANSCRIPT_HOME")) is not None:
+            self.transcript_home = Path(transcript_home)
+        else:
+            self.transcript_home = Path.home() / ".podcast-transcripts"
+
+        # Create the transcript_home directory if it does not exist
+        self.transcript_home.mkdir(parents=True, exist_ok=True)
 
         # Set the transcript directory - this is special because we want to create
         # the directory if it does not exist which is why we cannot wait until read_env_vars()
         if (transcript_dir := os.getenv("TRANSCRIPT_DIR")) is not None:
             self.transcript_dir = Path(transcript_dir)
         else:
-            self.transcript_dir = Path.home() / ".podcast-transcripts"
+            self.transcript_dir = self.transcript_home / "transcripts"
 
         # Create the transcript directory if it does not exist
         self.transcript_dir.mkdir(parents=True, exist_ok=True)
 
         # Read the .env file
-        env_file = self.transcript_dir / ".env"
+        env_file = self.transcript_home / ".env"
         if env_file.exists():
             self.read_env_file(env_file)
 

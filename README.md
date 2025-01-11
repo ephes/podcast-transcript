@@ -66,9 +66,23 @@ Create a .env file in the transcript directory (default is ~/.podcast-transcript
 GROQ_API_KEY=your_api_key_here
 ```
 
-### Transcript Directory
+### Transcript Home
 
-By default, transcripts are stored in ~/.podcast-transcripts/.
+By default, the transcripts home directory is ~/.podcast-transcripts/. You can change this by setting
+the TRANSCRIPT_HOME environment variable:
+
+```shell
+export TRANSCRIPT_HOME=/path/to/your/transcripts_home
+```
+
+The transcript home directory is the place where you could store your .env file. The model files
+for the whisper-cpp backend are also stored in the transcript home directory in a directory
+called `whisper-cpp-models`. The transcripts themselves are stored in a directory called `transcripts`
+unless you specify a different directory.
+
+### Transcripts Directory
+
+By default, transcripts are stored in `~/.podcast-transcripts/transcripts/`.
 You can change this by setting the TRANSCRIPT_DIR environment variable:
 
 ```shell

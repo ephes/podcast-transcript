@@ -3,6 +3,7 @@ from podcast_transcript.config import Settings
 
 def test_settings_initialization(tmp_path, monkeypatch):
     # Mock environment variables
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(tmp_path))
     monkeypatch.setenv("TRANSCRIPT_DIR", str(tmp_path))
     monkeypatch.setenv("GROQ_API_KEY", "test_api_key")
     monkeypatch.setenv("TRANSCRIPT_PROMPT", "a different prompt")
