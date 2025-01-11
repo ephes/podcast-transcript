@@ -21,15 +21,17 @@ A simple command-line tool to generate transcripts for podcast episodes.
 - Download and process podcast episodes from a given MP3 URL.
 - Automatically resamples audio to 16kHz mono because Groq will do this anyway.
 - Splits large audio files into manageable chunks.
-- Transcribes audio using the Groq API.
+- Transcribes audio locally using the [MLX API](https://github.com/ml-explore/mlx-examples/tree/main/whisper).
+- Optionally transcribes audio using the Groq API.
 - Outputs transcripts in multiple formats:
   - DOTe JSON
   - Podlove JSON
   - WebVTT (subtitle format)
+  - Plaintext
 
 ## Prerequisites
 
-- Python 3.10 or higher
+- Python 3.10 up to 3.12 (mlx does not run with 3.13, yet)
 - [ffmpeg](https://ffmpeg.org/) installed and available in your system’s PATH.
 - A [Groq API key](https://groq.com/) for transcription services.
 
@@ -45,7 +47,7 @@ pip install podcast-transcript  # or pipx/uvx install podcast-transcript
 
 ### Setting the Groq API Key
 
-The application requires a Groq API key to function. You can set the API key in one of the following ways:
+Using the Groq service requires a Groq API key to function. You can set the API key in one of the following ways:
 
 - **Environment Variable**:
 
@@ -76,7 +78,7 @@ export TRANSCRIPT_DIR=/path/to/your/transcripts
 
 You can also set the following environment variables or specify them in the .env file:
 
-- **TRANSCRIPT_MODEL_NAME**: The name of the model to use for the transcript (default is "whisper-large-v3").
+- **TRANSCRIPT_MODEL_NAME**: The name of the model to use for the transcript (default is "whisper-large-v3" for Groq and "mlx-community/whisper-large-v3-mlx" for MLX).
 - **TRANSCRIPT_PROMPT**: The prompt to use for the transcription (default is "podcast-transcript").
 - **TRANSCRIPT_LANGUAGE**: The language code for the transcription (default is en, you could set it to de for example).
 
@@ -94,6 +96,11 @@ Example:
 transcribe https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp_53.mp3
 ```
 
+Or if you want to use the Groq API:
+```shell
+transcribe --service=groq https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp_53.mp3
+```
+
 ## Detailed Steps
 
 The transcription process involves the following steps:
@@ -101,7 +108,7 @@ The transcription process involves the following steps:
 1. Download the MP3 file from the provided URL.
 2. Reample the audio to 16kHz mono for optimal transcription.
 3. Split the audio into chunks if it exceeds the size limit (25 MB).
-4. Transcribe each audio chunk using the Groq API.
+4. Transcribe each audio chunk using either MLX or the Groq API.
 5. Combine the transcribed chunks into a single transcript.
 6. Generate output files in DOTe JSON, Podlove JSON, and WebVTT formats.
 
@@ -112,11 +119,12 @@ The output files are saved in a directory named after the episode, within the tr
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.
 - **WebVTT (*.vtt)**: A subtitle format that can be used for captioning in media players.
+- **Plaintext**: Just the plain text of the transcription.
 
 ## Roadmap
 
 - [ ] Support for multitrack transcripts with speaker identification.
-- [ ] Add support for other transcription backends (e.g., openAI, speechmatics, local whisper).
+- [x] Add support for other transcription backends (e.g., openAI, speechmatics, local whisper).
 - [ ] Add support for other audio formats (e.g., AAC, WAV, FLAC).
 - [ ] Add more output formats (e.g., SRT, TTML).
 

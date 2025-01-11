@@ -6,6 +6,7 @@
 - #5 Support for plain text format output.
 - #8 Retry logic for failed transcription requests when rate limited.
 - #7 Copy DOTe transcript JSON instead of creating a symlink.
+- #9 Local transcriptions using the MLX-Api
 
 0.1.1 - 2024-11-23
 ==================

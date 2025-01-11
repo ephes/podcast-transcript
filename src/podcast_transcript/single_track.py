@@ -1,8 +1,6 @@
-import io
 import json
 import re
 import shutil
-import time
 from datetime import timedelta
 
 import httpx
@@ -13,6 +11,7 @@ from urllib.parse import urlparse
 
 from rich import print as rprint
 
+from .services import TranscriptionService
 from .config import settings
 
 
@@ -171,99 +170,9 @@ def prepare_audio_for_transcription(audio: AudioUrl) -> list[Path]:
     return split_into_chunks(audio)
 
 
-def parse_duration(duration_str):
-    total_seconds = 0
-    # Find all matches of number and unit
-    matches = re.findall(r"(\d+(?:\.\d+)?)([hms])", duration_str)
-    for value, unit in matches:
-        value = float(value)
-        if unit == "h":
-            total_seconds += value * 3600
-        elif unit == "m":
-            total_seconds += value * 60
-        elif unit == "s":
-            total_seconds += value
-    return total_seconds
-
-
-def sleep_until(end_time):
-    """Don't just sleep but also check whether sufficient time has passed."""
-    while True:
-        now = time.time()
-        if now >= end_time:
-            break
-        time.sleep(min(10, end_time - now))  # Sleep in small increments
-
-
-def audio_chunk_to_text(audio_chunk: Path, transcript_path: Path) -> None:
-    """
-    Convert an audio chunk to text using the Groq API. Use httpx instead of
-    groq client to get the response in verbose JSON format. The groq client
-    only provides the transcript text.
-    """
-    rprint("audio chunk to text: ", audio_chunk)
-    with audio_chunk.open("rb") as f:
-        audio_content = f.read()
-    rprint("audio content size: ", len(audio_content))
-    url = "https://api.groq.com/openai/v1/audio/transcriptions"
-    headers = {"Authorization": f"Bearer {settings.groq_api_key}"}
-    audio_file = io.BytesIO(audio_content)
-    audio_file.name = "audio.mp3"
-    files = {"file": audio_file}
-    data = {
-        "model": settings.transcript_model_name,
-        "response_format": "verbose_json",
-        "language": settings.transcript_language,
-        "prompt": settings.transcript_prompt,
-    }
-    while True:
-        with httpx.Client() as client:
-            response = client.post(
-                url, headers=headers, files=files, data=data, timeout=None
-            )
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                if response.status_code == 429:
-                    # Rate limit exceeded
-                    error = response.json()
-                    error_message = error["error"]["message"]
-                    rprint("rate limit exceeded: ", error_message)
-                    # Extract wait time from error message
-                    match = re.search(r"Please try again in ([^.]+)\.", error_message)
-                    if match:
-                        wait_time_str = match.group(1)
-                        # Parse wait_time_str
-                        wait_seconds = parse_duration(wait_time_str)
-                        if wait_seconds is not None:
-                            rprint(
-                                f"Waiting for {wait_seconds} seconds before retrying..."
-                            )
-                            end_time = (
-                                time.time() + wait_seconds + 2
-                            )  # Add 2 seconds buffer
-                            sleep_until(end_time)
-                            continue  # Retry after waiting
-                        else:
-                            rprint("Could not parse wait time, exiting.")
-                            return None
-                    else:
-                        rprint("Could not find wait time in error message, exiting.")
-                        return None
-                else:
-                    rprint("HTTP error: ", e)
-                    rprint("response: ", response.text)
-                    return None
-            else:
-                # Success
-                json_transcript = response.json()
-                break  # Exit the loop
-
-    with transcript_path.open("w") as out_file:
-        json.dump(json_transcript, out_file)
-
-
-def audio_chunks_to_text(audio_chunks: list[Path]) -> list[Path]:
+def audio_chunks_to_text(
+    service: TranscriptionService, audio_chunks: list[Path]
+) -> list[Path]:
     """Convert the audio chunks to text. Only convert if the transcript does not exist yet."""
     file_names = " ".join([chunk.name for chunk in audio_chunks])
     rprint(f"Converting {file_names} to text")
@@ -274,13 +183,13 @@ def audio_chunks_to_text(audio_chunks: list[Path]) -> list[Path]:
         transcript_name = f"{chunk_name}.json"
         transcript_path = chunk.parent / transcript_name
         if not transcript_path.exists():
-            audio_chunk_to_text(chunk, transcript_path)
+            service.transcribe(chunk, transcript_path)
         raw_transcripts.append(transcript_path)
     return raw_transcripts
 
 
-def groq_to_dote(input_data):
-    """Convert the Groq JSON to DOTe format."""
+def whisper_to_dote(input_data):
+    """Convert the Whisper JSON to DOTe format."""
 
     def format_time(seconds):
         total_milliseconds = int(round(seconds * 1000))
@@ -302,8 +211,8 @@ def groq_to_dote(input_data):
     return output_data
 
 
-def groq_text_chunks_to_dote(raw_text_chunks: list[Path]) -> list[Path]:
-    """Transform the raw groq text chunks to DOTe format."""
+def whisper_text_chunks_to_dote(raw_text_chunks: list[Path]) -> list[Path]:
+    """Transform the raw Whisper text chunks to DOTe format."""
     dote_paths = []
     for chunk in raw_text_chunks:
         dote_path = chunk.with_suffix(".dote.json")
@@ -311,9 +220,9 @@ def groq_text_chunks_to_dote(raw_text_chunks: list[Path]) -> list[Path]:
             dote_paths.append(dote_path)
             continue
         with chunk.open("r") as file:
-            groq_transcript = json.load(file)
+            whisper_transcript = json.load(file)
         rprint(f"Converting {chunk.name} to DOTe format")
-        dote_transcript = groq_to_dote(groq_transcript["segments"])
+        dote_transcript = whisper_to_dote(whisper_transcript["segments"])
         dote_path = chunk.with_suffix(".dote.json")
         with dote_path.open("w") as out_file:
             json.dump(dote_transcript, out_file)
@@ -370,9 +279,7 @@ def combine_dote_chunks(dote_chunks: list[Path], output_path: Path) -> None:
         # Update offset with the last endTime of this file
         if len(data["lines"]) > 0:
             last_end_time = parse_timecode(data["lines"][-1]["endTime"])
-            # print("last_end_time: ", last_end_time)
             offset += last_end_time
-            # print("offset: ", offset)
 
     with open(output_path, "w") as f:
         json.dump({"lines": combined_lines}, f)
@@ -440,12 +347,12 @@ def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
         f.write("\n".join(output))
 
 
-def transcribe(url: str) -> dict[str, Path]:
+def transcribe(url: str, service: TranscriptionService) -> dict[str, Path]:
     transcript_paths = {}
     audio = AudioUrl(base_dir=settings.transcript_dir, url=url)
     audio_chunks = prepare_audio_for_transcription(audio)
-    text_chunks = audio_chunks_to_text(audio_chunks)
-    dote_chunks = groq_text_chunks_to_dote(text_chunks)
+    text_chunks = audio_chunks_to_text(service, audio_chunks)
+    dote_chunks = whisper_text_chunks_to_dote(text_chunks)
     dote_path = audio.podcast_dir / f"{audio.prefix}.dote.json"
     if not dote_path.exists():
         combine_dote_chunks(dote_chunks, dote_path)

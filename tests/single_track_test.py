@@ -1,19 +1,10 @@
-import pytest
 import subprocess
 from podcast_transcript.single_track import (
-    AudioUrl,
     download,
     resample_audio,
     split_into_chunks,
-    audio_chunk_to_text,
-    groq_to_dote,
+    whisper_to_dote,
 )
-
-
-@pytest.fixture
-def audio_url(tmp_path):
-    url = "https://example.com/test.mp3"
-    return AudioUrl(base_dir=tmp_path, url=url)
 
 
 def test_audio_url_initialization(audio_url):
@@ -71,6 +62,7 @@ def test_split_into_chunks_exceeds_limit(mocker, audio_url):
     # Create a mock stat result with st_size exceeding MAX_SIZE_IN_BYTES
     mock_stat = mocker.MagicMock()
     mock_stat.st_size = 26 * 1024 * 1024  # 26 MB
+    mock_stat.st_mode = 0o040755  # Directory mode (drwxr-xr-x)
 
     # Patch 'Path.stat' in the 'single_track' module to return 'mock_stat'
     mocker.patch("podcast_transcript.single_track.Path.stat", return_value=mock_stat)
@@ -146,24 +138,5 @@ def test_groq_to_dote():
         ]
     }
 
-    output = groq_to_dote(input_data)
+    output = whisper_to_dote(input_data)
     assert output == expected_output
-
-
-def test_audio_chunk_to_text(mocker, audio_url):
-    mock_response = mocker.MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {
-        "segments": [{"start": 0.0, "end": 1.0, "text": "Hello world"}]
-    }
-    mocker.patch("httpx.Client.post", return_value=mock_response)
-
-    audio_chunk = audio_url.episode_chunks_dir / "chunk_000.mp3"
-    audio_chunk.parent.mkdir(parents=True, exist_ok=True)
-    audio_chunk.write_bytes(b"dummy audio data")
-    transcript_path = audio_chunk.with_suffix(".json")
-
-    audio_chunk_to_text(audio_chunk, transcript_path)
-
-    mock_response.raise_for_status.assert_called_once()
-    assert transcript_path.exists()

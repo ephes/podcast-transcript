@@ -15,7 +15,7 @@ class Settings:
     transcript_dir: Path
     groq_api_key: str
     transcript_prompt: str = "podcast-transcript"
-    transcript_model_name: str = "whisper-large-v3"
+    transcript_model_name: str | None = None
     transcript_language: str = "en"
 
     def __init__(self):
