@@ -94,7 +94,7 @@ class Settings:
 
     @property
     def whisper_cpp_models_dir(self) -> Path:
-        return self.transcript_dir / "whisper-cpp-models"
+        return self.transcript_home / "whisper-cpp-models"
 
 
 settings = Settings()
