@@ -54,10 +54,9 @@ class Settings:
             self.groq_api_key = os.getenv("GROQ_API_KEY")
             if self.groq_api_key is None:
                 self.console.print(
-                    "Error: GROQ_API_KEY is not set in the environment variables or .env file.",
-                    style="bold red",
+                    "warning: GROQ_API_KEY is not set in the environment variables or .env file.",
+                    style="yellow",
                 )
-                exit(1)
 
         # Check if ffmpeg is installed
         if shutil.which("ffmpeg") is None:
