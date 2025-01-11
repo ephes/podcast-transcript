@@ -83,5 +83,9 @@ class Settings:
             if key in transcript_keys:
                 setattr(self, key.lower(), value)
 
+    @property
+    def whisper_cpp_models_dir(self) -> Path:
+        return self.transcript_dir / "whisper-cpp-models"
+
 
 settings = Settings()

@@ -6,6 +6,7 @@ import io
 import re
 import json
 import time
+import subprocess
 
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -14,9 +15,11 @@ import httpx
 
 from rich import print as rprint
 
+from .config import settings
+
 
 @runtime_checkable
-class TranscriptionService(Protocol):
+class TranscriptionBackend(Protocol):
     def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
         pass
 
@@ -179,3 +182,135 @@ class MLX:
         )
         with transcript_path.open("w") as file:
             file.write(json.dumps(result, indent=2))
+
+
+class WhisperCpp:
+    """
+    Transcribe an audio file using the whisper-cpp library.
+    """
+
+    def __init__(self, *, model_name: str | None = None, language: str | None = None):
+        if model_name is None:
+            model_name = "ggml-large-v3.bin"
+        self.model_name = model_name
+        self.model_path = settings.whisper_cpp_models_dir / model_name
+        self.language = language
+
+    @staticmethod
+    def convert_to_wav(input_path: Path, output_path: Path) -> None:
+        """
+        Convert an audio file to WAV format with specific parameters:
+        - Sample rate: 16kHz
+        - Channels: Mono (1 channel)
+        - Codec: PCM 16-bit little-endian
+
+        Args:
+            input_path (Path): Path to the input audio file
+            output_path (Path): Path where the output WAV file will be saved
+        """
+        rprint(f"Converting {input_path} to WAV format at {output_path}")
+        output_path.parent.mkdir(exist_ok=True, parents=True)
+
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-i",
+                str(input_path),
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-c:a",
+                "pcm_s16le",
+                str(output_path),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def transcribe_wav(
+        self,
+        input_path: Path,
+        output_path: Path,
+    ) -> None:
+        """
+        Transcribe audio using whisper-cli with specified parameters.
+
+        Args:
+            input_path (Path): Path to the input audio file
+            output_path (Path): Path where the JSON transcript will be saved
+        """
+        print(f"Transcribing {input_path} to {output_path}")
+        output_path.parent.mkdir(exist_ok=True, parents=True)
+
+        args = [
+            "time",  # Note: this might only work on Unix-like systems
+            "whisper-cli",
+            "-m",
+            str(self.model_path),
+            "-f",
+            str(input_path),
+            "-oj",  # Output JSON format
+            "-of",
+            str(output_path),
+        ]
+        if self.language is not None:
+            args.extend(["-l", self.language])
+        subprocess.run(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    @staticmethod
+    def transform_transcription(input_data: dict) -> dict:
+        """
+        Transform transcription data the whisper-cpp JSON to original Whisper format.
+        """
+
+        def timestamp_to_seconds(timestamp):
+            # Convert "HH:MM:SS,mmm" to seconds
+            hours, minutes, seconds = timestamp.split(":")
+            seconds, milliseconds = seconds.split(",")
+            return (
+                float(hours) * 3600
+                + float(minutes) * 60
+                + float(seconds)
+                + float(milliseconds) / 1000
+            )
+
+        segments = []
+        for idx, entry in enumerate(input_data["transcription"]):
+            segment = {
+                "id": idx,
+                "seek": int(
+                    entry["offsets"]["from"]
+                ),  # Using 'from' offset as seek position
+                "start": timestamp_to_seconds(entry["timestamps"]["from"]),
+                "end": timestamp_to_seconds(entry["timestamps"]["to"]),
+                "text": entry["text"].strip(),
+            }
+            segments.append(segment)
+
+        return {"segments": segments}
+
+    def convert_output_format(self, input_path: Path, output_path: Path) -> None:
+        with input_path.open("r") as file:
+            cpp_transcript = json.load(file)
+        transformed_transcript = self.transform_transcription(cpp_transcript)
+        with output_path.open("w") as out_file:
+            json.dump(transformed_transcript, out_file)
+
+    def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
+        # Convert the audio file to WAV format
+        wav_file = audio_file.with_suffix(".wav")
+        if not wav_file.exists():
+            self.convert_to_wav(audio_file, wav_file)
+        # Transcribe the WAV file
+        whisper_transcript_path = transcript_path.with_suffix(
+            ".whisper-cpp"
+        )  # .json is automatically appended
+        self.transcribe_wav(wav_file, whisper_transcript_path)
+        whisper_read_transcript_path = transcript_path.with_suffix(".whisper-cpp.json")
+        # Convert the whisper-cpp JSON to original Whisper format
+        self.convert_output_format(whisper_read_transcript_path, transcript_path)

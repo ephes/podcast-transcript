@@ -8,12 +8,12 @@ from pathlib import Path
 from rich import print as rprint
 
 from .audio import Audio
-from .services import TranscriptionService
+from .backends import TranscriptionBackend
 from .config import settings
 
 
 def audio_chunks_to_text(
-    service: TranscriptionService, audio_chunks: list[Path]
+    service: TranscriptionBackend, audio_chunks: list[Path]
 ) -> list[Path]:
     """Convert the audio chunks to text. Only convert if the transcript does not exist yet."""
     file_names = " ".join([chunk.name for chunk in audio_chunks])
@@ -189,11 +189,11 @@ def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
         f.write("\n".join(output))
 
 
-def transcribe(url: str, service: TranscriptionService) -> dict[str, Path]:
+def transcribe(url: str, backend: TranscriptionBackend) -> dict[str, Path]:
     transcript_paths = {}
     audio = Audio(base_dir=settings.transcript_dir, url=url)
     audio_chunks = audio.prepare_audio_for_transcription()
-    text_chunks = audio_chunks_to_text(service, audio_chunks)
+    text_chunks = audio_chunks_to_text(backend, audio_chunks)
     dote_chunks = whisper_text_chunks_to_dote(text_chunks)
     dote_path = audio.podcast_dir / f"{audio.prefix}.dote.json"
     if not dote_path.exists():

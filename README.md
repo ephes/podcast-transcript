@@ -21,7 +21,8 @@ A simple command-line tool to generate transcripts for podcast episodes or other
 - Download and process podcast episodes or other audio content from a given URL or file path.
 - Automatically resamples audio to 16kHz mono because Groq will do this anyway.
 - Splits large audio files into manageable chunks.
-- Transcribes audio locally using [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper).
+- Transcribes audio locally using [whisper-cpp](https://github.com/ggerganov/whisper.cpp)
+- Optionally transcribes audio locally using [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper).
 - Optionally transcribes audio using the Groq API.
 - Outputs transcripts in multiple formats:
   - DOTe JSON
@@ -31,7 +32,7 @@ A simple command-line tool to generate transcripts for podcast episodes or other
 
 ## Prerequisites
 
-- Python 3.10 up to 3.12 (mlx does not run with 3.13, yet)
+- Python >=3.10 (mlx does not run with 3.13, but works with 3.12)
 - [ffmpeg](https://ffmpeg.org/) installed and available in your system’s PATH.
 - A [Groq API key](https://groq.com/) for transcription services.
 
@@ -47,7 +48,7 @@ pip install podcast-transcript  # or pipx/uvx install podcast-transcript
 
 ### Setting the Groq API Key
 
-Using the Groq service requires a Groq API key to function. You can set the API key in one of the following ways:
+Using the Groq backend requires a Groq API key to function. You can set the API key in one of the following ways:
 
 - **Environment Variable**:
 
@@ -78,7 +79,8 @@ export TRANSCRIPT_DIR=/path/to/your/transcripts
 
 You can also set the following environment variables or specify them in the .env file:
 
-- **TRANSCRIPT_MODEL_NAME**: The name of the model to use for the transcript (default is "whisper-large-v3" for Groq and "mlx-community/whisper-large-v3-mlx" for MLX).
+- **TRANSCRIPT_MODEL_NAME**: The name of the model to use for the transcript
+  (default is "ggml-large-v3.bin" for whisper-cpp, "whisper-large-v3" for Groq and "mlx-community/whisper-large-v3-mlx" for MLX).
 - **TRANSCRIPT_PROMPT**: The prompt to use for the transcription (default is "podcast-transcript").
 - **TRANSCRIPT_LANGUAGE**: The language code for the transcription (default is en, you could set it to de for example).
 
@@ -98,7 +100,7 @@ transcribe https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp_53.mp3
 
 Or if you want to use the Groq API:
 ```shell
-transcribe --service=groq https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp_53.mp3
+transcribe --backend=groq https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp_53.mp3
 ```
 
 ## Detailed Steps
@@ -108,7 +110,7 @@ The transcription process involves the following steps:
 1. Download the audio file from the provided URL or copy it from the file path if one was given.
 2. Convert the audio to mp3 and resample to 16kHz mono for optimal transcription.
 3. Split the audio into chunks if it exceeds the size limit (25 MB).
-4. Transcribe each audio chunk using either mlx-whisper or the Groq API.
+4. Transcribe each audio chunk using either whisper-cpp (converts mp3 to wav first), mlx-whisper, or the Groq API.
 5. Combine the transcribed chunks into a single transcript.
 6. Generate output files in DOTe JSON, Podlove JSON, and WebVTT formats.
 
@@ -124,7 +126,7 @@ The output files are saved in a directory named after the episode, within the tr
 ## Roadmap
 
 - [ ] Support for multitrack transcripts with speaker identification.
-- [x] Add support for other transcription backends (e.g., openAI, speechmatics, local whisper).
+- [x] Add support for other transcription backends (e.g., openAI, speechmatics, local whisper via pytorch).
 - [x] Add support for other audio formats (e.g., AAC, WAV, FLAC).
 - [ ] Add more output formats (e.g., SRT, TTML).
 

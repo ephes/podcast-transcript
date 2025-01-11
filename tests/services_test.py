@@ -1,6 +1,6 @@
 import pytest
 
-from podcast_transcript.services import Groq
+from podcast_transcript.backends import Groq
 
 
 def test_groq_model_name_valid():
