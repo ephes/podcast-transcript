@@ -23,7 +23,7 @@ def test_groq_model_name_invalid():
         Groq(api_key="dummy", model_name=model_name, language="en", prompt="dummy")
 
 
-def test_groq_audio_file_to_text(mocker, audio_url):
+def test_groq_audio_file_to_text(mocker, audio):
     # Given a mock response from the Groq API
     mock_response = mocker.MagicMock()
     mock_response.status_code = 200
@@ -33,7 +33,7 @@ def test_groq_audio_file_to_text(mocker, audio_url):
     mocker.patch("httpx.Client.post", return_value=mock_response)
 
     # And a dummy audio chunk
-    audio_chunk = audio_url.episode_chunks_dir / "chunk_000.mp3"
+    audio_chunk = audio.episode_chunks_dir / "chunk_000.mp3"
     audio_chunk.parent.mkdir(parents=True, exist_ok=True)
     audio_chunk.write_bytes(b"dummy audio data")
     transcript_path = audio_chunk.with_suffix(".json")
