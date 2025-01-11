@@ -9,3 +9,6 @@ __pycache__/
 # vim
 
 *.swp
+
+# coverage
+.coverage
