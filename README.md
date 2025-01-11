@@ -1,6 +1,6 @@
 # Podcast Transcript
 
-A simple command-line tool to generate transcripts for podcast episodes.
+A simple command-line tool to generate transcripts for podcast episodes or other audio files containing speech.
 
 ## Table of Contents
 
@@ -18,10 +18,10 @@ A simple command-line tool to generate transcripts for podcast episodes.
 
 ## Features
 
-- Download and process podcast episodes from a given MP3 URL.
+- Download and process podcast episodes or other audio content from a given URL or file path.
 - Automatically resamples audio to 16kHz mono because Groq will do this anyway.
 - Splits large audio files into manageable chunks.
-- Transcribes audio locally using the [MLX API](https://github.com/ml-explore/mlx-examples/tree/main/whisper).
+- Transcribes audio locally using [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper).
 - Optionally transcribes audio using the Groq API.
 - Outputs transcripts in multiple formats:
   - DOTe JSON
@@ -105,10 +105,10 @@ transcribe --service=groq https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp_53
 
 The transcription process involves the following steps:
 
-1. Download the MP3 file from the provided URL.
-2. Reample the audio to 16kHz mono for optimal transcription.
+1. Download the audio file from the provided URL or copy it from the file path if one was given.
+2. Convert the audio to mp3 and resample to 16kHz mono for optimal transcription.
 3. Split the audio into chunks if it exceeds the size limit (25 MB).
-4. Transcribe each audio chunk using either MLX or the Groq API.
+4. Transcribe each audio chunk using either mlx-whisper or the Groq API.
 5. Combine the transcribed chunks into a single transcript.
 6. Generate output files in DOTe JSON, Podlove JSON, and WebVTT formats.
 
@@ -125,7 +125,7 @@ The output files are saved in a directory named after the episode, within the tr
 
 - [ ] Support for multitrack transcripts with speaker identification.
 - [x] Add support for other transcription backends (e.g., openAI, speechmatics, local whisper).
-- [ ] Add support for other audio formats (e.g., AAC, WAV, FLAC).
+- [x] Add support for other audio formats (e.g., AAC, WAV, FLAC).
 - [ ] Add more output formats (e.g., SRT, TTML).
 
 ## Development
