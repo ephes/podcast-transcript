@@ -27,6 +27,7 @@ def whisper_cpp_from_settings(my_settings: Settings) -> backends.WhisperCpp:
     return backends.WhisperCpp(
         model_name=my_settings.transcript_model_name,
         language=my_settings.transcript_language,
+        prompt=my_settings.transcript_prompt,
     )
 
 

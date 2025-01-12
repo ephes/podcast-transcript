@@ -189,12 +189,19 @@ class WhisperCpp:
     Transcribe an audio file using the whisper-cpp library.
     """
 
-    def __init__(self, *, model_name: str | None = None, language: str | None = None):
+    def __init__(
+        self,
+        *,
+        model_name: str | None = None,
+        language: str | None = None,
+        prompt: str | None = None,
+    ):
         if model_name is None:
             model_name = "ggml-large-v3.bin"
         self.model_name = model_name
         self.model_path = settings.whisper_cpp_models_dir / model_name
         self.language = language
+        self.prompt = prompt
 
     @staticmethod
     def convert_to_wav(input_path: Path, output_path: Path) -> None:
@@ -256,6 +263,8 @@ class WhisperCpp:
         ]
         if self.language is not None:
             args.extend(["-l", self.language])
+        if self.prompt is not None:
+            args.extend(["--prompt", self.prompt])
         subprocess.run(
             args,
             stdout=subprocess.DEVNULL,
