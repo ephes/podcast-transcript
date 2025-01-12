@@ -68,7 +68,7 @@ def transcribe_cli():
         elif args.backend == "groq":
             backend = groq_from_settings(settings)
         elif args.backend == "whisper-cpp":
-            backend = backends.WhisperCpp()
+            backend = whisper_cpp_from_settings(settings)
         else:
             console.print("[red]Invalid service argument.[/red]")
             exit(1)

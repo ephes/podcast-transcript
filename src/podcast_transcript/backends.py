@@ -240,7 +240,7 @@ class WhisperCpp:
             input_path (Path): Path to the input audio file
             output_path (Path): Path where the JSON transcript will be saved
         """
-        print(f"Transcribing {input_path} to {output_path}")
+        rprint(f"Transcribing {input_path} to {output_path}")
         output_path.parent.mkdir(exist_ok=True, parents=True)
 
         args = [
