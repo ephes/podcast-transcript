@@ -195,6 +195,7 @@ class WhisperCpp:
         model_name: str | None = None,
         language: str | None = None,
         prompt: str | None = None,
+        processors: int = 4,
     ):
         if model_name is None:
             model_name = "ggml-large-v3.bin"
@@ -202,6 +203,7 @@ class WhisperCpp:
         self.model_path = settings.whisper_cpp_models_dir / model_name
         self.language = language
         self.prompt = prompt
+        self.processors = processors
 
     @staticmethod
     def convert_to_wav(input_path: Path, output_path: Path) -> None:
@@ -260,6 +262,8 @@ class WhisperCpp:
             "-oj",  # Output JSON format
             "-of",
             str(output_path),
+            "-p",
+            str(self.processors),
         ]
         if self.language is not None:
             args.extend(["-l", self.language])

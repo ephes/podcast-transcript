@@ -23,11 +23,14 @@ def mlx_from_settings(my_settings: Settings) -> backends.MLX:
     )
 
 
-def whisper_cpp_from_settings(my_settings: Settings) -> backends.WhisperCpp:
+def whisper_cpp_from_settings_and_args(
+    my_settings: Settings, args: argparse.Namespace
+) -> backends.WhisperCpp:
     return backends.WhisperCpp(
         model_name=my_settings.transcript_model_name,
         language=my_settings.transcript_language,
         prompt=my_settings.transcript_prompt,
+        processors=args.processors,
     )
 
 
@@ -51,6 +54,16 @@ def transcribe_cli():
             "whisper-cpp based local transcription (default)."
         ),
     )
+    parser.add_argument(
+        "--processors",
+        type=int,
+        default="4",
+        help=(
+            "Number of processors to use for whisper-cpp based local transcription."
+            "Defaults to 4. Only applicable when using whisper-cpp backend. When whisper-cpp "
+            "uses the GPU instead of the CPU, this argument is also ignored."
+        ),
+    )
     try:
         args = parser.parse_args()
         mp3_url = args.mp3_url
@@ -69,7 +82,7 @@ def transcribe_cli():
         elif args.backend == "groq":
             backend = groq_from_settings(settings)
         elif args.backend == "whisper-cpp":
-            backend = whisper_cpp_from_settings(settings)
+            backend = whisper_cpp_from_settings_and_args(settings, args)
         else:
             console.print("[red]Invalid service argument.[/red]")
             exit(1)
