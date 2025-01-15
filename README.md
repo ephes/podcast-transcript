@@ -164,7 +164,7 @@ uv venv
 3. **Install the package in editable mode**:
 
 ```shell
-uv sync
+uv pip install -e .
 ```
 
 ### Running Tests
