@@ -13,3 +13,6 @@ __pycache__/
 # coverage
 .coverage
 htmlcov/
+
+# Local / duplicate agent instruction file
+@AGENTS.md
