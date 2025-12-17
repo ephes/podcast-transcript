@@ -4,6 +4,8 @@
 for issue tracking. Use `bd` commands instead of markdown TODOs.
 See AGENTS.md for workflow details.
 
+**IMPORTANT**: Do not run `git commit`, `git push`, or `bd sync` unless the user explicitly asks you to commit/push.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview

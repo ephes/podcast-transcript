@@ -10,6 +10,11 @@ This project uses **bd** (Beads) for issue tracking. Run `bd onboard` to get sta
 - If you discover follow-up work, create a linked issue: `bd create "..." -t task|bug|feature -p 0-4 --deps discovered-from:<id> --json`.
 - Keep `.beads/issues.jsonl` in sync with code changes (commit it together).
 
+## Git Commits and Pushes (Required)
+
+- Do **not** run `git commit`, `git push`, or `bd sync` unless the user explicitly asks you to commit/push.
+- If the user does not ask for a commit, leave changes uncommitted and report `git status` plus the exact commands the user can run.
+
 ## Quality Gates (Required)
 
 A bugfix/feature is not finished (and should not be closed/declared done) unless these pass:
@@ -45,7 +50,7 @@ Config locations:
 
 ## Landing the Plane (Session Completion)
 
-**When ending a work session**, complete the steps below. Work is not complete until changes are pushed.
+**When ending a work session**, complete the steps below *only if the user explicitly asks you to commit/push*.
 
 1. File beads for remaining work
 2. Run quality gates (if code changed): `just lint`, `just typecheck`, `just test`
@@ -58,4 +63,3 @@ Config locations:
    git status  # should show "up to date with origin"
    ```
 5. Hand off: leave enough bead notes for the next session
-
