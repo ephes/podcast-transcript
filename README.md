@@ -167,11 +167,20 @@ uv venv
 uv pip install -e .
 ```
 
+Common developer commands:
+```shell
+just lint
+just typecheck
+just test
+just bead        # shows ready beads (issues)
+```
+
 ### Running Tests
 
 The project uses pytest for testing. To run tests:
 ```shell
-pytest
+just test
+# or: pytest
 ```
 
 Show coverage:
@@ -188,7 +197,13 @@ pre-commit install
 
 Check the type hints:
 ```shell
-mypy src/
+just typecheck
+# or: mypy src/
+```
+
+Run lint/format:
+```shell
+just lint
 ```
 
 ### Publish a Release

@@ -35,6 +35,7 @@ packages = ["src/podcast_transcript"]
 [tool.uv]
 dev-dependencies = [
     "mypy>=1",
+    "pre-commit>=3",
     "pytest-mock>=3",
     "pytest>=8",
     "coverage>7",
@@ -54,5 +55,4 @@ exclude_lines = [
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
 ]
-
 
