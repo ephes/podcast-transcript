@@ -1,0 +1,57 @@
+# CLAUDE.md
+
+**Note**: This project uses [bd (beads)](https://github.com/steveyegge/beads)
+for issue tracking. Use `bd` commands instead of markdown TODOs.
+See AGENTS.md for workflow details.
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+`podcast-transcript` is a Python CLI tool that downloads/processes audio and generates transcripts (local backends like whisper-cpp / mlx-whisper, or API backends like Groq) and exports multiple formats.
+
+## Project Structure
+
+- `src/podcast_transcript/` – library + CLI entrypoint (`transcribe` script)
+- `tests/` – pytest suite
+- `pyproject.toml` / `uv.lock` – packaging + dependencies
+
+## Common Commands
+
+```bash
+uv venv
+uv pip install -e .
+pytest
+mypy src/
+pre-commit install
+pre-commit run -a
+```
+
+## Beads (bd) Workflow
+
+Beads (`bd`) is the issue tracker and source of truth for work in this repo. Don’t guess bead IDs—copy/paste them from `bd ready` / `bd show`.
+
+- Find work: `bd ready`
+- Start work: `bd update <id> --status in_progress`
+- Get context: `bd show <id> --json`, `bd dep tree <id>`
+- Finish: `bd close <id> "Done: <summary>"`
+- Keep in sync: `bd sync`
+
+### New Machine
+
+After `git clone`:
+
+```bash
+bd onboard
+```
+
+If `bd onboard` is not available, use:
+
+```bash
+bd init
+bd hooks install
+```
+
+If you previously used `bd init --stealth`, check your global gitignore for `**/.beads/` and remove it (or use `git add -f`) if you intend to commit the Beads ledger.
+
+See `AGENTS.md` for the canonical Beads workflow and ledger conventions.
