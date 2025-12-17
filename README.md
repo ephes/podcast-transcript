@@ -32,7 +32,8 @@ A simple command-line tool to generate transcripts for podcast episodes or other
 
 ## Prerequisites
 
-- Python >=3.10 (mlx does not run with 3.13, but works with 3.12)
+- Python >=3.10
+  - MLX backend (via `mlx-whisper`) requires macOS on Apple Silicon and a Python version supported by `mlx` wheels (currently including Python 3.14).
 - [ffmpeg](https://ffmpeg.org/) installed and available in your system’s PATH.
 - A [Groq API key](https://groq.com/) for transcription services.
 
