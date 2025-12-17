@@ -21,11 +21,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 uv venv
 uv pip install -e .
+just lint
+just typecheck
+just test
 pytest
 mypy src/
 pre-commit install
 pre-commit run -a
 ```
+
+## Quality Gates (Required)
+
+Do not declare a bugfix/feature finished unless these pass:
+
+```bash
+just lint
+just typecheck
+just test
+```
+
+If the `just` shorthands are not available yet, run the underlying equivalents: `pre-commit run -a`, `mypy src/`, `pytest`.
 
 ## Beads (bd) Workflow
 
@@ -34,7 +49,7 @@ Beads (`bd`) is the issue tracker and source of truth for work in this repo. Don
 - Find work: `bd ready`
 - Start work: `bd update <id> --status in_progress`
 - Get context: `bd show <id> --json`, `bd dep tree <id>`
-- Finish: `bd close <id> "Done: <summary>"`
+- Finish: `bd close <id> --reason "Done: <summary>"`
 - Keep in sync: `bd sync`
 
 ### New Machine
