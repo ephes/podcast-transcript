@@ -39,10 +39,24 @@ A simple command-line tool to generate transcripts for podcast episodes or other
 
 ## Installation
 
-1**Install the package**:
+1. **Install the package**:
 
 ```shell
 pip install podcast-transcript  # or pipx/uvx install podcast-transcript
+```
+
+2. **(Optional) Install MLX backend dependencies** (macOS on Apple Silicon only):
+
+```shell
+pip install "podcast-transcript[mlx]"
+# or
+uv pip install "podcast-transcript[mlx]"
+```
+
+To run without installing into your environment:
+
+```shell
+uvx --from "podcast-transcript[mlx]" transcribe --backend mlx <mp3_url>
 ```
 
 ## Configuration
@@ -116,6 +130,11 @@ transcribe https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp_53.mp3
 Or if you want to use the Groq API:
 ```shell
 transcribe --backend=groq https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp_53.mp3
+```
+
+Or if you want to use the MLX backend (requires the `mlx` extra; macOS on Apple Silicon only):
+```shell
+transcribe --backend=mlx https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp_53.mp3
 ```
 
 ## Detailed Steps

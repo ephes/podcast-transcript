@@ -171,7 +171,12 @@ class MLX:
 
     def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
         # import only when needed because it's slow (takes 0.5s)
-        import mlx_whisper  # type: ignore
+        try:
+            import mlx_whisper  # type: ignore
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                'MLX backend dependencies are not installed. Install with: `pip install "podcast-transcript[mlx]"`.'
+            ) from exc
 
         result = mlx_whisper.transcribe(
             str(audio_file),
