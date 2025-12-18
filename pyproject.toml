@@ -38,7 +38,6 @@ include = [
 ]
 
 [tool.hatch.build.targets.sdist]
-packages = ["src/podcast_transcript"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/podcast_transcript"]
