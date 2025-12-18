@@ -24,4 +24,8 @@ def test_cli_mlx_missing_deps_shows_actionable_message(monkeypatch, capsys):
 
     assert excinfo.value.code == 1
     captured = capsys.readouterr()
-    assert "podcast-transcript[mlx]" in (captured.out + captured.err)
+    combined = captured.out + captured.err
+    normalized = " ".join(combined.split())
+    assert "podcast-transcript[mlx]" in normalized
+    assert "uv sync" in normalized
+    assert "--extra" in normalized

@@ -33,7 +33,7 @@ A simple command-line tool to generate transcripts for podcast episodes or other
 ## Prerequisites
 
 - Python >=3.10
-  - MLX backend (via `mlx-whisper`) requires macOS on Apple Silicon and a Python version supported by `mlx` wheels (currently including Python 3.14).
+  - MLX backend (via `mlx-whisper`) requires macOS on Apple Silicon and a Python version supported by the `mlx-whisper` / `torch` wheels.
 - [ffmpeg](https://ffmpeg.org/) installed and available in your system’s PATH.
 - A [Groq API key](https://groq.com/) for transcription services.
 
@@ -175,16 +175,17 @@ git clone https://github.com/yourusername/podcast-transcript.git
 cd podcast-transcript
 ```
 
-2. **Create a virtual environment**:
+2. **Sync the project environment**:
 
 ```shell
-uv venv
+uv sync
 ```
 
-3. **Install the package in editable mode**:
+This creates `.venv` and installs the project plus dev dependencies.
 
+To ensure you’re using the repo’s pinned Python version, you can also run:
 ```shell
-uv pip install -e .
+UV_PYTHON=python"$(cat .python-version)" uv sync
 ```
 
 Common developer commands:

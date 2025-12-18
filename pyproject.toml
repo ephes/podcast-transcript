@@ -14,12 +14,23 @@ dependencies = [
 
 [project.optional-dependencies]
 mlx = [
-  "mlx-whisper",
+  "mlx-whisper; platform_system == 'Darwin' and platform_machine == 'arm64'",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "coverage>7",
+    "mypy>=1",
+    "pre-commit>=3",
+    "pytest-mock>=3",
+    "pytest>=8",
+    # Make `transcribe --backend mlx` work out of the box on Apple Silicon dev machines.
+    "mlx-whisper; platform_system == 'Darwin' and platform_machine == 'arm64'",
+]
 
 [tool.hatch.build]
 include = [
@@ -31,15 +42,6 @@ packages = ["src/podcast_transcript"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/podcast_transcript"]
-
-[tool.uv]
-dev-dependencies = [
-    "mypy>=1",
-    "pre-commit>=3",
-    "pytest-mock>=3",
-    "pytest>=8",
-    "coverage>7",
-]
 
 [project.scripts]
 transcribe = "podcast_transcript:transcribe_cli"
@@ -55,4 +57,3 @@ exclude_lines = [
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
 ]
-

@@ -89,6 +89,11 @@ def transcribe_cli():
                     markup=False,
                 )
                 console.print(
+                    'In a checkout of this repo: uv pip install -e ".[mlx]" '
+                    "or uv sync (or uv sync --extra mlx).",
+                    markup=False,
+                )
+                console.print(
                     'Or run without installing: uvx --from "podcast-transcript[mlx]" transcribe --backend mlx <mp3_url>.',
                     markup=False,
                 )
