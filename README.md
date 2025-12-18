@@ -59,6 +59,12 @@ To run without installing into your environment:
 uvx --from "podcast-transcript[mlx]" transcribe --backend mlx <mp3_url>
 ```
 
+Example (pin Python + package version):
+
+```shell
+time TRANSCRIPT_LANGUAGE=de uvx --python python3.14.2 --from "podcast-transcript[mlx]==0.1.5" transcribe --backend mlx https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp_67.mp3
+```
+
 ## Configuration
 
 ### Setting the Groq API Key
