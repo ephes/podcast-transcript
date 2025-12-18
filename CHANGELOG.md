@@ -1,10 +1,18 @@
-0.1.5 - 2025-01-14
+0.1.5 - 2025-12-18
 ==================
 
 ### Features
 
 - #13 Add parameter for number of processes to whisper-cpp backand.
 
+### Fixes
+
+- Make the `mlx` extra installable only on macOS/Apple Silicon.
+- Improve MLX missing-deps CLI guidance (includes `uv sync` / `uv sync --extra mlx`).
+
+### Documentation
+
+- Update development setup instructions to use `uv sync`.
 0.1.4 - 2025-01-12
 ==================
 
