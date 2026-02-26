@@ -1,3 +1,14 @@
+0.1.6 - 2026-02-26
+==================
+
+### Fixes
+
+- Fix uv build wheel contents.
+
+### Documentation
+
+- Add uvx --python MLX example.
+
 0.1.5 - 2025-12-18
 ==================
 
