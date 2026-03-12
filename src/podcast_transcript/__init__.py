@@ -24,6 +24,20 @@ def mlx_from_settings(my_settings: Settings) -> backends.MLX:
     )
 
 
+def voxhelm_from_settings(my_settings: Settings) -> backends.Voxhelm:
+    if not my_settings.voxhelm_api_base:
+        raise ValueError("VOXHELM_API_BASE is not set.")
+    if not my_settings.voxhelm_api_key:
+        raise ValueError("VOXHELM_API_KEY is not set.")
+    return backends.Voxhelm(
+        api_base=my_settings.voxhelm_api_base,
+        api_key=my_settings.voxhelm_api_key,
+        model_name=my_settings.transcript_model_name,
+        language=my_settings.transcript_language,
+        prompt=my_settings.transcript_prompt,
+    )
+
+
 def whisper_cpp_from_settings_and_args(
     my_settings: Settings, args: argparse.Namespace
 ) -> backends.WhisperCpp:
@@ -47,12 +61,13 @@ def transcribe_cli():
     parser.add_argument("mp3_url", type=str, help="URL of the MP3 file to transcribe.")
     parser.add_argument(
         "--backend",
-        choices=["groq", "mlx", "whisper-cpp"],
+        choices=["groq", "mlx", "voxhelm", "whisper-cpp"],
         default="whisper-cpp",
         help=(
             "Transcription backend. Choose 'groq' for Groq-based transcription, "
-            "'mlx' for MLX-based local transcription, or 'whisper-cpp' for "
-            "whisper-cpp based local transcription (default)."
+            "'mlx' for MLX-based local transcription, 'voxhelm' for a remote "
+            "Voxhelm service, or 'whisper-cpp' for whisper-cpp based local "
+            "transcription (default)."
         ),
     )
     parser.add_argument(
@@ -100,6 +115,8 @@ def transcribe_cli():
                 console.print("Note: MLX runs on macOS on Apple Silicon.", style="dim")
                 exit(1)
             backend = mlx_from_settings(settings)
+        elif args.backend == "voxhelm":
+            backend = voxhelm_from_settings(settings)
         elif args.backend == "groq":
             backend = groq_from_settings(settings)
         elif args.backend == "whisper-cpp":

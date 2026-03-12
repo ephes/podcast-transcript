@@ -4,6 +4,11 @@ default:
   @just --list
 
 # Quality gates
+check:
+  just lint
+  just typecheck
+  just test
+
 lint *args:
   UV_PYTHON=python"$(tr -d '\n' < .python-version)" uv run pre-commit run -a {{args}}
 

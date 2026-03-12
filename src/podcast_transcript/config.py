@@ -18,6 +18,8 @@ class Settings:
     transcript_prompt: str = "podcast-transcript"
     transcript_model_name: str | None = None
     transcript_language: str = "en"
+    voxhelm_api_base: str | None = None
+    voxhelm_api_key: str | None = None
 
     def __init__(self):
         self.console = Console()
@@ -87,6 +89,8 @@ class Settings:
             "TRANSCRIPT_PROMPT",
             "TRANSCRIPT_MODEL_NAME",
             "TRANSCRIPT_LANGUAGE",
+            "VOXHELM_API_BASE",
+            "VOXHELM_API_KEY",
         }
         for key, value in os.environ.items():
             if key in transcript_keys:

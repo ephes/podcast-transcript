@@ -189,6 +189,70 @@ class MLX:
             file.write(json.dumps(result, indent=2))
 
 
+class Voxhelm:
+    """
+    Transcribe an audio file using a Voxhelm OpenAI-compatible endpoint.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_base: str,
+        api_key: str,
+        model_name: str | None,
+        language: str | None,
+        prompt: str | None,
+    ):
+        self.api_base = api_base.rstrip("/")
+        self.api_key = api_key
+        self.model_name = model_name or "gpt-4o-mini-transcribe"
+        self.language = language
+        self.prompt = prompt
+
+    @property
+    def transcription_url(self) -> str:
+        if self.api_base.endswith("/v1"):
+            return f"{self.api_base}/audio/transcriptions"
+        return f"{self.api_base}/v1/audio/transcriptions"
+
+    def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
+        rprint("audio chunk to text: ", audio_file)
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        data = {
+            "model": self.model_name,
+            "response_format": "verbose_json",
+        }
+        if self.language:
+            data["language"] = self.language
+        if self.prompt:
+            data["prompt"] = self.prompt
+
+        with audio_file.open("rb") as file_handle:
+            files = {"file": (audio_file.name, file_handle)}
+            with httpx.Client() as client:
+                response = client.post(
+                    self.transcription_url,
+                    headers=headers,
+                    files=files,
+                    data=data,
+                    timeout=None,
+                )
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    detail = response.text.strip()
+                    if detail:
+                        raise RuntimeError(
+                            f"Voxhelm transcription failed with status {response.status_code}: {detail}"
+                        ) from exc
+                    raise RuntimeError(
+                        f"Voxhelm transcription failed with status {response.status_code}."
+                    ) from exc
+
+        with transcript_path.open("w") as out_file:
+            json.dump(response.json(), out_file)
+
+
 class WhisperCpp:
     """
     Transcribe an audio file using the whisper-cpp library.

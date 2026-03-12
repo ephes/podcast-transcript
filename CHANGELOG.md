@@ -1,3 +1,14 @@
+0.1.7 - Unreleased
+==================
+
+### Features
+
+- Add a `voxhelm` backend for remote transcription via Voxhelm's OpenAI-compatible API.
+
+### Documentation
+
+- Document `VOXHELM_API_BASE` / `VOXHELM_API_KEY` configuration and `--backend voxhelm` usage.
+
 0.1.6 - 2026-02-26
 ==================
 

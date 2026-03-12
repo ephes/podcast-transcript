@@ -24,6 +24,7 @@ A simple command-line tool to generate transcripts for podcast episodes or other
 - Transcribes audio locally using [whisper-cpp](https://github.com/ggerganov/whisper.cpp)
 - Optionally transcribes audio locally using [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper).
 - Optionally transcribes audio using the Groq API.
+- Optionally transcribes audio through a remote Voxhelm service.
 - Outputs transcripts in multiple formats:
   - DOTe JSON
   - Podlove JSON
@@ -87,6 +88,18 @@ Create a .env file in the transcript directory (default is ~/.podcast-transcript
 GROQ_API_KEY=your_api_key_here
 ```
 
+### Configuring the Voxhelm Backend
+
+Set these variables when using `--backend voxhelm`:
+
+```shell
+export VOXHELM_API_BASE=https://voxhelm.home.xn--wersdrfer-47a.de
+export VOXHELM_API_KEY=your_voxhelm_token_here
+```
+
+`VOXHELM_API_BASE` can point at either the service root or the `/v1` API prefix. The backend uses
+`gpt-4o-mini-transcribe` by default, or `TRANSCRIPT_MODEL_NAME` if you override it.
+
 ### Transcript Home
 
 By default, the transcripts home directory is ~/.podcast-transcripts/. You can change this by setting
@@ -143,6 +156,13 @@ Or if you want to use the MLX backend (requires the `mlx` extra; macOS on Apple 
 transcribe --backend=mlx https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp_53.mp3
 ```
 
+Or if you want to use a remote Voxhelm service:
+```shell
+VOXHELM_API_BASE=https://voxhelm.home.xn--wersdrfer-47a.de \
+VOXHELM_API_KEY=your_voxhelm_token_here \
+transcribe --backend=voxhelm https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp_53.mp3
+```
+
 ## Detailed Steps
 
 The transcription process involves the following steps:
@@ -150,7 +170,7 @@ The transcription process involves the following steps:
 1. Download the audio file from the provided URL or copy it from the file path if one was given.
 2. Convert the audio to mp3 and resample to 16kHz mono for optimal transcription.
 3. Split the audio into chunks if it exceeds the size limit (25 MB).
-4. Transcribe each audio chunk using either whisper-cpp (converts mp3 to wav first), mlx-whisper, or the Groq API.
+4. Transcribe each audio chunk using either whisper-cpp (converts mp3 to wav first), mlx-whisper, the Groq API, or Voxhelm.
 5. Combine the transcribed chunks into a single transcript.
 6. Generate output files in DOTe JSON, Podlove JSON, and WebVTT formats.
 
