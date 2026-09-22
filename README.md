@@ -219,7 +219,6 @@ Common developer commands:
 just lint
 just typecheck
 just test
-just bead        # shows ready beads (issues)
 ```
 
 ### Running Tests

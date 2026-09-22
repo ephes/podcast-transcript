@@ -17,7 +17,3 @@ typecheck *args:
 
 test *args:
   UV_PYTHON=python"$(tr -d '\n' < .python-version)" uv run pytest {{args}}
-
-# Beads helper: `just bead` -> `bd ready`, `just bead <cmd> ...` -> `bd <cmd> ...`
-bead *args:
-  @if [ -z "{{args}}" ]; then bd ready; else bd {{args}}; fi

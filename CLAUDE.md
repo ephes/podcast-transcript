@@ -1,10 +1,6 @@
 # CLAUDE.md
 
-**Note**: This project uses [bd (beads)](https://github.com/steveyegge/beads)
-for issue tracking. Use `bd` commands instead of markdown TODOs.
-See AGENTS.md for workflow details.
-
-**IMPORTANT**: Do not run `git commit`, `git push`, or `bd sync` unless the user explicitly asks you to commit/push.
+**IMPORTANT**: Do not run `git commit` or `git push` unless the user explicitly asks you to commit/push.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -43,32 +39,3 @@ just test
 ```
 
 If the `just` shorthands are not available yet, run the underlying equivalents: `pre-commit run -a`, `mypy src/`, `pytest`.
-
-## Beads (bd) Workflow
-
-Beads (`bd`) is the issue tracker and source of truth for work in this repo. Don’t guess bead IDs—copy/paste them from `bd ready` / `bd show`.
-
-- Find work: `bd ready`
-- Start work: `bd update <id> --status in_progress`
-- Get context: `bd show <id> --json`, `bd dep tree <id>`
-- Finish: `bd close <id> --reason "Done: <summary>"`
-- Keep in sync: `bd sync`
-
-### New Machine
-
-After `git clone`:
-
-```bash
-bd onboard
-```
-
-If `bd onboard` is not available, use:
-
-```bash
-bd init
-bd hooks install
-```
-
-If you previously used `bd init --stealth`, check your global gitignore for `**/.beads/` and remove it (or use `git add -f`) if you intend to commit the Beads ledger.
-
-See `AGENTS.md` for the canonical Beads workflow and ledger conventions.
