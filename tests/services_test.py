@@ -1,9 +1,11 @@
 import json
+import subprocess
+from pathlib import Path
 
 import httpx
 import pytest
 
-from podcast_transcript.backends import Groq, Voxhelm
+from podcast_transcript.backends import Groq, Voxhelm, WhisperCpp
 
 
 def test_groq_model_name_valid():
@@ -141,3 +143,184 @@ def test_voxhelm_http_error_includes_status_and_body(mocker, audio):
 
     with pytest.raises(RuntimeError, match="status 503:"):
         backend.transcribe(audio_chunk, audio_chunk.with_suffix(".json"))
+
+
+def _http_error_response(mocker, status_code: int, text: str):
+    mock_response = mocker.MagicMock()
+    mock_response.status_code = status_code
+    mock_response.text = text
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "error", request=mocker.MagicMock(), response=mock_response
+    )
+    return mock_response
+
+
+def _dummy_chunk(audio):
+    audio_chunk = audio.episode_chunks_dir / "chunk_000.mp3"
+    audio_chunk.parent.mkdir(parents=True, exist_ok=True)
+    audio_chunk.write_bytes(b"dummy audio data")
+    return audio_chunk
+
+
+def test_groq_server_error_raises(mocker, audio):
+    mock_response = _http_error_response(mocker, 500, "internal error")
+    mocker.patch("httpx.Client.post", return_value=mock_response)
+    audio_chunk = _dummy_chunk(audio)
+    transcript_path = audio_chunk.with_suffix(".json")
+
+    groq = Groq(
+        api_key="dummy", model_name="whisper-large-v3", language="en", prompt="dummy"
+    )
+    with pytest.raises(RuntimeError, match="status 500: internal error"):
+        groq.transcribe(audio_chunk, transcript_path)
+
+    assert not transcript_path.exists()
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["Rate limit reached.", "Rate limit reached. Please try again in soon."],
+)
+def test_groq_rate_limit_without_usable_wait_raises(mocker, audio, message):
+    mock_response = _http_error_response(mocker, 429, "")
+    mock_response.json.return_value = {"error": {"message": message}}
+    post = mocker.patch("httpx.Client.post", return_value=mock_response)
+    audio_chunk = _dummy_chunk(audio)
+    transcript_path = audio_chunk.with_suffix(".json")
+
+    groq = Groq(
+        api_key="dummy", model_name="whisper-large-v3", language="en", prompt="dummy"
+    )
+    with pytest.raises(RuntimeError, match="rate limit"):
+        groq.transcribe(audio_chunk, transcript_path)
+
+    post.assert_called_once()
+    assert not transcript_path.exists()
+
+
+def test_whisper_cpp_ffmpeg_failure_leaves_no_wav(mocker, tmp_path):
+    mocker.patch(
+        "subprocess.run",
+        side_effect=subprocess.CalledProcessError(1, ["ffmpeg"], stderr="bad input"),
+    )
+    wav_path = tmp_path / "chunk_000.wav"
+
+    with pytest.raises(RuntimeError, match="bad input"):
+        WhisperCpp.convert_to_wav(tmp_path / "chunk_000.mp3", wav_path)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_whisper_cpp_writes_transcript_via_temp_base(mocker, tmp_path):
+    cpp_output = {
+        "transcription": [
+            {
+                "offsets": {"from": 0, "to": 1000},
+                "timestamps": {"from": "00:00:00,000", "to": "00:00:01,000"},
+                "text": " Hello",
+            }
+        ]
+    }
+    commands = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd)
+        assert kwargs["check"] is True
+        if cmd[0] == "ffmpeg":
+            Path(cmd[-1]).write_bytes(b"wav")
+        else:
+            base = Path(cmd[cmd.index("-of") + 1])
+            Path(f"{base}.json").write_text(json.dumps(cpp_output))
+        return subprocess.CompletedProcess(cmd, 0)
+
+    mocker.patch("subprocess.run", side_effect=fake_run)
+    audio_chunk = tmp_path / "chunk_000.mp3"
+    audio_chunk.write_bytes(b"mp3")
+    transcript_path = tmp_path / "chunk_000.json"
+
+    WhisperCpp(model_name="model.bin").transcribe(audio_chunk, transcript_path)
+
+    assert json.loads(transcript_path.read_text())["segments"][0]["text"] == "Hello"
+    assert (tmp_path / "chunk_000.whisper-cpp.json").exists()
+    assert (tmp_path / "chunk_000.wav").exists()
+    # No temporary files are left behind
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".")]
+
+
+def test_whisper_cpp_cli_failure_leaves_no_transcript(mocker, tmp_path):
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "ffmpeg":
+            Path(cmd[-1]).write_bytes(b"wav")
+            return subprocess.CompletedProcess(cmd, 0)
+        raise subprocess.CalledProcessError(
+            3, cmd, stderr="error: failed to open model"
+        )
+
+    mocker.patch("subprocess.run", side_effect=fake_run)
+    audio_chunk = tmp_path / "chunk_000.mp3"
+    audio_chunk.write_bytes(b"mp3")
+    transcript_path = tmp_path / "chunk_000.json"
+
+    with pytest.raises(RuntimeError, match="failed to open model"):
+        WhisperCpp(model_name="model.bin").transcribe(audio_chunk, transcript_path)
+
+    assert not transcript_path.exists()
+    assert not (tmp_path / "chunk_000.whisper-cpp.json").exists()
+
+
+@pytest.mark.parametrize(
+    "duration, seconds",
+    [("2.5s", 2.5), ("480ms", 0.48), ("1m23.456s", 83.456), ("1h2m", 3720.0)],
+)
+def test_groq_parse_duration(duration, seconds):
+    assert Groq.parse_duration(duration) == pytest.approx(seconds)
+
+
+def test_groq_rate_limit_with_fractional_wait_retries(mocker, audio):
+    rate_limited = _http_error_response(mocker, 429, "")
+    rate_limited.json.return_value = {
+        "error": {"message": "Rate limit reached. Please try again in 2.5s. Visit ..."}
+    }
+    ok = mocker.MagicMock()
+    ok.status_code = 200
+    ok.json.return_value = {"segments": []}
+    mocker.patch("httpx.Client.post", side_effect=[rate_limited, ok])
+    sleep_until = mocker.patch.object(Groq, "sleep_until")
+    mocker.patch("podcast_transcript.backends.time.time", return_value=1000.0)
+    audio_chunk = _dummy_chunk(audio)
+    transcript_path = audio_chunk.with_suffix(".json")
+
+    groq = Groq(
+        api_key="dummy", model_name="whisper-large-v3", language="en", prompt="dummy"
+    )
+    groq.transcribe(audio_chunk, transcript_path)
+
+    sleep_until.assert_called_once_with(pytest.approx(1000.0 + 2.5 + 2))
+    assert json.loads(transcript_path.read_text()) == {"segments": []}
+
+
+@pytest.mark.parametrize(
+    "body, json_result",
+    [
+        ("Too Many Requests", json.JSONDecodeError("Expecting value", "", 0)),
+        ('{"detail": "slow down"}', {"detail": "slow down"}),
+        ('["unexpected"]', ["unexpected"]),
+    ],
+)
+def test_groq_rate_limit_with_unexpected_body_raises(mocker, audio, body, json_result):
+    mock_response = _http_error_response(mocker, 429, body)
+    if isinstance(json_result, Exception):
+        mock_response.json.side_effect = json_result
+    else:
+        mock_response.json.return_value = json_result
+    mocker.patch("httpx.Client.post", return_value=mock_response)
+    audio_chunk = _dummy_chunk(audio)
+    transcript_path = audio_chunk.with_suffix(".json")
+
+    groq = Groq(
+        api_key="dummy", model_name="whisper-large-v3", language="en", prompt="dummy"
+    )
+    with pytest.raises(RuntimeError, match="status 429"):
+        groq.transcribe(audio_chunk, transcript_path)
+
+    assert not transcript_path.exists()

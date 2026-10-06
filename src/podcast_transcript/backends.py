@@ -6,7 +6,6 @@ import io
 import re
 import json
 import time
-import subprocess
 
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -16,6 +15,7 @@ import httpx
 from rich import print as rprint
 
 from .config import settings
+from .safe_io import atomic_output, run_checked, write_text_atomic
 
 
 @runtime_checkable
@@ -56,10 +56,12 @@ class Groq:
     def parse_duration(duration_str):
         total_seconds = 0
         # Find all matches of number and unit
-        matches = re.findall(r"(\d+(?:\.\d+)?)([hms])", duration_str)
+        matches = re.findall(r"(\d+(?:\.\d+)?)(ms|h|m|s)", duration_str)
         for value, unit in matches:
             value = float(value)
-            if unit == "h":
+            if unit == "ms":
+                total_seconds += value / 1000
+            elif unit == "h":
                 total_seconds += value * 3600
             elif unit == "m":
                 total_seconds += value * 60
@@ -75,6 +77,32 @@ class Groq:
             if now >= end_time:
                 break
             time.sleep(min(10, end_time - now))  # Sleep in small increments
+
+    @staticmethod
+    def rate_limit_message(response: httpx.Response) -> str | None:
+        """Return Groq's rate-limit message, or None if the body has none."""
+        try:
+            error = response.json()
+        except ValueError:
+            return None
+        if not isinstance(error, dict):
+            return None
+        details = error.get("error")
+        if not isinstance(details, dict):
+            return None
+        message = details.get("message")
+        return message if isinstance(message, str) else None
+
+    @staticmethod
+    def http_error(response: httpx.Response) -> RuntimeError:
+        detail = response.text.strip()
+        if detail:
+            return RuntimeError(
+                f"Groq transcription failed with status {response.status_code}: {detail}"
+            )
+        return RuntimeError(
+            f"Groq transcription failed with status {response.status_code}."
+        )
 
     def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
         """
@@ -107,18 +135,21 @@ class Groq:
                 except httpx.HTTPStatusError as e:
                     if response.status_code == 429:
                         # Rate limit exceeded
-                        error = response.json()
-                        error_message = error["error"]["message"]
+                        error_message = self.rate_limit_message(response)
+                        if error_message is None:
+                            # No usable rate-limit details, report the raw response
+                            raise self.http_error(response) from e
                         rprint("rate limit exceeded: ", error_message)
                         # Extract wait time from error message
                         match = re.search(
-                            r"Please try again in ([^.]+)\.", error_message
+                            r"Please try again in ((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)",
+                            error_message,
                         )
                         if match:
                             wait_time_str = match.group(1)
                             # Parse wait_time_str
                             wait_seconds = self.parse_duration(wait_time_str)
-                            if wait_seconds is not None:
+                            if wait_seconds > 0:
                                 rprint(
                                     f"Waiting for {wait_seconds} seconds before retrying..."
                                 )
@@ -127,25 +158,19 @@ class Groq:
                                 )  # Add 2 seconds buffer
                                 self.sleep_until(end_time)
                                 continue  # Retry after waiting
-                            else:
-                                rprint("Could not parse wait time, exiting.")
-                                return None
-                        else:
-                            rprint(
-                                "Could not find wait time in error message, exiting."
-                            )
-                            return None
-                    else:
-                        rprint("HTTP error: ", e)
-                        rprint("response: ", response.text)
-                        return None
+                            raise RuntimeError(
+                                f"Groq rate limit hit and the wait time could not be parsed: {error_message}"
+                            ) from e
+                        raise RuntimeError(
+                            f"Groq rate limit hit without a wait time: {error_message}"
+                        ) from e
+                    raise self.http_error(response) from e
                 else:
                     # Success
                     json_transcript = response.json()
                     break  # Exit the loop
 
-        with transcript_path.open("w") as out_file:
-            json.dump(json_transcript, out_file)
+        write_text_atomic(transcript_path, json.dumps(json_transcript))
 
 
 class MLX:
@@ -185,8 +210,7 @@ class MLX:
             initial_prompt=self.prompt,
             language=self.language,  # type: ignore
         )
-        with transcript_path.open("w") as file:
-            file.write(json.dumps(result, indent=2))
+        write_text_atomic(transcript_path, json.dumps(result, indent=2))
 
 
 class Voxhelm:
@@ -249,8 +273,7 @@ class Voxhelm:
                         f"Voxhelm transcription failed with status {response.status_code}."
                     ) from exc
 
-        with transcript_path.open("w") as out_file:
-            json.dump(response.json(), out_file)
+        write_text_atomic(transcript_path, json.dumps(response.json()))
 
 
 class WhisperCpp:
@@ -287,24 +310,22 @@ class WhisperCpp:
             output_path (Path): Path where the output WAV file will be saved
         """
         rprint(f"Converting {input_path} to WAV format at {output_path}")
-        output_path.parent.mkdir(exist_ok=True, parents=True)
-
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-i",
-                str(input_path),
-                "-ar",
-                "16000",
-                "-ac",
-                "1",
-                "-c:a",
-                "pcm_s16le",
-                str(output_path),
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        with atomic_output(output_path) as tmp_path:
+            run_checked(
+                [
+                    "ffmpeg",
+                    "-i",
+                    str(input_path),
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-c:a",
+                    "pcm_s16le",
+                    str(tmp_path),
+                ],
+                description=f"Converting {input_path} to WAV",
+            )
 
     def transcribe_wav(
         self,
@@ -316,11 +337,17 @@ class WhisperCpp:
 
         Args:
             input_path (Path): Path to the input audio file
-            output_path (Path): Path where the JSON transcript will be saved
+            output_path (Path): Base path for the JSON transcript; whisper-cli
+                appends ``.json`` to it.
         """
         rprint(f"Transcribing {input_path} to {output_path}")
-        output_path.parent.mkdir(exist_ok=True, parents=True)
+        json_path = output_path.with_name(f"{output_path.name}.json")
+        with atomic_output(json_path) as tmp_json_path:
+            # whisper-cli appends ".json" to the -of base path
+            tmp_base = tmp_json_path.with_suffix("")
+            self.run_whisper_cli(input_path, tmp_base)
 
+    def run_whisper_cli(self, input_path: Path, output_base: Path) -> None:
         args = [
             "time",  # Note: this might only work on Unix-like systems
             "whisper-cli",
@@ -330,7 +357,7 @@ class WhisperCpp:
             str(input_path),
             "-oj",  # Output JSON format
             "-of",
-            str(output_path),
+            str(output_base),
             "-p",
             str(self.processors),
         ]
@@ -338,11 +365,7 @@ class WhisperCpp:
             args.extend(["-l", self.language])
         if self.prompt is not None:
             args.extend(["--prompt", self.prompt])
-        subprocess.run(
-            args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        run_checked(args, description=f"whisper-cli transcription of {input_path}")
 
     @staticmethod
     def transform_transcription(input_data: dict) -> dict:
@@ -380,8 +403,7 @@ class WhisperCpp:
         with input_path.open("r") as file:
             cpp_transcript = json.load(file)
         transformed_transcript = self.transform_transcription(cpp_transcript)
-        with output_path.open("w") as out_file:
-            json.dump(transformed_transcript, out_file)
+        write_text_atomic(output_path, json.dumps(transformed_transcript))
 
     def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
         # Convert the audio file to WAV format

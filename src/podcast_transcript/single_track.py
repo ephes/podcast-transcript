@@ -7,9 +7,10 @@ from pathlib import Path
 
 from rich import print as rprint
 
-from .audio import Audio
+from .audio import Audio, get_audio_duration
 from .backends import TranscriptionBackend
 from .config import settings
+from .safe_io import atomic_output, write_text_atomic
 
 
 def audio_chunks_to_text(
@@ -26,6 +27,10 @@ def audio_chunks_to_text(
         transcript_path = chunk.parent / transcript_name
         if not transcript_path.exists():
             service.transcribe(chunk, transcript_path)
+            if not transcript_path.exists():
+                raise RuntimeError(
+                    f"Transcription backend did not produce {transcript_path}"
+                )
         raw_transcripts.append(transcript_path)
     return raw_transcripts
 
@@ -65,23 +70,32 @@ def whisper_text_chunks_to_dote(raw_text_chunks: list[Path]) -> list[Path]:
             whisper_transcript = json.load(file)
         rprint(f"Converting {chunk.name} to DOTe format")
         dote_transcript = whisper_to_dote(whisper_transcript["segments"])
-        dote_path = chunk.with_suffix(".dote.json")
-        with dote_path.open("w") as out_file:
-            json.dump(dote_transcript, out_file)
+        write_text_atomic(dote_path, json.dumps(dote_transcript))
         dote_paths.append(dote_path)
     return dote_paths
 
 
-def combine_dote_chunks(dote_chunks: list[Path], output_path: Path) -> None:
-    """Combine the DOTe chunks into a single DOTe file."""
+def combine_dote_chunks(
+    dote_chunks: list[Path], output_path: Path, chunk_durations: list[float]
+) -> None:
+    """
+    Combine the DOTe chunks into a single DOTe file.
+
+    Each chunk's timestamps are shifted by the summed audio durations of the
+    chunks before it. Using the audio duration (and not the end of the last
+    line) keeps trailing silence or music in a chunk from pulling every later
+    timestamp early.
+    """
+    if len(dote_chunks) != len(chunk_durations):
+        raise ValueError(
+            f"Got {len(dote_chunks)} DOTe chunks but {len(chunk_durations)} chunk durations"
+        )
     if len(dote_chunks) == 1:
         # Copy and return early
         [source_dote_file] = dote_chunks
         rprint(f"Copying {source_dote_file} to {output_path}")
-        try:
-            shutil.copy(source_dote_file, output_path)
-        except FileExistsError:
-            pass
+        with atomic_output(output_path) as tmp_path:
+            shutil.copy(source_dote_file, tmp_path)
         return None
 
     def parse_timecode(timecode):
@@ -104,7 +118,7 @@ def combine_dote_chunks(dote_chunks: list[Path], output_path: Path) -> None:
     combined_lines = []
     offset = timedelta()
 
-    for filename in dote_chunks:
+    for filename, chunk_duration in zip(dote_chunks, chunk_durations):
         with open(filename, "r") as f:
             data = json.load(f)
 
@@ -118,13 +132,10 @@ def combine_dote_chunks(dote_chunks: list[Path], output_path: Path) -> None:
             new_line["endTime"] = format_timecode(end_time + offset)
             combined_lines.append(new_line)
 
-        # Update offset with the last endTime of this file
-        if len(data["lines"]) > 0:
-            last_end_time = parse_timecode(data["lines"][-1]["endTime"])
-            offset += last_end_time
+        # The next chunk starts where this chunk's audio ends
+        offset += timedelta(seconds=chunk_duration)
 
-    with open(output_path, "w") as f:
-        json.dump({"lines": combined_lines}, f)
+    write_text_atomic(output_path, json.dumps({"lines": combined_lines}))
 
 
 def convert_dote_to_podlove(dote_path: Path, podlove_path: Path) -> None:
@@ -151,8 +162,7 @@ def convert_dote_to_podlove(dote_path: Path, podlove_path: Path) -> None:
         }
         transcripts.append(transcript)
 
-    with open(podlove_path, "w") as outfile:
-        json.dump({"transcripts": transcripts}, outfile)
+    write_text_atomic(podlove_path, json.dumps({"transcripts": transcripts}))
 
 
 def convert_to_webvtt(dote_path: Path, vtt_path: Path) -> None:
@@ -170,8 +180,7 @@ def convert_to_webvtt(dote_path: Path, vtt_path: Path) -> None:
         output.append(text)
         output.append("")  # Blank line to separate captions
 
-    with vtt_path.open("w") as f:
-        f.write("\n".join(output))
+    write_text_atomic(vtt_path, "\n".join(output))
 
 
 def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
@@ -185,8 +194,7 @@ def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
         text = line["text"]
         output.append(text)
 
-    with plaintext_path.open("w") as f:
-        f.write("\n".join(output))
+    write_text_atomic(plaintext_path, "\n".join(output))
 
 
 def transcribe(url: str, backend: TranscriptionBackend) -> dict[str, Path]:
@@ -197,7 +205,11 @@ def transcribe(url: str, backend: TranscriptionBackend) -> dict[str, Path]:
     dote_chunks = whisper_text_chunks_to_dote(text_chunks)
     dote_path = audio.podcast_dir / f"{audio.prefix}.dote.json"
     if not dote_path.exists():
-        combine_dote_chunks(dote_chunks, dote_path)
+        if len(audio_chunks) > 1:
+            chunk_durations = [get_audio_duration(chunk) for chunk in audio_chunks]
+        else:
+            chunk_durations = [0.0]  # a single chunk needs no offset
+        combine_dote_chunks(dote_chunks, dote_path, chunk_durations)
     transcript_paths["DOTe"] = dote_path
     podlove_path = audio.podcast_dir / f"{audio.prefix}.podlove.json"
     if not podlove_path.exists():

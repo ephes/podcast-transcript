@@ -10,6 +10,7 @@ A simple command-line tool to generate transcripts for podcast episodes or other
 - [Configuration](#configuration)
 - [Usage](#usage)
 - [Output Formats](#output-formats)
+- [Troubleshooting](#troubleshooting)
 - [Development](#development)
   - [Running Tests](#running-tests)
   - [Code Style and Linting](#code-style-and-linting)
@@ -176,12 +177,39 @@ The transcription process involves the following steps:
 
 The output files are saved in a directory named after the episode, within the transcript directory.
 
+Each step caches its result as a file in that directory and is skipped on later runs if the file
+exists. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
+run or transcription raises an error and is retried on the next run. Chunked transcripts are combined
+using each chunk's audio duration, so timestamps stay aligned for episodes longer than 2 hours.
+
 ## Output Formats
 
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.
 - **WebVTT (*.vtt)**: A subtitle format that can be used for captioning in media players.
 - **Plaintext**: Just the plain text of the transcription.
+
+## Troubleshooting
+
+### Garbage transcripts or errors from an old cache directory
+
+Versions before 0.1.7 could cache a failed step as if it had succeeded, for example by saving a
+redirect or error page instead of the episode audio, or by keeping a partial ffmpeg output. Later runs
+then reuse that broken file. If an episode keeps failing or produces a bad transcript, delete its
+directory once and run `transcribe` again:
+
+```shell
+rm -r ~/.podcast-transcripts/transcripts/<episode-name>  # or $TRANSCRIPT_DIR/<episode-name>
+```
+
+Multi-chunk transcripts (episodes longer than 2 hours or larger than 25 MB after resampling) created
+before 0.1.7 can also have timestamps that drift early. The per-chunk transcripts in `chunks/` are fine,
+so to fix only the timestamps delete the combined outputs next to `chunks/` and re-run:
+
+```shell
+cd ~/.podcast-transcripts/transcripts/<episode-name>
+rm <episode-name>.dote.json <episode-name>.podlove.json <episode-name>.webvtt <episode-name>.txt
+```
 
 ## Roadmap
 

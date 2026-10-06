@@ -1,12 +1,20 @@
 import json
+import os
+import re
 import httpx
 import shutil
 import subprocess
+import uuid
 
 from pathlib import Path
 from urllib.parse import urlparse
 
 from rich import print as rprint
+
+from .safe_io import atomic_output, run_checked, write_text_atomic
+
+DOWNLOAD_TIMEOUT = httpx.Timeout(60.0, connect=30.0)
+GENERATED_CHUNK_RE = re.compile(r"chunk_\d{3,}\.(?:mp3|wav)")
 
 
 def is_url(url: str) -> bool:
@@ -22,10 +30,22 @@ def get_title_from_string(url: str) -> str:
 
 
 def download(url: str, target_path: Path) -> None:
+    """
+    Download ``url`` to ``target_path``.
+
+    Redirects are followed (enclosure URLs usually redirect through tracking
+    prefixes or CDNs) and HTTP errors raise. The body is streamed to a
+    temporary file that is only renamed to ``target_path`` after the whole
+    download succeeded, so a failed download is never cached as the episode.
+    """
     rprint(f"Downloading {url} to {target_path}")
-    response = httpx.get(url)
-    with target_path.open("wb") as file:
-        file.write(response.content)
+    with atomic_output(target_path) as tmp_path:
+        with httpx.Client(follow_redirects=True, timeout=DOWNLOAD_TIMEOUT) as client:
+            with client.stream("GET", url) as response:
+                response.raise_for_status()
+                with tmp_path.open("wb") as file:
+                    for data in response.iter_bytes():
+                        file.write(data)
 
 
 def get_audio_duration(path) -> float:
@@ -55,24 +75,23 @@ def get_audio_duration(path) -> float:
 
 def resample_audio(input_path: Path, output_path: Path) -> None:
     rprint(f"Resampling {input_path} to {output_path}")
-    output_path.parent.mkdir(exist_ok=True, parents=True)
     # resample the audio file to 16khz
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-i",
-            str(input_path),
-            "-ar",
-            "16000",
-            "-ac",
-            "1",
-            "-map",
-            "0:a:",
-            str(output_path),
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    with atomic_output(output_path) as tmp_path:
+        run_checked(
+            [
+                "ffmpeg",
+                "-i",
+                str(input_path),
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-map",
+                "0:a:",
+                str(tmp_path),
+            ],
+            description=f"Resampling {input_path}",
+        )
 
 
 # 25MB max bytes are allowed
@@ -97,7 +116,11 @@ class Audio:
 
     @property
     def episode_path(self):
-        return self.episode_chunks_dir / Path(self.url).name
+        name = Path(self.url).name
+        if GENERATED_CHUNK_RE.fullmatch(name):
+            # Keep the source audio from colliding with generated chunk files
+            name = f"episode_{name}"
+        return self.episode_chunks_dir / name
 
     @property
     def resampled_episode_path(self):
@@ -112,7 +135,8 @@ class Audio:
             if self._is_http_url:
                 download(self.url, self.episode_path)
             else:
-                shutil.copy(Path(self.url), self.episode_path)
+                with atomic_output(self.episode_path) as tmp_path:
+                    shutil.copy(Path(self.url), tmp_path)
 
     def make_sure_audio_file_is_resampled(self) -> None:
         """
@@ -133,37 +157,89 @@ class Audio:
         If the audio file exceeds the size limit, split it into smaller chunks.
         If not, just create a link to the resampled audio file.
         """
-        chunk_paths = sorted(list(self.episode_chunks_dir.glob("chunk_*.mp3")))
-        if len(chunk_paths) > 0:
-            return chunk_paths
+        cached = self._load_chunk_manifest()
+        if cached is not None:
+            return cached
+        # No valid manifest: either an earlier split was interrupted while the
+        # chunks were moved into place, or the cache predates the manifest.
+        # Remove leftover chunk audio (and WAV files derived from it) and
+        # split again so a partial chunk set is never reused.
+        self._remove_generated_chunks()
         if self.exceeds_size_limit:
             rprint(f"Splitting {self.resampled_episode_path} into chunks")
-            subprocess.run(
+            chunk_names = self._split_resampled_episode()
+        else:
+            rprint(f"Creating symlink to {self.resampled_episode_path}")
+            with atomic_output(self.episode_chunks_dir / "chunk_000.mp3") as tmp_path:
+                tmp_path.symlink_to(self.resampled_episode_path)
+            chunk_names = ["chunk_000.mp3"]
+        # The manifest is written last; it marks the chunk set as complete.
+        write_text_atomic(self.chunks_manifest_path, json.dumps(chunk_names))
+        return [self.episode_chunks_dir / name for name in chunk_names]
+
+    def _remove_generated_chunks(self) -> None:
+        """
+        Remove chunk files this tool generated (``chunk_NNN.mp3`` and the
+        ``chunk_NNN.wav`` derived from them). The downloaded and resampled
+        episode files are never touched, even if their names look similar.
+        """
+        keep = {self.episode_path, self.resampled_episode_path}
+        for path in self.episode_chunks_dir.glob("chunk_*"):
+            if path in keep or not GENERATED_CHUNK_RE.fullmatch(path.name):
+                continue
+            path.unlink()
+
+    @property
+    def chunks_manifest_path(self) -> Path:
+        return self.episode_chunks_dir / "chunks.json"
+
+    def _load_chunk_manifest(self) -> list[Path] | None:
+        """Return the cached chunk paths if a complete chunk set exists."""
+        try:
+            chunk_names = json.loads(self.chunks_manifest_path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+        if not isinstance(chunk_names, list) or not chunk_names:
+            return None
+        chunk_paths = [self.episode_chunks_dir / str(name) for name in chunk_names]
+        if not all(path.exists() for path in chunk_paths):
+            return None
+        return chunk_paths
+
+    def _split_resampled_episode(self) -> list[str]:
+        """
+        Split the resampled episode into a hidden scratch directory and only
+        move the chunks into place once ffmpeg succeeded. Returns the chunk
+        file names; the caller records them in the manifest.
+        """
+        split_dir = self.episode_chunks_dir / f".split-{uuid.uuid4().hex}"
+        split_dir.mkdir(parents=True)
+        try:
+            run_checked(
                 [
                     "ffmpeg",
                     "-i",
-                    self.resampled_episode_path,
+                    str(self.resampled_episode_path),
                     "-f",
                     "segment",
                     "-segment_time",
                     "7200",  # 7200 seconds is the maximum duration allowed by Groq
                     "-c",
                     "copy",
-                    self.episode_chunks_dir / "chunk_%03d.mp3",
+                    str(split_dir / "chunk_%03d.mp3"),
                 ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                description=f"Splitting {self.resampled_episode_path} into chunks",
             )
-        else:
-            rprint(f"Creating symlink to {self.resampled_episode_path}")
-            try:
-                (self.episode_chunks_dir / "chunk_000.mp3").symlink_to(
-                    self.resampled_episode_path
+            produced = sorted(split_dir.glob("chunk_*.mp3"))
+            if not produced:
+                raise RuntimeError(
+                    f"Splitting {self.resampled_episode_path} produced no chunks"
                 )
-            except FileExistsError:
-                pass
-        chunk_paths = sorted(list(self.episode_chunks_dir.glob("chunk_*.mp3")))
-        return chunk_paths
+            for chunk in produced:
+                os.replace(chunk, self.episode_chunks_dir / chunk.name)
+            return [chunk.name for chunk in produced]
+        finally:
+            shutil.rmtree(split_dir, ignore_errors=True)
 
     def prepare_audio_for_transcription(self) -> list[Path]:
         """

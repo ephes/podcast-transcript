@@ -5,9 +5,32 @@
 
 - Add a `voxhelm` backend for remote transcription via Voxhelm's OpenAI-compatible API.
 
+### Fixes
+
+- Make every pipeline step fail closed so a failed step is never cached as a success:
+  - Downloads follow redirects, raise on HTTP errors and stream to a temporary file that is only
+    renamed into place after the download completed.
+  - ffmpeg (resample, chunk split, WAV conversion) and `whisper-cli` run with `check=True`, write to
+    temporary outputs that are renamed into place on success, and include the tool's stderr in the error.
+  - The chunk split records the complete chunk set in `chunks/chunks.json` after all chunks are in
+    place. Chunk directories without this manifest (interrupted splits, or caches from earlier versions)
+    are split again once; existing per-chunk transcripts are kept.
+  - Input files named like generated chunks (`chunk_000.mp3`) are cached as `episode_chunk_000.mp3` so
+    the chunk step can no longer overwrite the source audio.
+  - The Groq backend raises on non-429 HTTP errors and on rate-limit responses without a usable wait
+    time instead of returning without a transcript. Fractional and millisecond rate-limit waits
+    (for example `2.5s` or `480ms`) are now parsed correctly.
+  - Transcript, DOTe, Podlove, WebVTT and plain-text outputs are written atomically.
+- Offset multi-chunk transcripts by each chunk's `ffprobe` audio duration instead of the end of its last
+  speech line, which shifted timestamps early for episodes longer than 2 hours.
+- Cache directories poisoned by earlier versions (for example a saved redirect or error page instead of the
+  episode) are not repaired automatically. Delete the episode's directory once and re-run; see
+  "Troubleshooting" in the README.
+
 ### Documentation
 
 - Document `VOXHELM_API_BASE` / `VOXHELM_API_KEY` configuration and `--backend voxhelm` usage.
+- Add a README troubleshooting note for cache directories left behind by failed steps in older versions.
 
 0.1.6 - 2026-02-26
 ==================
