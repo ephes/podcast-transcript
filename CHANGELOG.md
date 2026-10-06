@@ -5,6 +5,10 @@
 
 - Add a `voxhelm` backend for remote transcription via Voxhelm's OpenAI-compatible API.
 
+### Security
+
+- Refresh vulnerable locked dependencies flagged by `pip-audit`: anyio 4.14.2, click 8.3.3, filelock 3.20.3, fsspec 2026.6.0, idna 3.15, pygments 2.20.0, pytest 9.0.3, requests 2.33.0, torch 2.13.0, urllib3 2.8.0 and virtualenv 20.36.1.
+
 ### Documentation
 
 - Document `VOXHELM_API_BASE` / `VOXHELM_API_KEY` configuration and `--backend voxhelm` usage.
