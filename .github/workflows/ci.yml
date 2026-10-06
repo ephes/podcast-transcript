@@ -47,6 +47,9 @@ jobs:
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Install ffmpeg
+        # The settings object refuses to load without ffmpeg on PATH; tests mock the calls.
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
       - name: Sync locked dependencies
         run: uv sync --frozen
       - name: Lint, type check, and test
