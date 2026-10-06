@@ -41,6 +41,11 @@
   episode, or multi-chunk transcripts with drifting timestamps) are not repaired; with the hashed cache
   directories above they are simply no longer used. Delete them once; see "Troubleshooting" in the README.
 
+### Development
+
+- Add a GitHub Actions CI workflow that runs `just check` (pre-commit, mypy, pytest) on pushes and pull
+  requests, with SHA-pinned actions, read-only permissions and no secrets.
+
 ### Documentation
 
 - Document `VOXHELM_API_BASE` / `VOXHELM_API_KEY` configuration and `--backend voxhelm` usage.

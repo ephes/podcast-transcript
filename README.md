@@ -270,6 +270,9 @@ just typecheck
 just test
 ```
 
+`just check` runs all three. GitHub Actions runs `just check` on every push and pull request
+(`.github/workflows/ci.yml`).
+
 ### Running Tests
 
 The project uses pytest for testing. To run tests:
