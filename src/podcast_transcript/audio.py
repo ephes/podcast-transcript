@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -15,6 +16,14 @@ from .safe_io import atomic_output, run_checked, write_text_atomic
 
 DOWNLOAD_TIMEOUT = httpx.Timeout(60.0, connect=30.0)
 GENERATED_CHUNK_RE = re.compile(r"chunk_\d{3,}\.(?:mp3|wav)")
+# Per-chunk transcript files written by the transcription step: the backend's
+# ``chunk_NNN.json``, whisper-cpp's intermediate ``chunk_NNN.whisper-cpp.json``
+# and the ``chunk_NNN.dote.json`` derived from it.
+GENERATED_TRANSCRIPT_RE = re.compile(
+    r"chunk_\d{3,}\.(?:json|whisper-cpp\.json|dote\.json)"
+)
+CACHE_KEY_HASH_LENGTH = 12
+TRANSCRIPT_OUTPUT_SUFFIXES = (".dote.json", ".podlove.json", ".webvtt", ".txt")
 
 
 def is_url(url: str) -> bool:
@@ -27,6 +36,29 @@ def get_title_from_string(url: str) -> str:
         return parsed_url.path.split("/")[-1].split(".")[0]
     else:
         return Path(url).stem
+
+
+def get_cache_source(url: str) -> str:
+    """
+    Return the string that identifies an episode's source for caching: the
+    full URL (including query string) for URLs, the absolute path for files.
+    """
+    if is_url(url):
+        return url
+    return str(Path(url).expanduser().resolve())
+
+
+def get_cache_key(url: str) -> str:
+    """
+    Return the cache directory name for an episode: a readable stem plus a
+    short hash of the full URL or absolute path. Two episodes that share a
+    file name (``.../123/audio.mp3`` and ``.../124/audio.mp3``) or the part
+    before the first dot (``ep1.final.mp3`` and ``ep1.draft.mp3``) get
+    different directories.
+    """
+    stem = get_title_from_string(url) or "episode"
+    digest = hashlib.sha256(get_cache_source(url).encode("utf-8")).hexdigest()
+    return f"{stem}-{digest[:CACHE_KEY_HASH_LENGTH]}"
 
 
 def download(url: str, target_path: Path) -> None:
@@ -103,12 +135,13 @@ class Audio:
         self.base_dir = base_dir
         self.url = url
         self._is_http_url = is_url(url)
-        self.prefix = get_title_from_string(url)
+        self.prefix = get_title_from_string(url) or "episode"
         if title is not None:
             self.title = title
         else:
             self.title = self.prefix
-        self.podcast_dir = base_dir / self.prefix
+        self.cache_key = get_cache_key(url)
+        self.podcast_dir = base_dir / self.cache_key
         self.episode_chunks_dir = self.podcast_dir / "chunks"
 
     def __repr__(self):
@@ -125,6 +158,50 @@ class Audio:
     @property
     def resampled_episode_path(self):
         return self.episode_chunks_dir / f"{self.prefix}_16khz.mp3"
+
+    def output_path(self, suffix: str) -> Path:
+        """Path of a combined transcript output, e.g. ``output_path(".txt")``."""
+        return self.podcast_dir / f"{self.prefix}{suffix}"
+
+    @property
+    def cache_metadata_path(self) -> Path:
+        return self.podcast_dir / "cache.json"
+
+    def ensure_transcript_cache_matches(self, metadata: dict) -> None:
+        """
+        Make sure cached transcripts were produced with ``metadata`` (backend,
+        model, language, prompt). If ``cache.json`` is missing or records
+        different settings, the per-chunk transcripts and the combined outputs
+        are deleted so they are transcribed again; the downloaded, resampled
+        and chunked audio is kept. ``cache.json`` is written only after the
+        stale transcripts are gone.
+        """
+        try:
+            cached = json.loads(self.cache_metadata_path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            cached = None
+        if cached == metadata:
+            return
+        if cached is not None:
+            rprint(
+                f"Transcription settings changed ({cached} -> {metadata}), "
+                "discarding cached transcripts"
+            )
+        self._remove_cached_transcripts()
+        self.podcast_dir.mkdir(parents=True, exist_ok=True)
+        write_text_atomic(
+            self.cache_metadata_path, json.dumps(metadata, sort_keys=True)
+        )
+
+    def _remove_cached_transcripts(self) -> None:
+        keep = {self.episode_path, self.resampled_episode_path}
+        if self.episode_chunks_dir.is_dir():
+            for path in self.episode_chunks_dir.glob("chunk_*"):
+                if path in keep or not GENERATED_TRANSCRIPT_RE.fullmatch(path.name):
+                    continue
+                path.unlink()
+        for suffix in TRANSCRIPT_OUTPUT_SUFFIXES:
+            self.output_path(suffix).unlink(missing_ok=True)
 
     def make_sure_audio_file_exists(self) -> None:
         """
@@ -248,7 +325,7 @@ class Audio:
             - Resample the audio file to 16khz
             - Split the audio file into smaller chunks if needed
         """
-        self.podcast_dir.mkdir(exist_ok=True)
+        self.podcast_dir.mkdir(parents=True, exist_ok=True)
         self.make_sure_audio_file_exists()
         self.make_sure_audio_file_is_resampled()
         return self.split_into_chunks()

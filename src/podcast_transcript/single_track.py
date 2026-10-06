@@ -13,6 +13,20 @@ from .config import settings
 from .safe_io import atomic_output, write_text_atomic
 
 
+def backend_cache_metadata(backend: TranscriptionBackend) -> dict:
+    """
+    Settings that change what a backend transcribes. They are stored in the
+    episode's ``cache.json``; cached transcripts made with different settings
+    are discarded. Secrets such as API keys are never included.
+    """
+    return {
+        "backend": type(backend).__name__,
+        "model": getattr(backend, "model_name", None),
+        "language": getattr(backend, "language", None),
+        "prompt": getattr(backend, "prompt", None),
+    }
+
+
 def audio_chunks_to_text(
     service: TranscriptionBackend, audio_chunks: list[Path]
 ) -> list[Path]:
@@ -201,9 +215,10 @@ def transcribe(url: str, backend: TranscriptionBackend) -> dict[str, Path]:
     transcript_paths = {}
     audio = Audio(base_dir=settings.transcript_dir, url=url)
     audio_chunks = audio.prepare_audio_for_transcription()
+    audio.ensure_transcript_cache_matches(backend_cache_metadata(backend))
     text_chunks = audio_chunks_to_text(backend, audio_chunks)
     dote_chunks = whisper_text_chunks_to_dote(text_chunks)
-    dote_path = audio.podcast_dir / f"{audio.prefix}.dote.json"
+    dote_path = audio.output_path(".dote.json")
     if not dote_path.exists():
         if len(audio_chunks) > 1:
             chunk_durations = [get_audio_duration(chunk) for chunk in audio_chunks]
@@ -211,15 +226,15 @@ def transcribe(url: str, backend: TranscriptionBackend) -> dict[str, Path]:
             chunk_durations = [0.0]  # a single chunk needs no offset
         combine_dote_chunks(dote_chunks, dote_path, chunk_durations)
     transcript_paths["DOTe"] = dote_path
-    podlove_path = audio.podcast_dir / f"{audio.prefix}.podlove.json"
+    podlove_path = audio.output_path(".podlove.json")
     if not podlove_path.exists():
         convert_dote_to_podlove(dote_path, podlove_path)
     transcript_paths["podlove"] = podlove_path
-    webvtt_path = audio.podcast_dir / f"{audio.prefix}.webvtt"
+    webvtt_path = audio.output_path(".webvtt")
     if not webvtt_path.exists():
         convert_to_webvtt(dote_path, webvtt_path)
     transcript_paths["WebVTT"] = webvtt_path
-    plaintext_path = audio.podcast_dir / f"{audio.prefix}.txt"
+    plaintext_path = audio.output_path(".txt")
     if not plaintext_path.exists():
         convert_to_plaintext(dote_path, plaintext_path)
     transcript_paths["plain text"] = plaintext_path

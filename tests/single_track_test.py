@@ -4,8 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from podcast_transcript.audio import Audio, resample_audio
+from podcast_transcript.audio import Audio, get_cache_key, resample_audio
 from podcast_transcript.single_track import (
+    backend_cache_metadata,
     combine_dote_chunks,
     transcribe,
     whisper_to_dote,
@@ -16,7 +17,8 @@ def test_audio_initialization(audio):
     assert audio.url == "https://example.com/test.mp3"
     assert audio.title == "test"
     assert audio.prefix == "test"
-    assert audio.podcast_dir == audio.base_dir / "test"
+    assert audio.podcast_dir == audio.base_dir / get_cache_key(audio.url)
+    assert audio.podcast_dir.name.startswith("test-")
     assert audio.episode_chunks_dir == audio.podcast_dir / "chunks"
 
 
@@ -385,3 +387,153 @@ def test_episode_named_like_a_chunk_is_not_overwritten(mocker, tmp_path):
     assert audio.episode_path.read_bytes() == b"original"
     assert [p.name for p in chunk_paths] == ["chunk_000.mp3"]
     assert chunk_paths[0].resolve() == audio.resampled_episode_path
+
+
+@pytest.mark.parametrize(
+    "first,second",
+    [
+        ("https://example.com/123/audio.mp3", "https://example.com/124/audio.mp3"),
+        ("https://example.com/ep1.final.mp3", "https://example.com/ep1.draft.mp3"),
+        ("https://example.com/a.mp3?id=1", "https://example.com/a.mp3?id=2"),
+    ],
+)
+def test_urls_with_same_stem_get_separate_cache_dirs(tmp_path, first, second):
+    first_audio = Audio(base_dir=tmp_path, url=first)
+    second_audio = Audio(base_dir=tmp_path, url=second)
+
+    assert first_audio.prefix == second_audio.prefix
+    assert first_audio.podcast_dir != second_audio.podcast_dir
+    assert first_audio.podcast_dir.name.startswith(f"{first_audio.prefix}-")
+
+
+def test_local_files_with_same_name_get_separate_cache_dirs(tmp_path, monkeypatch):
+    first = Audio(base_dir=tmp_path, url="/podcasts/a/audio.mp3")
+    second = Audio(base_dir=tmp_path, url="/podcasts/b/audio.mp3")
+    assert first.podcast_dir != second.podcast_dir
+
+    # A relative path and its absolute form share one cache dir
+    monkeypatch.chdir(tmp_path)
+    relative = Audio(base_dir=tmp_path, url="audio.mp3")
+    absolute = Audio(base_dir=tmp_path, url=str(tmp_path / "audio.mp3"))
+    assert relative.podcast_dir == absolute.podcast_dir
+
+
+def test_cache_key_is_stable():
+    url = "https://example.com/123/audio.mp3"
+    assert get_cache_key(url) == get_cache_key(url)
+    assert get_cache_key("https://example.com/").startswith("episode-")
+
+
+class RecordingBackend:
+    def __init__(self, model_name: str, text: str):
+        self.model_name = model_name
+        self.language = "en"
+        self.prompt = "podcast-transcript"
+        self.api_key = "secret-token"
+        self.text = text
+        self.calls: list[Path] = []
+
+    def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
+        self.calls.append(audio_file)
+        transcript_path.write_text(
+            json.dumps({"segments": [{"start": 0.0, "end": 1.0, "text": self.text}]})
+        )
+
+
+def _fake_prepare(self):
+    self.episode_chunks_dir.mkdir(parents=True, exist_ok=True)
+    chunk = self.episode_chunks_dir / "chunk_000.mp3"
+    chunk.write_bytes(b"audio")
+    return [chunk]
+
+
+def test_two_episodes_with_same_basename_get_their_own_transcripts(mocker, tmp_path):
+    mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
+    mocker.patch.object(Audio, "prepare_audio_for_transcription", _fake_prepare)
+
+    first = transcribe(
+        "https://example.com/123/audio.mp3", RecordingBackend("m", "episode 123")
+    )
+    second = transcribe(
+        "https://example.com/124/audio.mp3", RecordingBackend("m", "episode 124")
+    )
+
+    assert first["plain text"] != second["plain text"]
+    assert first["plain text"].read_text() == "episode 123"
+    assert second["plain text"].read_text() == "episode 124"
+
+
+def test_backend_change_retranscribes(mocker, tmp_path):
+    mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
+    mocker.patch.object(Audio, "prepare_audio_for_transcription", _fake_prepare)
+    url = "https://example.com/test.mp3"
+
+    old_backend = RecordingBackend("old-model", "old transcript")
+    paths = transcribe(url, old_backend)
+    assert paths["plain text"].read_text() == "old transcript"
+
+    # Same settings: everything is reused
+    again = RecordingBackend("old-model", "unused")
+    transcribe(url, again)
+    assert again.calls == []
+    assert paths["plain text"].read_text() == "old transcript"
+
+    # Different model: chunk transcripts and combined outputs are redone
+    new_backend = RecordingBackend("new-model", "new transcript")
+    paths = transcribe(url, new_backend)
+    assert len(new_backend.calls) == 1
+    for path in paths.values():
+        assert "old transcript" not in path.read_text()
+    assert paths["plain text"].read_text() == "new transcript"
+    audio = Audio(base_dir=tmp_path, url=url)
+    metadata = json.loads(audio.cache_metadata_path.read_text())
+    assert metadata["model"] == "new-model"
+    assert "secret-token" not in audio.cache_metadata_path.read_text()
+
+
+def test_backend_class_change_retranscribes(mocker, tmp_path):
+    mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
+    mocker.patch.object(Audio, "prepare_audio_for_transcription", _fake_prepare)
+    url = "https://example.com/test.mp3"
+    transcribe(url, RecordingBackend("m", "first"))
+
+    class OtherBackend(RecordingBackend):
+        pass
+
+    other = OtherBackend("m", "second")
+    paths = transcribe(url, other)
+
+    assert len(other.calls) == 1
+    assert paths["plain text"].read_text() == "second"
+
+
+def test_transcript_cache_without_metadata_is_discarded_but_audio_kept(tmp_path):
+    audio = Audio(base_dir=tmp_path, url="https://example.com/chunk_000.mp3")
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.episode_path.write_bytes(b"original")
+    audio.resampled_episode_path.write_bytes(b"resampled")
+    chunks_dir = audio.episode_chunks_dir
+    (chunks_dir / "chunk_000.mp3").write_bytes(b"chunk")
+    (chunks_dir / "chunk_000.wav").write_bytes(b"wav")
+    (chunks_dir / "chunks.json").write_text('["chunk_000.mp3"]')
+    stale = [
+        chunks_dir / "chunk_000.json",
+        chunks_dir / "chunk_000.dote.json",
+        chunks_dir / "chunk_000.whisper-cpp.json",
+        audio.output_path(".dote.json"),
+        audio.output_path(".podlove.json"),
+        audio.output_path(".webvtt"),
+        audio.output_path(".txt"),
+    ]
+    for path in stale:
+        path.write_text("stale")
+
+    metadata = backend_cache_metadata(RecordingBackend("m", "x"))
+    audio.ensure_transcript_cache_matches(metadata)
+
+    assert not any(path.exists() for path in stale)
+    for name in ("chunk_000.mp3", "chunk_000.wav", "chunks.json"):
+        assert (chunks_dir / name).exists()
+    assert audio.episode_path.read_bytes() == b"original"
+    assert audio.resampled_episode_path.read_bytes() == b"resampled"
+    assert json.loads(audio.cache_metadata_path.read_text()) == metadata

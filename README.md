@@ -89,6 +89,11 @@ Create a .env file in the transcript directory (default is ~/.podcast-transcript
 GROQ_API_KEY=your_api_key_here
 ```
 
+The .env file has one `KEY=value` per line. Only the first `=` separates key and value, so values may
+contain `=`. Blank lines and lines starting with `#` are ignored, an optional `export ` prefix is
+allowed, and one pair of surrounding quotes is removed from the value. Comments after a value are not
+supported; a `#` there is part of the value.
+
 ### Configuring the Voxhelm Backend
 
 Set these variables when using `--backend voxhelm`:
@@ -175,10 +180,17 @@ The transcription process involves the following steps:
 5. Combine the transcribed chunks into a single transcript.
 6. Generate output files in DOTe JSON, Podlove JSON, and WebVTT formats.
 
-The output files are saved in a directory named after the episode, within the transcript directory.
+The output files are saved in a directory within the transcript directory. The directory name is the
+episode's file name (up to the first `.`) plus a short hash of the full URL or absolute file path, for
+example `audio-3f2a9c41d0b7`. Episodes that share a file name, such as `.../123/audio.mp3` and
+`.../124/audio.mp3`, therefore get separate directories. The output files themselves keep the readable
+name (`audio.dote.json`, `audio.txt`, ...).
 
 Each step caches its result as a file in that directory and is skipped on later runs if the file
-exists. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
+exists. The directory also holds a `cache.json` that records the backend, model, language and prompt
+used for the transcripts. If you re-run with different settings (for example `--backend groq` after
+`whisper-cpp`, or another `TRANSCRIPT_MODEL_NAME`), the cached chunk transcripts and combined outputs are
+discarded and transcribed again; the downloaded, resampled and chunked audio is reused. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
 run or transcription raises an error and is retried on the next run. Chunked transcripts are combined
 using each chunk's audio duration, so timestamps stay aligned for episodes longer than 2 hours.
 
@@ -191,24 +203,33 @@ using each chunk's audio duration, so timestamps stay aligned for episodes longe
 
 ## Troubleshooting
 
-### Garbage transcripts or errors from an old cache directory
+### Cache directories from versions before 0.1.7
 
-Versions before 0.1.7 could cache a failed step as if it had succeeded, for example by saving a
-redirect or error page instead of the episode audio, or by keeping a partial ffmpeg output. Later runs
-then reuse that broken file. If an episode keeps failing or produces a bad transcript, delete its
-directory once and run `transcribe` again:
+Before 0.1.7 the cache directory was named after the episode's file name only, so episodes with the
+same file name shared one directory and a later run could return an earlier episode's transcript.
+Those versions could also cache a failed step as if it had succeeded (for example a saved redirect or
+error page instead of the episode audio, or a partial ffmpeg output), and multi-chunk transcripts
+(episodes longer than 2 hours or larger than 25 MB after resampling) could have timestamps that drift
+early.
+
+0.1.7 does not migrate these directories, because the URL that produced a directory is unknown. They
+are named without a hash suffix (for example `audio`) and are no longer read or modified: the first
+run per episode after upgrading downloads and transcribes the episode again into a new, hashed
+directory, so none of the problems above carry over. Copy any transcripts you still need out of the
+old directories, then delete them once:
 
 ```shell
-rm -r ~/.podcast-transcripts/transcripts/<episode-name>  # or $TRANSCRIPT_DIR/<episode-name>
+ls ~/.podcast-transcripts/transcripts/  # or $TRANSCRIPT_DIR
+rm -r ~/.podcast-transcripts/transcripts/<old-episode-name>
 ```
 
-Multi-chunk transcripts (episodes longer than 2 hours or larger than 25 MB after resampling) created
-before 0.1.7 can also have timestamps that drift early. The per-chunk transcripts in `chunks/` are fine,
-so to fix only the timestamps delete the combined outputs next to `chunks/` and re-run:
+### Starting an episode over
+
+Failed steps are not cached, so re-running `transcribe` retries them. To force a fresh download and
+transcription of one episode, delete its directory and run `transcribe` again:
 
 ```shell
-cd ~/.podcast-transcripts/transcripts/<episode-name>
-rm <episode-name>.dote.json <episode-name>.podlove.json <episode-name>.webvtt <episode-name>.txt
+rm -r ~/.podcast-transcripts/transcripts/<episode-directory>  # or $TRANSCRIPT_DIR/<episode-directory>
 ```
 
 ## Roadmap

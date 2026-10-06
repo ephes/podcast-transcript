@@ -6,6 +6,33 @@ from pathlib import Path
 from rich.console import Console
 
 
+def parse_env_line(line: str) -> tuple[str, str] | None:
+    """
+    Parse one ``KEY=value`` line of a .env file.
+
+    Blank lines, ``#`` comment lines and lines without ``=`` return None.
+    Only the first ``=`` separates key and value, so values may contain
+    ``=`` (for example base64 tokens). An optional ``export`` prefix is
+    ignored, and one pair of matching surrounding quotes is removed from the
+    value. Inline comments are not stripped, because values may contain ``#``.
+    """
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    key, sep, value = stripped.partition("=")
+    if not sep:
+        return None
+    key = key.strip()
+    if key.startswith("export "):
+        key = key[len("export ") :].strip()
+    if not key:
+        return None
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1]
+    return key, value
+
+
 class Settings:
     """
     A base class for settings holding the applications root dir
@@ -74,12 +101,10 @@ class Settings:
         """
         with env_file.open("r") as f:
             for line in f:
-                try:
-                    key, value = line.strip().split("=")
-                    value = value.strip('"')
+                parsed = parse_env_line(line)
+                if parsed is not None:
+                    key, value = parsed
                     setattr(self, key.lower(), value)
-                except ValueError:
-                    pass
 
     def read_env_vars(self):
         """

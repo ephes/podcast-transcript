@@ -13,8 +13,8 @@
   - ffmpeg (resample, chunk split, WAV conversion) and `whisper-cli` run with `check=True`, write to
     temporary outputs that are renamed into place on success, and include the tool's stderr in the error.
   - The chunk split records the complete chunk set in `chunks/chunks.json` after all chunks are in
-    place. Chunk directories without this manifest (interrupted splits, or caches from earlier versions)
-    are split again once; existing per-chunk transcripts are kept.
+    place. Chunk directories without this manifest (interrupted splits) are split again once; existing
+    per-chunk transcripts are kept.
   - Input files named like generated chunks (`chunk_000.mp3`) are cached as `episode_chunk_000.mp3` so
     the chunk step can no longer overwrite the source audio.
   - The Groq backend raises on non-429 HTTP errors and on rate-limit responses without a usable wait
@@ -23,14 +23,29 @@
   - Transcript, DOTe, Podlove, WebVTT and plain-text outputs are written atomically.
 - Offset multi-chunk transcripts by each chunk's `ffprobe` audio duration instead of the end of its last
   speech line, which shifted timestamps early for episodes longer than 2 hours.
+- Key each episode's cache directory by its readable name plus a short hash of the full URL or absolute
+  file path (for example `audio-3f2a9c41d0b7`). Before, the directory was named after the file name up to
+  the first `.`, so `.../123/audio.mp3` and `.../124/audio.mp3` (or `ep1.final.mp3` and `ep1.draft.mp3`)
+  shared one cache and the second run silently returned the first episode's transcript.
+  **Upgrade note:** existing cache directories (without the hash suffix) are not migrated, because the
+  URL that produced them is unknown. They are left untouched and no longer used; the first run per
+  episode after upgrading downloads and transcribes again. Delete the old directories once (see
+  "Troubleshooting" in the README).
+- Record the backend, model, language and prompt in a `cache.json` per episode. When they differ from
+  the cached run (for example after switching `--backend`), the chunk transcripts and combined outputs
+  are discarded and transcribed again instead of silently reusing the old backend's output.
+- Parse `.env` lines on the first `=` only, so values containing `=` (for example base64 tokens) are
+  no longer silently dropped. Blank lines, `#` comment lines and an optional `export ` prefix are
+  handled, and one pair of matching surrounding quotes is stripped.
 - Cache directories poisoned by earlier versions (for example a saved redirect or error page instead of the
-  episode) are not repaired automatically. Delete the episode's directory once and re-run; see
-  "Troubleshooting" in the README.
+  episode, or multi-chunk transcripts with drifting timestamps) are not repaired; with the hashed cache
+  directories above they are simply no longer used. Delete them once; see "Troubleshooting" in the README.
 
 ### Documentation
 
 - Document `VOXHELM_API_BASE` / `VOXHELM_API_KEY` configuration and `--backend voxhelm` usage.
-- Add a README troubleshooting note for cache directories left behind by failed steps in older versions.
+- Add a README troubleshooting note for cache directories left behind by older versions.
+- Document the hashed cache directory names, `cache.json` invalidation and `.env` syntax in the README.
 
 0.1.6 - 2026-02-26
 ==================
