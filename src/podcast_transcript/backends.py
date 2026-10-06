@@ -18,6 +18,41 @@ from .config import settings
 from .safe_io import atomic_output, run_checked, write_text_atomic
 
 
+HTTP_CONNECT_TIMEOUT = 10.0
+HTTP_WRITE_TIMEOUT = 300.0
+HTTP_POOL_TIMEOUT = 10.0
+GROQ_MAX_ATTEMPTS = 10
+
+
+def http_timeout() -> httpx.Timeout:
+    """
+    Timeout for remote transcription uploads.
+
+    Connect, write (per chunk sent) and pool waits are short. The read timeout
+    covers the time the server needs to transcribe the upload and is set with
+    ``TRANSCRIPT_HTTP_READ_TIMEOUT`` (default 30 minutes).
+    """
+    return httpx.Timeout(
+        connect=HTTP_CONNECT_TIMEOUT,
+        write=HTTP_WRITE_TIMEOUT,
+        read=settings.http_read_timeout_seconds,
+        pool=HTTP_POOL_TIMEOUT,
+    )
+
+
+def timeout_error(backend: str, exc: httpx.TimeoutException) -> RuntimeError:
+    kind = type(exc).__name__
+    detail = str(exc).strip()
+    message = f"{backend} transcription request timed out ({kind})"
+    if detail:
+        message += f": {detail}"
+    if isinstance(exc, httpx.ReadTimeout):
+        message += ". Raise TRANSCRIPT_HTTP_READ_TIMEOUT if the server needs longer."
+    else:
+        message += "."
+    return RuntimeError(message)
+
+
 @runtime_checkable
 class TranscriptionBackend(Protocol):
     def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
@@ -125,11 +160,15 @@ class Groq:
             "language": self.language,
             "prompt": self.prompt,
         }
-        while True:
+        timeout = http_timeout()
+        for attempt in range(1, GROQ_MAX_ATTEMPTS + 1):
             with httpx.Client() as client:
-                response = client.post(
-                    url, headers=headers, files=files, data=data, timeout=None
-                )
+                try:
+                    response = client.post(
+                        url, headers=headers, files=files, data=data, timeout=timeout
+                    )
+                except httpx.TimeoutException as e:
+                    raise timeout_error("Groq", e) from e
                 try:
                     response.raise_for_status()
                 except httpx.HTTPStatusError as e:
@@ -150,6 +189,11 @@ class Groq:
                             # Parse wait_time_str
                             wait_seconds = self.parse_duration(wait_time_str)
                             if wait_seconds > 0:
+                                if attempt == GROQ_MAX_ATTEMPTS:
+                                    raise RuntimeError(
+                                        f"Groq rate limit still hit after {GROQ_MAX_ATTEMPTS} attempts: "
+                                        f"{error_message}"
+                                    ) from e
                                 rprint(
                                     f"Waiting for {wait_seconds} seconds before retrying..."
                                 )
@@ -251,16 +295,20 @@ class Voxhelm:
         if self.prompt:
             data["prompt"] = self.prompt
 
+        timeout = http_timeout()
         with audio_file.open("rb") as file_handle:
             files = {"file": (audio_file.name, file_handle)}
             with httpx.Client() as client:
-                response = client.post(
-                    self.transcription_url,
-                    headers=headers,
-                    files=files,
-                    data=data,
-                    timeout=None,
-                )
+                try:
+                    response = client.post(
+                        self.transcription_url,
+                        headers=headers,
+                        files=files,
+                        data=data,
+                        timeout=timeout,
+                    )
+                except httpx.TimeoutException as exc:
+                    raise timeout_error("Voxhelm", exc) from exc
                 try:
                     response.raise_for_status()
                 except httpx.HTTPStatusError as exc:

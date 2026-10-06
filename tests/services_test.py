@@ -1,10 +1,12 @@
 import json
+import socket
 import subprocess
 from pathlib import Path
 
 import httpx
 import pytest
 
+from podcast_transcript import backends
 from podcast_transcript.backends import Groq, Voxhelm, WhisperCpp
 
 
@@ -324,3 +326,153 @@ def test_groq_rate_limit_with_unexpected_body_raises(mocker, audio, body, json_r
         groq.transcribe(audio_chunk, transcript_path)
 
     assert not transcript_path.exists()
+
+
+def _groq():
+    return Groq(
+        api_key="dummy", model_name="whisper-large-v3", language="en", prompt="dummy"
+    )
+
+
+def _voxhelm(api_base="https://voxhelm.example"):
+    return Voxhelm(
+        api_base=api_base,
+        api_key="token",
+        model_name=None,
+        language=None,
+        prompt=None,
+    )
+
+
+def _mock_transport_client(monkeypatch, handler):
+    """Make every httpx.Client in the backends use a MockTransport."""
+    real_client = httpx.Client
+
+    def client_factory(*args, **kwargs):
+        return real_client(*args, transport=httpx.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr(backends.httpx, "Client", client_factory)
+
+
+def _ok_response(mocker):
+    ok = mocker.MagicMock()
+    ok.status_code = 200
+    ok.json.return_value = {"segments": []}
+    return ok
+
+
+EXPECTED_TIMEOUT = httpx.Timeout(connect=10.0, write=300.0, read=1800.0, pool=10.0)
+
+
+@pytest.mark.parametrize("make_backend", [_groq, _voxhelm])
+def test_remote_backends_pass_bounded_timeout(mocker, audio, make_backend):
+    post = mocker.patch("httpx.Client.post", return_value=_ok_response(mocker))
+    audio_chunk = _dummy_chunk(audio)
+
+    make_backend().transcribe(audio_chunk, audio_chunk.with_suffix(".json"))
+
+    assert post.call_args.kwargs["timeout"] == EXPECTED_TIMEOUT
+
+
+@pytest.mark.parametrize("make_backend", [_groq, _voxhelm])
+def test_remote_backends_use_configured_read_timeout(
+    mocker, monkeypatch, audio, make_backend
+):
+    monkeypatch.setattr(backends.settings, "transcript_http_read_timeout", "90")
+    post = mocker.patch("httpx.Client.post", return_value=_ok_response(mocker))
+    audio_chunk = _dummy_chunk(audio)
+
+    make_backend().transcribe(audio_chunk, audio_chunk.with_suffix(".json"))
+
+    assert post.call_args.kwargs["timeout"] == httpx.Timeout(
+        connect=10.0, write=300.0, read=90.0, pool=10.0
+    )
+
+
+@pytest.mark.parametrize("make_backend, name", [(_groq, "Groq"), (_voxhelm, "Voxhelm")])
+@pytest.mark.parametrize(
+    "exc_class", [httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout]
+)
+def test_remote_backend_timeout_raises_runtime_error(
+    monkeypatch, audio, make_backend, name, exc_class
+):
+    def handler(request):
+        raise exc_class("timed out", request=request)
+
+    _mock_transport_client(monkeypatch, handler)
+    audio_chunk = _dummy_chunk(audio)
+    transcript_path = audio_chunk.with_suffix(".json")
+
+    with pytest.raises(RuntimeError, match=f"^{name} transcription request timed out"):
+        make_backend().transcribe(audio_chunk, transcript_path)
+
+    assert not transcript_path.exists()
+
+
+def test_voxhelm_server_that_never_answers_times_out(monkeypatch, audio):
+    # A local socket that accepts the connection but never sends a response.
+    monkeypatch.setattr(backends.settings, "transcript_http_read_timeout", "0.5")
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    try:
+        port = server.getsockname()[1]
+        audio_chunk = _dummy_chunk(audio)
+        with pytest.raises(RuntimeError, match="Voxhelm .*timed out.*ReadTimeout"):
+            _voxhelm(f"http://127.0.0.1:{port}").transcribe(
+                audio_chunk, audio_chunk.with_suffix(".json")
+            )
+    finally:
+        server.close()
+
+
+def test_groq_rate_limit_retries_are_capped(mocker, monkeypatch, audio):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            429,
+            json={
+                "error": {
+                    "message": f"Rate limit reached ({len(requests)}). Please try again in 1s."
+                }
+            },
+        )
+
+    _mock_transport_client(monkeypatch, handler)
+    sleep_until = mocker.patch.object(Groq, "sleep_until")
+    audio_chunk = _dummy_chunk(audio)
+    transcript_path = audio_chunk.with_suffix(".json")
+
+    with pytest.raises(
+        RuntimeError, match=r"after 10 attempts: Rate limit reached \(10\)"
+    ):
+        _groq().transcribe(audio_chunk, transcript_path)
+
+    assert len(requests) == backends.GROQ_MAX_ATTEMPTS == 10
+    assert sleep_until.call_count == 9
+    assert not transcript_path.exists()
+
+
+def test_groq_rate_limit_retry_resends_audio(mocker, monkeypatch, audio):
+    bodies = []
+
+    def handler(request):
+        bodies.append(request.read())
+        if len(bodies) == 1:
+            return httpx.Response(
+                429, json={"error": {"message": "Please try again in 1s."}}
+            )
+        return httpx.Response(200, json={"segments": []})
+
+    _mock_transport_client(monkeypatch, handler)
+    mocker.patch.object(Groq, "sleep_until")
+    audio_chunk = _dummy_chunk(audio)
+    transcript_path = audio_chunk.with_suffix(".json")
+
+    _groq().transcribe(audio_chunk, transcript_path)
+
+    assert len(bodies) == 2
+    assert all(b"dummy audio data" in body for body in bodies)
+    assert json.loads(transcript_path.read_text()) == {"segments": []}

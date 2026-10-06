@@ -137,6 +137,10 @@ You can also set the following environment variables or specify them in the .env
   (default is "ggml-large-v3.bin" for whisper-cpp, "whisper-large-v3" for Groq and "mlx-community/whisper-large-v3-mlx" for MLX).
 - **TRANSCRIPT_PROMPT**: The prompt to use for the transcription (default is "podcast-transcript").
 - **TRANSCRIPT_LANGUAGE**: The language code for the transcription (default is en, you could set it to de for example).
+- **TRANSCRIPT_HTTP_READ_TIMEOUT**: Seconds the Groq and Voxhelm backends wait for the server's response after
+  the upload (default is 1800, 30 minutes). Connecting is limited to 10 seconds, each upload write to 300 seconds.
+  A timeout stops the run with an error naming the backend. The Groq backend retries rate-limited (429) requests
+  at most 10 times in total and then stops with Groq's last rate-limit message.
 
 ## Usage
 
