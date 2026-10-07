@@ -64,3 +64,38 @@ def test_env_file_value_containing_equals_round_trips(tmp_path, monkeypatch):
 )
 def test_parse_env_line(line, expected):
     assert parse_env_line(line) == expected
+
+
+def test_http_read_timeout_defaults_to_30_minutes(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(tmp_path))
+    monkeypatch.setenv("TRANSCRIPT_DIR", str(tmp_path / "transcripts"))
+    monkeypatch.delenv("TRANSCRIPT_HTTP_READ_TIMEOUT", raising=False)
+
+    assert Settings().http_read_timeout_seconds == 1800.0
+
+
+def test_http_read_timeout_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(tmp_path))
+    monkeypatch.setenv("TRANSCRIPT_DIR", str(tmp_path / "transcripts"))
+    monkeypatch.setenv("TRANSCRIPT_HTTP_READ_TIMEOUT", "120.5")
+
+    assert Settings().http_read_timeout_seconds == 120.5
+
+
+def test_http_read_timeout_from_env_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(tmp_path))
+    monkeypatch.setenv("TRANSCRIPT_DIR", str(tmp_path / "transcripts"))
+    monkeypatch.delenv("TRANSCRIPT_HTTP_READ_TIMEOUT", raising=False)
+    (tmp_path / ".env").write_text("TRANSCRIPT_HTTP_READ_TIMEOUT=600\n")
+
+    assert Settings().http_read_timeout_seconds == 600.0
+
+
+@pytest.mark.parametrize("value", ["", "soon", "0", "-5", "inf", "nan"])
+def test_http_read_timeout_rejects_invalid_values(tmp_path, monkeypatch, value):
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(tmp_path))
+    monkeypatch.setenv("TRANSCRIPT_DIR", str(tmp_path / "transcripts"))
+    monkeypatch.setenv("TRANSCRIPT_HTTP_READ_TIMEOUT", value)
+
+    with pytest.raises(ValueError, match="TRANSCRIPT_HTTP_READ_TIMEOUT"):
+        Settings().http_read_timeout_seconds

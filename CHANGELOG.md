@@ -7,6 +7,11 @@
 
 ### Fixes
 
+- The Groq and Voxhelm backends no longer wait forever for a server that never answers. Requests use a
+  10 s connect, 300 s write and 10 s pool timeout, and a read timeout set by the new
+  `TRANSCRIPT_HTTP_READ_TIMEOUT` setting (seconds, default 1800). A timeout raises a `RuntimeError` naming
+  the backend. Groq rate-limit (429) retries stop after 10 attempts with a `RuntimeError` carrying Groq's
+  last rate-limit message.
 - Make every pipeline step fail closed so a failed step is never cached as a success:
   - Downloads follow redirects, raise on HTTP errors and stream to a temporary file that is only
     renamed into place after the download completed.

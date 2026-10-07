@@ -1,3 +1,4 @@
+import math
 import os
 import shutil
 
@@ -47,6 +48,8 @@ class Settings:
     transcript_language: str = "en"
     voxhelm_api_base: str | None = None
     voxhelm_api_key: str | None = None
+    # Seconds to wait for a remote backend's response once the upload is sent.
+    transcript_http_read_timeout: str | float = 1800.0
 
     def __init__(self):
         self.console = Console()
@@ -116,10 +119,32 @@ class Settings:
             "TRANSCRIPT_LANGUAGE",
             "VOXHELM_API_BASE",
             "VOXHELM_API_KEY",
+            "TRANSCRIPT_HTTP_READ_TIMEOUT",
         }
         for key, value in os.environ.items():
             if key in transcript_keys:
                 setattr(self, key.lower(), value)
+
+    @property
+    def http_read_timeout_seconds(self) -> float:
+        """
+        The read timeout for remote transcription backends, in seconds.
+
+        Set with ``TRANSCRIPT_HTTP_READ_TIMEOUT`` (environment or .env file).
+        Raises ValueError unless it is a finite number greater than zero.
+        """
+        raw = self.transcript_http_read_timeout
+        try:
+            seconds = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"TRANSCRIPT_HTTP_READ_TIMEOUT must be a number of seconds, got {raw!r}."
+            ) from None
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError(
+                f"TRANSCRIPT_HTTP_READ_TIMEOUT must be greater than zero, got {raw!r}."
+            )
+        return seconds
 
     @property
     def whisper_cpp_models_dir(self) -> Path:
