@@ -54,3 +54,34 @@ jobs:
         run: uv sync --frozen
       - name: Lint, type check, and test
         run: just check
+
+  test-oldest-python:
+    # requires-python is >=3.10; `just check` above only covers the pinned .python-version.
+    name: Tests (Python 3.10)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.23"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install just
+        uses: taiki-e/install-action@13608cbb45b01feb47ef444ab1a42dc41ad56f1a # v2.79.11
+        with:
+          tool: just@1.50.0
+          fallback: none
+      - name: Install ffmpeg
+        # The settings object refuses to load without ffmpeg on PATH; tests mock the calls.
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      - name: Test on the oldest supported Python
+        run: just test-oldest-python

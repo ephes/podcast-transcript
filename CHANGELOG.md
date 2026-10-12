@@ -63,6 +63,9 @@
 
 - Add a GitHub Actions CI workflow that runs `just check` (pre-commit, mypy, pytest) on pushes and pull
   requests, with SHA-pinned actions, read-only permissions and no secrets.
+- Keep the declared Python 3.10 support tested: the chunk-splitting tests no longer mock `Path.stat`
+  (which broke `Path.exists()` on Python 3.10/3.11), and CI additionally runs the test suite on
+  Python 3.10 via `just test-oldest-python`.
 
 ### Security
 
