@@ -84,13 +84,10 @@ def test_resample_audio_failure_raises_and_leaves_no_output(mocker, audio):
 
 
 def test_split_into_chunks_exceeds_limit(mocker, audio):
-    # Create a mock stat result with st_size exceeding MAX_SIZE_IN_BYTES
-    mock_stat = mocker.MagicMock()
-    mock_stat.st_size = 26 * 1024 * 1024  # 26 MB
-    mock_stat.st_mode = 0o040755  # Directory mode (drwxr-xr-x)
-
-    # Patch 'Path.stat' in the 'single_track' module to return 'mock_stat'
-    mocker.patch("podcast_transcript.audio.Path.stat", return_value=mock_stat)
+    # Lower the size limit below the dummy file's size instead of mocking
+    # 'Path.stat': on Python 3.10/3.11 'Path.exists()' is built on 'stat()', so a
+    # global stat mock makes every path look like an existing directory.
+    mocker.patch("podcast_transcript.audio.MAX_SIZE_IN_BYTES", 1)
 
     # Mock 'subprocess.run' to fake an ffmpeg segment run
     def fake_segment(cmd, **kwargs):
@@ -122,10 +119,8 @@ def test_split_into_chunks_exceeds_limit(mocker, audio):
 
 
 def test_split_into_chunks_failure_leaves_no_chunks(mocker, audio):
-    mock_stat = mocker.MagicMock()
-    mock_stat.st_size = 26 * 1024 * 1024
-    mock_stat.st_mode = 0o040755
-    mocker.patch("podcast_transcript.audio.Path.stat", return_value=mock_stat)
+    # See test_split_into_chunks_exceeds_limit for why 'Path.stat' is not mocked.
+    mocker.patch("podcast_transcript.audio.MAX_SIZE_IN_BYTES", 1)
     mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1)
 
     def failing_segment(cmd, **kwargs):

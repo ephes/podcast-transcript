@@ -17,3 +17,7 @@ typecheck *args:
 
 test *args:
   UV_PYTHON=python"$(tr -d '\n' < .python-version)" uv run pytest {{args}}
+
+# Run the tests on the oldest Python allowed by requires-python (isolated from .venv)
+test-oldest-python *args:
+  uv run --isolated --python 3.10 pytest {{args}}
