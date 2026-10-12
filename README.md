@@ -190,6 +190,20 @@ example `audio-3f2a9c41d0b7`. Episodes that share a file name, such as `.../123/
 `.../124/audio.mp3`, therefore get separate directories. The output files themselves keep the readable
 name (`audio.dote.json`, `audio.txt`, ...).
 
+HTTP(S) downloads use only the URL path for their local filename. Percent escapes are decoded and
+characters outside letters, digits, dots, underscores and hyphens become underscores; empty or
+dot-only names use `episode.mp3`. Signed URL queries and fragments stay out of filenames, while the
+full URL still identifies the cache hash. URL names requiring sanitization now have a different
+readable cache-directory stem; their old directories are left untouched and a one-time download and
+transcription rebuild occurs. Copy any outputs you need before deleting those old directories. Generated chunk names are reserved and prefixed with `episode_`.
+
+Local files are fingerprinted by SHA-256 on each run. Editing or replacing audio at the same path
+invalidates copied, resampled and chunk audio plus all transcripts, even when the size stays the same.
+Local caches without a fingerprint are rebuilt once. The fingerprint is recorded after audio
+preparation succeeds; backend-setting invalidation remains independent. The original source must
+remain available on each run for content verification; a missing source produces an error asking you
+to restore it, even if copied audio is cached.
+
 Each step caches its result as a file in that directory and is skipped on later runs if the file
 exists. The directory also holds a `cache.json` that records the backend, model, language and prompt
 used for the transcripts. If you re-run with different settings (for example `--backend groq` after
@@ -202,10 +216,19 @@ using each chunk's audio duration, so timestamps stay aligned for episodes longe
 
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.
-- **WebVTT (*.vtt)**: A subtitle format that can be used for captioning in media players.
+- **WebVTT (*.webvtt)**: A subtitle format that can be used for captioning in media players.
+  Cue text treats `&`, `<` and `>` as literal text, escaping them as entities. CRLF and CR
+  become LF; consecutive blank or whitespace-only lines collapse to one line break, and leading
+  and trailing newlines are removed so each segment remains one cue. Other line breaks are kept.
 - **Plaintext**: Just the plain text of the transcription.
 
 ## Troubleshooting
+
+### Regenerating cached WebVTT exports
+
+Existing `.webvtt` files remain cached. To apply the literal-text escaping fix to an existing export,
+delete just that file in the episode cache directory and rerun the same transcription command with
+the same backend settings. The cached transcript is reused to generate the corrected WebVTT file.
 
 ### Cache directories from versions before 0.1.7
 

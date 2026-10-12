@@ -108,3 +108,28 @@ def test_download_interrupted_stream_caches_nothing(mocker, audio):
 
     assert not audio.episode_path.exists()
     assert list(audio.episode_chunks_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "url, filename",
+    [
+        ("https://example.test/audio.mp3?token=x/y#secret/z", "audio.mp3"),
+        ("https://example.test?token=secret", "episode.mp3"),
+        ("https://example.test/", "episode.mp3"),
+        ("https://example.test/my%20audio.mp3", "my_audio.mp3"),
+        ("https://example.test/%2F..%5Csecret.mp3", "_.._secret.mp3"),
+        ("https://example.test/%2E%2E", "episode.mp3"),
+        ("https://example.test/chunk_000.mp3?token=x/y", "episode_chunk_000.mp3"),
+    ],
+)
+def test_url_download_filename_uses_safe_path_only(tmp_path, mocker, url, filename):
+    from podcast_transcript.audio import Audio
+
+    audio = Audio(base_dir=tmp_path, url=url)
+    download_mock = mocker.patch("podcast_transcript.audio.download")
+    audio.make_sure_audio_file_exists()
+    download_mock.assert_called_once_with(url, audio.episode_chunks_dir / filename)
+    assert audio.episode_path.parent == audio.episode_chunks_dir
+    assert "?" not in audio.episode_path.name
+    assert "#" not in audio.episode_path.name
+    assert audio.podcast_dir.parent == tmp_path

@@ -8,7 +8,7 @@ import subprocess
 import uuid
 
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from rich import print as rprint
 
@@ -27,13 +27,19 @@ TRANSCRIPT_OUTPUT_SUFFIXES = (".dote.json", ".podlove.json", ".webvtt", ".txt")
 
 
 def is_url(url: str) -> bool:
-    return url.startswith("http")
+    return urlparse(url).scheme.lower() in {"http", "https"}
+
+
+def get_url_filename(url: str) -> str:
+    """A single safe filename from the URL path, excluding query and fragment."""
+    name = unquote(urlparse(url).path.rsplit("/", 1)[-1])
+    name = re.sub(r"[^a-zA-Z0-9._-]", "_", name).strip(".")
+    return name or "episode.mp3"
 
 
 def get_title_from_string(url: str) -> str:
     if is_url(url):
-        parsed_url = urlparse(url)
-        return parsed_url.path.split("/")[-1].split(".")[0]
+        return get_url_filename(url).split(".")[0]
     else:
         return Path(url).stem
 
@@ -149,7 +155,7 @@ class Audio:
 
     @property
     def episode_path(self):
-        name = Path(self.url).name
+        name = get_url_filename(self.url) if self._is_http_url else Path(self.url).name
         if GENERATED_CHUNK_RE.fullmatch(name):
             # Keep the source audio from colliding with generated chunk files
             name = f"episode_{name}"
@@ -213,7 +219,7 @@ class Audio:
                 download(self.url, self.episode_path)
             else:
                 with atomic_output(self.episode_path) as tmp_path:
-                    shutil.copy(Path(self.url), tmp_path)
+                    shutil.copy(Path(get_cache_source(self.url)), tmp_path)
 
     def make_sure_audio_file_is_resampled(self) -> None:
         """
@@ -318,6 +324,42 @@ class Audio:
         finally:
             shutil.rmtree(split_dir, ignore_errors=True)
 
+    @staticmethod
+    def _content_fingerprint(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for block in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    @property
+    def source_metadata_path(self) -> Path:
+        return self.podcast_dir / "source.json"
+
+    def _invalidate_changed_local_source(self) -> bool:
+        source_path = Path(get_cache_source(self.url))
+        try:
+            fingerprint = self._content_fingerprint(source_path)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Local source audio is missing: {source_path}. "
+                "Restore the source file before reusing its cache."
+            ) from exc
+        try:
+            cached = json.loads(self.source_metadata_path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            cached = None
+        if cached == {"sha256": fingerprint}:
+            return False
+        # Remove the completion marker first so interrupted preparation is retried.
+        self.source_metadata_path.unlink(missing_ok=True)
+        self._remove_cached_transcripts()
+        self._remove_generated_chunks()
+        self.chunks_manifest_path.unlink(missing_ok=True)
+        self.resampled_episode_path.unlink(missing_ok=True)
+        self.episode_path.unlink(missing_ok=True)
+        return True
+
     def prepare_audio_for_transcription(self) -> list[Path]:
         """
         Steps needed to prepare an audio file URL for transcription:
@@ -326,6 +368,15 @@ class Audio:
             - Split the audio file into smaller chunks if needed
         """
         self.podcast_dir.mkdir(parents=True, exist_ok=True)
+        source_changed = False
+        if not self._is_http_url:
+            source_changed = self._invalidate_changed_local_source()
         self.make_sure_audio_file_exists()
         self.make_sure_audio_file_is_resampled()
-        return self.split_into_chunks()
+        chunks = self.split_into_chunks()
+        if source_changed:
+            write_text_atomic(
+                self.source_metadata_path,
+                json.dumps({"sha256": self._content_fingerprint(self.episode_path)}),
+            )
+        return chunks
