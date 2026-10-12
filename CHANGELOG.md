@@ -7,6 +7,19 @@
 
 ### Fixes
 
+- Escape literal WebVTT cue text and normalize line endings and blank lines so transcript markup
+  and literal arrows remain readable without terminating cues. Delete existing cached `.webvtt`
+  files and rerun with the same settings to regenerate them without retranscribing.
+
+- Derive safe download filenames from HTTP(S) URL paths, excluding signed queries and fragments
+  while retaining full URL hashing and generated-chunk collision protection. URL names needing
+  sanitization change their readable cache-directory stem and rebuild once; old directories stay
+  untouched and may be removed after copying any needed outputs.
+
+- Invalidate local audio and transcript caches when source bytes change at the same path; record
+  the content fingerprint only after successful preparation. Local sources must remain available
+  for verification; missing originals raise a clear error asking users to restore the file.
+
 - The Groq and Voxhelm backends no longer wait forever for a server that never answers. Requests use a
   10 s connect, 300 s write and 10 s pool timeout, and a read timeout set by the new
   `TRANSCRIPT_HTTP_READ_TIMEOUT` setting (seconds, default 1800). A timeout raises a `RuntimeError` naming

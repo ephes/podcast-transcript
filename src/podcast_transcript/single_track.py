@@ -2,6 +2,7 @@ import json
 import re
 import shutil
 from datetime import timedelta
+from html import escape
 
 from pathlib import Path
 
@@ -189,7 +190,9 @@ def convert_to_webvtt(dote_path: Path, vtt_path: Path) -> None:
     for line in lines:
         start_time = line["startTime"].replace(",", ".")
         end_time = line["endTime"].replace(",", ".")
-        text = line["text"]
+        text = line["text"].replace("\r\n", "\n").replace("\r", "\n")
+        text = re.sub(r"\n(?:[ \t]*\n)+", "\n", text).strip("\n")
+        text = escape(text, quote=False)
         output.append(f"{start_time} --> {end_time}")
         output.append(text)
         output.append("")  # Blank line to separate captions

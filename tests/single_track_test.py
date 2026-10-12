@@ -537,3 +537,113 @@ def test_transcript_cache_without_metadata_is_discarded_but_audio_kept(tmp_path)
     assert audio.episode_path.read_bytes() == b"original"
     assert audio.resampled_episode_path.read_bytes() == b"resampled"
     assert json.loads(audio.cache_metadata_path.read_text()) == metadata
+
+
+def test_local_source_changes_invalidate_pipeline(mocker, tmp_path):
+    import shutil
+
+    mocker.patch(
+        "podcast_transcript.single_track.settings.transcript_dir", tmp_path / "cache"
+    )
+    mocker.patch("podcast_transcript.audio.resample_audio", shutil.copyfile)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
+    source = tmp_path / "episode.mp3"
+    source.write_bytes(b"AAAA")
+
+    class ContentBackend(RecordingBackend):
+        def transcribe(self, audio_file, transcript_path):
+            self.text = audio_file.read_bytes().decode()
+            super().transcribe(audio_file, transcript_path)
+
+    backend = ContentBackend("first", "")
+    paths = transcribe(str(source), backend)
+    assert paths["plain text"].read_text() == "AAAA"
+    transcribe(str(source), backend)
+    assert len(backend.calls) == 1
+    source.write_bytes(b"BBBB")  # same size, same path
+    paths = transcribe(str(source), backend)
+    assert paths["plain text"].read_text() == "BBBB"
+    assert len(backend.calls) == 2
+    backend.model_name = "second"
+    transcribe(str(source), backend)
+    assert len(backend.calls) == 3
+
+
+def test_local_source_metadata_written_only_after_preparation(mocker, tmp_path):
+    import shutil
+
+    source = tmp_path / "episode.mp3"
+    source.write_bytes(b"AAAA")
+    audio = Audio(base_dir=tmp_path / "cache", url=str(source))
+    mocker.patch(
+        "podcast_transcript.audio.resample_audio", side_effect=RuntimeError("failed")
+    )
+    with pytest.raises(RuntimeError, match="failed"):
+        audio.prepare_audio_for_transcription()
+    assert not (audio.podcast_dir / "source.json").exists()
+    source.write_bytes(b"BBBB")
+    mocker.patch("podcast_transcript.audio.resample_audio", shutil.copyfile)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
+    assert audio.prepare_audio_for_transcription()[0].read_bytes() == b"BBBB"
+
+
+def test_webvtt_preserves_literal_text_in_one_cue(tmp_path):
+    from html import unescape
+    from podcast_transcript.single_track import convert_to_webvtt
+
+    source = tmp_path / "input.json"
+    output = tmp_path / "output.webvtt"
+    source.write_text(
+        json.dumps(
+            {
+                "lines": [
+                    {
+                        "startTime": "00:00:00,000",
+                        "endTime": "00:00:01,000",
+                        "text": "A & B <literal> -->\r\nnext\r\n\r\n \t\r\nlast\rend",
+                    }
+                ]
+            }
+        )
+    )
+    convert_to_webvtt(source, output)
+    blocks = output.read_text().strip().split("\n\n")
+    assert blocks[0] == "WEBVTT"
+    assert len(blocks) == 2
+    timing, payload = blocks[1].split("\n", 1)
+    assert timing == "00:00:00.000 --> 00:00:01.000"
+    assert "<literal>" not in payload
+    assert "&amp;" in payload
+    assert "-->" not in payload
+    assert unescape(payload) == "A & B <literal> -->\nnext\nlast\nend"
+
+
+def test_missing_cached_local_source_has_clear_error(mocker, tmp_path):
+    import shutil
+
+    source = tmp_path / "episode.mp3"
+    source.write_bytes(b"AAAA")
+    audio = Audio(base_dir=tmp_path / "cache", url=str(source))
+    mocker.patch("podcast_transcript.audio.resample_audio", shutil.copyfile)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
+    audio.prepare_audio_for_transcription()
+    source.unlink()
+    with pytest.raises(
+        RuntimeError, match="Local source audio is missing:.*episode.mp3"
+    ):
+        audio.prepare_audio_for_transcription()
+    assert audio.episode_path.read_bytes() == b"AAAA"
+
+
+def test_unchanged_local_source_only_hashes_original(mocker, tmp_path):
+    import shutil
+
+    source = tmp_path / "episode.mp3"
+    source.write_bytes(b"AAAA")
+    audio = Audio(base_dir=tmp_path / "cache", url=str(source))
+    mocker.patch("podcast_transcript.audio.resample_audio", shutil.copyfile)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
+    audio.prepare_audio_for_transcription()
+    fingerprint = mocker.spy(Audio, "_content_fingerprint")
+    audio.prepare_audio_for_transcription()
+    fingerprint.assert_called_once_with(source)
