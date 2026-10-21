@@ -7,6 +7,12 @@
 
 ### Fixes
 
+- Update the locked certifi CA bundle to 2026.10.19 for the eMudhra/emSign CA compromise
+  ([GHSA-6q48-6c7w-9gw2](https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2)).
+  Lock-only change: checkout environments get it with `uv sync --frozen`. `uv tool install` does
+  not read this lock; upgrade an installed tool with `uv tool upgrade podcast-transcript` and
+  confirm its certifi is 2026.10.19 or later.
+
 - Escape literal WebVTT cue text and normalize line endings and blank lines so transcript markup
   and literal arrows remain readable without terminating cues. Delete existing cached `.webvtt`
   files and rerun with the same settings to regenerate them without retranscribing.
