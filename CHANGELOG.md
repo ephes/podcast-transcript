@@ -7,6 +7,12 @@
 
 ### Fixes
 
+- Cover successful CLI dispatch for all four backend factories, including the default local backend,
+  processor/settings forwarding, output paths and pipeline error exits, using synthetic fixtures.
+- Align README installation and usage examples with the installed `transcribe` executable.
+  Help now describes local audio paths and HTTP(S) input; document credentials per backend and
+  distinguish persistent tool installation from one-shot `uvx` execution.
+
 - Derive stream-copy chunk duration from both size and duration limits, validate every new chunk
   before publication, and rebuild cached oversized chunks. Fail clearly rather than upload a
   chunk above 25 MiB or 7,200 seconds.
