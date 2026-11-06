@@ -34,11 +34,13 @@ def test_resample_audio(mocker, audio):
         Path(cmd[-1]).write_bytes(b"resampled")
         return subprocess.CompletedProcess(cmd, 0)
 
-    mock_subprocess_run = mocker.patch("subprocess.run", side_effect=fake_ffmpeg)
+    mock_media_command = mocker.patch(
+        "podcast_transcript.audio.run_checked", side_effect=fake_ffmpeg
+    )
 
     resample_audio(input_path, output_path)
 
-    cmd = mock_subprocess_run.call_args.args[0]
+    cmd = mock_media_command.call_args.args[0]
     assert cmd[:-1] == [
         "ffmpeg",
         "-i",
@@ -53,7 +55,7 @@ def test_resample_audio(mocker, audio):
     # ffmpeg writes to a hidden temp file with the same suffix ...
     assert Path(cmd[-1]).name.startswith(".")
     assert Path(cmd[-1]).suffix == ".mp3"
-    assert mock_subprocess_run.call_args.kwargs["check"] is True
+    assert "Resampling" in mock_media_command.call_args.kwargs["description"]
     # ... which is renamed into place on success
     assert output_path.read_bytes() == b"resampled"
     assert sorted(p.name for p in output_path.parent.iterdir()) == sorted(
@@ -70,11 +72,9 @@ def test_resample_audio_failure_raises_and_leaves_no_output(mocker, audio):
     def failing_ffmpeg(cmd, **kwargs):
         # ffmpeg leaves a partial file behind before failing
         Path(cmd[-1]).write_bytes(b"partial")
-        raise subprocess.CalledProcessError(
-            1, cmd, stderr="Invalid data found when processing input\n"
-        )
+        raise RuntimeError("Invalid data found when processing input")
 
-    mocker.patch("subprocess.run", side_effect=failing_ffmpeg)
+    mocker.patch("podcast_transcript.audio.run_checked", side_effect=failing_ffmpeg)
 
     with pytest.raises(RuntimeError, match="Invalid data found"):
         resample_audio(input_path, output_path)
@@ -87,16 +87,18 @@ def test_split_into_chunks_exceeds_limit(mocker, audio):
     # Lower the size limit below the dummy file's size instead of mocking
     # 'Path.stat': on Python 3.10/3.11 'Path.exists()' is built on 'stat()', so a
     # global stat mock makes every path look like an existing directory.
-    mocker.patch("podcast_transcript.audio.MAX_SIZE_IN_BYTES", 1)
+    mocker.patch("podcast_transcript.audio.MAX_SIZE_IN_BYTES", 8)
 
-    # Mock 'subprocess.run' to fake an ffmpeg segment run
+    # Mock 'run_checked' to fake an ffmpeg segment run
     def fake_segment(cmd, **kwargs):
         pattern = Path(cmd[-1])
         for idx in range(2):
             (pattern.parent / (pattern.name % idx)).write_bytes(b"chunk")
         return subprocess.CompletedProcess(cmd, 0)
 
-    mock_subprocess_run = mocker.patch("subprocess.run", side_effect=fake_segment)
+    mock_media_command = mocker.patch(
+        "podcast_transcript.audio.run_checked", side_effect=fake_segment
+    )
 
     # Mock get_audio_duration to return 1 second
     mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1)
@@ -109,9 +111,9 @@ def test_split_into_chunks_exceeds_limit(mocker, audio):
     # Call the function under test
     chunk_paths = audio.split_into_chunks()
 
-    # Assert that 'subprocess.run' was called once to split the audio
-    mock_subprocess_run.assert_called_once()
-    assert "ffmpeg" in mock_subprocess_run.call_args[0][0]
+    # Assert that 'run_checked' was called once to split the audio
+    mock_media_command.assert_called_once()
+    assert "ffmpeg" in mock_media_command.call_args[0][0]
     assert [p.name for p in chunk_paths] == ["chunk_000.mp3", "chunk_001.mp3"]
     assert all(p.parent == audio.episode_chunks_dir for p in chunk_paths)
     # The scratch directory is cleaned up
@@ -127,9 +129,9 @@ def test_split_into_chunks_failure_leaves_no_chunks(mocker, audio):
         # ffmpeg wrote the first chunk before failing
         pattern = Path(cmd[-1])
         (pattern.parent / (pattern.name % 0)).write_bytes(b"partial chunk")
-        raise subprocess.CalledProcessError(1, cmd, stderr="disk full")
+        raise RuntimeError("disk full")
 
-    mocker.patch("subprocess.run", side_effect=failing_segment)
+    mocker.patch("podcast_transcript.audio.run_checked", side_effect=failing_segment)
     audio.resampled_episode_path.parent.mkdir(parents=True, exist_ok=True)
     audio.resampled_episode_path.write_bytes(b"dummy data")
 
@@ -142,8 +144,8 @@ def test_split_into_chunks_failure_leaves_no_chunks(mocker, audio):
 
 
 def test_split_into_chunks_within_limit(mocker, audio):
-    # Mock 'subprocess.run' to prevent actual subprocess calls
-    mock_subprocess_run = mocker.patch("subprocess.run")
+    # Mock 'run_checked' to prevent actual subprocess calls
+    mock_media_command = mocker.patch("podcast_transcript.audio.run_checked")
 
     # Mock get_audio_duration to return 1 second
     mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1)
@@ -161,8 +163,8 @@ def test_split_into_chunks_within_limit(mocker, audio):
     # Call the function under test
     chunk_paths = audio.split_into_chunks()
 
-    # Assert that 'subprocess.run' was not called since file size is within limit
-    mock_subprocess_run.assert_not_called()
+    # Assert that 'run_checked' was not called since file size is within limit
+    mock_media_command.assert_not_called()
 
     # Check if symlink is created
     assert chunk_symlink.exists()
@@ -304,11 +306,11 @@ def test_split_into_chunks_reuses_complete_manifest(mocker, audio):
     audio.chunks_manifest_path.write_text(
         json.dumps(["chunk_000.mp3", "chunk_001.mp3"])
     )
-    mock_subprocess_run = mocker.patch("subprocess.run")
+    mock_media_command = mocker.patch("podcast_transcript.audio.run_checked")
 
     chunk_paths = audio.split_into_chunks()
 
-    mock_subprocess_run.assert_not_called()
+    mock_media_command.assert_not_called()
     assert [p.name for p in chunk_paths] == ["chunk_000.mp3", "chunk_001.mp3"]
 
 
@@ -328,13 +330,15 @@ def test_split_into_chunks_redoes_partial_chunk_set_without_manifest(mocker, aud
             (pattern.parent / (pattern.name % idx)).write_bytes(b"fresh")
         return subprocess.CompletedProcess(cmd, 0)
 
-    mock_subprocess_run = mocker.patch("subprocess.run", side_effect=fake_segment)
+    mock_media_command = mocker.patch(
+        "podcast_transcript.audio.run_checked", side_effect=fake_segment
+    )
 
     # When the chunks are requested again
     chunk_paths = audio.split_into_chunks()
 
     # Then the episode is split again and the full set is recorded
-    mock_subprocess_run.assert_called_once()
+    mock_media_command.assert_called_once()
     assert [p.name for p in chunk_paths] == [
         "chunk_000.mp3",
         "chunk_001.mp3",
@@ -357,7 +361,7 @@ def test_split_cleanup_keeps_episode_files_named_like_chunks(mocker, tmp_path):
     audio.resampled_episode_path.write_bytes(b"resampled")
     (audio.episode_chunks_dir / "chunk_000.mp3").write_bytes(b"stale")
     mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1)
-    mocker.patch("subprocess.run")
+    mocker.patch("podcast_transcript.audio.run_checked")
 
     # When the chunk set is rebuilt without a manifest
     chunk_paths = audio.split_into_chunks()
@@ -376,7 +380,7 @@ def test_episode_named_like_a_chunk_is_not_overwritten(mocker, tmp_path):
     audio.episode_path.write_bytes(b"original")
     audio.resampled_episode_path.write_bytes(b"resampled")
     mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1)
-    mocker.patch("subprocess.run")
+    mocker.patch("podcast_transcript.audio.run_checked")
 
     chunk_paths = audio.split_into_chunks()
 
@@ -840,6 +844,7 @@ def test_bad_new_chunk_probe_does_not_publish_preparation_markers(mocker, tmp_pa
             (pattern.parent / (pattern.name % idx)).write_bytes(b"chunk")
         return subprocess.CompletedProcess(cmd, 0)
 
+    mocker.patch("podcast_transcript.audio.run_checked", side_effect=fake_run)
     mocker.patch("subprocess.run", side_effect=fake_run)
     backend = RecordingBackend("m", "unused")
     with pytest.raises(RuntimeError, match="ffprobe"):
@@ -898,3 +903,80 @@ def test_mlx_word_timestamps_invalidate_only_transcripts(mocker, tmp_path):
     )
     assert json.loads(audio.cache_metadata_path.read_text())["word_timestamps"] is True
     resample.assert_called_once()
+
+
+@pytest.mark.parametrize("duration", [120.0, 7200.0])
+def test_split_duration_respects_byte_budget(mocker, audio, duration):
+    # Same byte count can be a high-bitrate short input or a two-hour episode.
+    limit = 1000
+    mocker.patch("podcast_transcript.audio.MAX_SIZE_IN_BYTES", limit)
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.resampled_episode_path.write_bytes(b"x" * 3000)
+    mocker.patch(
+        "podcast_transcript.audio.get_audio_duration",
+        side_effect=lambda p: duration
+        if p == audio.resampled_episode_path
+        else duration / 4,
+    )
+
+    def segment(cmd, **kwargs):
+        seconds = float(cmd[cmd.index("-segment_time") + 1])
+        assert 0 < seconds <= min(7200, duration * limit / 3000)
+        pattern = Path(cmd[-1])
+        for i in range(4):
+            (pattern.parent / (pattern.name % i)).write_bytes(b"x" * 750)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    mocker.patch("podcast_transcript.audio.run_checked", side_effect=segment)
+    assert len(audio.split_into_chunks()) == 4
+    assert audio.chunks_manifest_path.exists()
+
+
+@pytest.mark.parametrize("size,duration", [(101, 1), (10, 7201)])
+def test_split_rejects_invalid_chunk_before_publication(mocker, audio, size, duration):
+    mocker.patch("podcast_transcript.audio.MAX_SIZE_IN_BYTES", 100)
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.resampled_episode_path.write_bytes(b"x" * 300)
+    mocker.patch(
+        "podcast_transcript.audio.get_audio_duration",
+        side_effect=lambda p: 120 if p == audio.resampled_episode_path else duration,
+    )
+
+    def segment(cmd, **kwargs):
+        pattern = Path(cmd[-1])
+        (pattern.parent / (pattern.name % 0)).write_bytes(b"x" * size)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    mocker.patch("podcast_transcript.audio.run_checked", side_effect=segment)
+    with pytest.raises(RuntimeError, match="chunk.*limit"):
+        audio.split_into_chunks()
+    assert not audio.chunks_manifest_path.exists()
+    assert not list(audio.episode_chunks_dir.glob("chunk_*.mp3"))
+    assert not list(audio.episode_chunks_dir.glob(".split-*"))
+
+
+def test_cached_oversized_chunk_is_rebuilt(mocker, audio):
+    mocker.patch("podcast_transcript.audio.MAX_SIZE_IN_BYTES", 100)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=10)
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.resampled_episode_path.write_bytes(b"short")
+    chunk = audio.episode_chunks_dir / "chunk_000.mp3"
+    chunk.write_bytes(b"x" * 101)
+    audio.chunks_manifest_path.write_text('["chunk_000.mp3"]')
+    audio.output_path(".txt").write_text("stale")
+    assert audio.split_into_chunks() == [chunk]
+    assert chunk.is_symlink()
+    assert chunk.read_bytes() == b"short"
+    assert not audio.output_path(".txt").exists()
+
+
+def test_oversized_zero_duration_audio_fails_without_chunk_manifest(mocker, audio):
+    mocker.patch("podcast_transcript.audio.MAX_SIZE_IN_BYTES", 1)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=0)
+    run = mocker.patch("podcast_transcript.audio.run_checked")
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.resampled_episode_path.write_bytes(b"oversized")
+    with pytest.raises(RuntimeError, match="zero duration"):
+        audio.split_into_chunks()
+    run.assert_not_called()
+    assert not audio.chunks_manifest_path.exists()

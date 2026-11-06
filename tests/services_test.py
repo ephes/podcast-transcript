@@ -202,8 +202,8 @@ def test_groq_rate_limit_without_usable_wait_raises(mocker, audio, message):
 
 def test_whisper_cpp_ffmpeg_failure_leaves_no_wav(mocker, tmp_path):
     mocker.patch(
-        "subprocess.run",
-        side_effect=subprocess.CalledProcessError(1, ["ffmpeg"], stderr="bad input"),
+        "podcast_transcript.backends.run_checked",
+        side_effect=RuntimeError("bad input"),
     )
     wav_path = tmp_path / "chunk_000.wav"
 
@@ -227,7 +227,7 @@ def test_whisper_cpp_writes_transcript_via_temp_base(mocker, tmp_path):
 
     def fake_run(cmd, **kwargs):
         commands.append(cmd)
-        assert kwargs["check"] is True
+        assert kwargs["description"]
         if cmd[0] == "ffmpeg":
             Path(cmd[-1]).write_bytes(b"wav")
         else:
@@ -235,7 +235,7 @@ def test_whisper_cpp_writes_transcript_via_temp_base(mocker, tmp_path):
             Path(f"{base}.json").write_text(json.dumps(cpp_output))
         return subprocess.CompletedProcess(cmd, 0)
 
-    mocker.patch("subprocess.run", side_effect=fake_run)
+    mocker.patch("podcast_transcript.backends.run_checked", side_effect=fake_run)
     audio_chunk = tmp_path / "chunk_000.mp3"
     audio_chunk.write_bytes(b"mp3")
     transcript_path = tmp_path / "chunk_000.json"
@@ -254,11 +254,9 @@ def test_whisper_cpp_cli_failure_leaves_no_transcript(mocker, tmp_path):
         if cmd[0] == "ffmpeg":
             Path(cmd[-1]).write_bytes(b"wav")
             return subprocess.CompletedProcess(cmd, 0)
-        raise subprocess.CalledProcessError(
-            3, cmd, stderr="error: failed to open model"
-        )
+        raise RuntimeError("error: failed to open model")
 
-    mocker.patch("subprocess.run", side_effect=fake_run)
+    mocker.patch("podcast_transcript.backends.run_checked", side_effect=fake_run)
     audio_chunk = tmp_path / "chunk_000.mp3"
     audio_chunk.write_bytes(b"mp3")
     transcript_path = tmp_path / "chunk_000.json"

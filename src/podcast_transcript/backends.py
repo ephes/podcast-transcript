@@ -410,7 +410,6 @@ class WhisperCpp:
 
     def run_whisper_cli(self, input_path: Path, output_base: Path) -> None:
         args = [
-            "time",  # Note: this might only work on Unix-like systems
             "whisper-cli",
             "-m",
             str(self.model_path),
@@ -426,7 +425,11 @@ class WhisperCpp:
             args.extend(["-l", self.language])
         if self.prompt is not None:
             args.extend(["--prompt", self.prompt])
-        run_checked(args, description=f"whisper-cli transcription of {input_path}")
+        run_checked(
+            args,
+            description=f"whisper-cli transcription of {input_path}",
+            timeout=settings.local_transcription_timeout_seconds,
+        )
 
     @staticmethod
     def transform_transcription(input_data: dict) -> dict:
