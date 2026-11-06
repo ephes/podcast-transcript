@@ -203,7 +203,7 @@ The transcription process involves the following steps:
 
 1. Download the audio file from the provided URL or copy it from the file path if one was given.
 2. Convert the audio to mp3 and resample to 16kHz mono for optimal transcription.
-3. Split the audio into chunks if it exceeds the size limit (25 MB).
+3. Split the audio into chunks if it exceeds 25 MiB or 7,200 seconds; enforce both limits before publishing the chunk manifest.
 4. Transcribe each audio chunk using either whisper-cpp (converts mp3 to wav first), mlx-whisper, the Groq API, or Voxhelm.
 5. Combine the transcribed chunks into a single transcript.
 6. Generate output files in DOTe JSON, Podlove JSON, and WebVTT formats.
@@ -283,6 +283,25 @@ old directories, then delete them once:
 ls ~/.podcast-transcripts/transcripts/  # or $TRANSCRIPT_DIR
 rm -r ~/.podcast-transcripts/transcripts/<old-episode-name>
 ```
+
+### Chunk upload limits and local command deadlines
+
+Chunks must be at most 25 MiB (26,214,400 bytes) and 7,200 seconds. Stream-copy splitting estimates
+segment duration from the resampled file's size and duration, with 10% headroom for frame/header
+and bitrate variation. Every new chunk is checked before any is published. If a variable-bitrate
+chunk still exceeds either limit, the run fails clearly without a completion manifest; provide
+shorter source files and retry. Cached chunks exceeding the byte limit are rebuilt automatically.
+Short files within both limits still use a symlink without re-encoding.
+
+Local commands also have finite budgets (positive finite seconds, environment or `.env`):
+
+- `TRANSCRIPT_MEDIA_TIMEOUT`: 3600 (one hour) per ffmpeg resample, split or WAV conversion.
+- `TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT`: 21600 (six hours) per whisper-cli chunk transcription.
+
+Increase these for unusually slow processing. On timeout or interruption the owned command tree is
+killed and the direct subprocess reaped (Unix process group; Windows `taskkill /T`). Partial outputs
+are removed and previous final outputs preserved. Timeouts raise an error naming the operation;
+failed commands report a bounded stderr tail. Retrying reruns the unfinished step.
 
 ### Invalid audio duration or a stalled probe
 

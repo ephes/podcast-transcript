@@ -51,6 +51,9 @@ class Settings:
     # Seconds to wait for a remote backend's response once the upload is sent.
     transcript_http_read_timeout: str | float = 1800.0
 
+    transcript_media_timeout: str | float = 3600.0
+    transcript_local_transcription_timeout: str | float = 21600.0
+
     transcript_source_max_bytes: str | int = 2 * 1024**3
     transcript_source_total_timeout: str | float = 3600.0
 
@@ -123,6 +126,8 @@ class Settings:
             "VOXHELM_API_BASE",
             "VOXHELM_API_KEY",
             "TRANSCRIPT_HTTP_READ_TIMEOUT",
+            "TRANSCRIPT_MEDIA_TIMEOUT",
+            "TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT",
             "TRANSCRIPT_SOURCE_MAX_BYTES",
             "TRANSCRIPT_SOURCE_TOTAL_TIMEOUT",
         }
@@ -150,6 +155,29 @@ class Settings:
                 f"TRANSCRIPT_HTTP_READ_TIMEOUT must be greater than zero, got {raw!r}."
             )
         return seconds
+
+    @staticmethod
+    def _command_timeout(raw: str | float, name: str) -> float:
+        try:
+            seconds = float(raw)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(f"{name} must be positive finite seconds.") from None
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError(f"{name} must be positive finite seconds.")
+        return seconds
+
+    @property
+    def media_timeout_seconds(self) -> float:
+        return self._command_timeout(
+            self.transcript_media_timeout, "TRANSCRIPT_MEDIA_TIMEOUT"
+        )
+
+    @property
+    def local_transcription_timeout_seconds(self) -> float:
+        return self._command_timeout(
+            self.transcript_local_transcription_timeout,
+            "TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT",
+        )
 
     @property
     def source_max_bytes(self) -> int:

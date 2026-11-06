@@ -357,7 +357,7 @@ class Audio:
         chunk_paths = [self.episode_chunks_dir / name for name in chunk_names]
         try:
             for path in chunk_paths:
-                if not path.is_file():
+                if not path.is_file() or path.stat().st_size > MAX_SIZE_IN_BYTES:
                     return None
                 if path.is_symlink():
                     # Only the short-episode link to our own resampled audio is valid.
@@ -377,6 +377,15 @@ class Audio:
         move the chunks into place once ffmpeg succeeded. Returns the chunk
         file names; the caller records them in the manifest.
         """
+        duration = get_audio_duration(self.resampled_episode_path)
+        if duration <= 0:
+            raise RuntimeError(
+                "Cannot split audio with zero duration to the upload limit"
+            )
+        size = self.resampled_episode_path.stat().st_size
+        # Estimate a byte-safe segment duration; leave headroom for MP3 frames,
+        # headers and VBR variation. Actual output limits are checked below.
+        segment_seconds = 0.9 * min(7200, duration * MAX_SIZE_IN_BYTES / max(size, 1))
         split_dir = self.episode_chunks_dir / f".split-{uuid.uuid4().hex}"
         split_dir.mkdir(parents=True)
         try:
@@ -388,7 +397,7 @@ class Audio:
                     "-f",
                     "segment",
                     "-segment_time",
-                    "7200",  # 7200 seconds is the maximum duration allowed by Groq
+                    str(segment_seconds),
                     "-c",
                     "copy",
                     str(split_dir / "chunk_%03d.mp3"),
@@ -405,7 +414,12 @@ class Audio:
                 )
             # Validate every new chunk before publishing audio or completion markers.
             for chunk in produced:
-                get_audio_duration(chunk)
+                chunk_duration = get_audio_duration(chunk)
+                if chunk_duration > 7200 or chunk.stat().st_size > MAX_SIZE_IN_BYTES:
+                    raise RuntimeError(
+                        "Split chunk exceeds the upload limit (25 MiB / 7200 seconds); "
+                        "split the source into shorter files and retry. No chunk manifest was published."
+                    )
             for chunk in produced:
                 os.replace(chunk, self.episode_chunks_dir / chunk.name)
             return [chunk.name for chunk in produced]

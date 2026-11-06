@@ -7,6 +7,14 @@
 
 ### Fixes
 
+- Derive stream-copy chunk duration from both size and duration limits, validate every new chunk
+  before publication, and rebuild cached oversized chunks. Fail clearly rather than upload a
+  chunk above 25 MiB or 7,200 seconds.
+- Bound ffmpeg commands to one hour (`TRANSCRIPT_MEDIA_TIMEOUT`) and whisper-cli to six hours
+  (`TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT`), configurable in the environment or `.env`.
+  Kill owned command trees and reap the direct process on timeout/interruption; retain previous
+  final files and remove partial outputs. Bound stderr diagnostics and replace invalid bytes.
+
 - Include MLX `word_timestamps` in transcript cache identity; older MLX caches rebuild once,
   retaining prepared audio. Serialize the full pipeline with a per-episode OS file lock;
   competing runs fail with a busy/retry message and unrelated episodes remain concurrent.
@@ -61,7 +69,7 @@
 - Make every pipeline step fail closed so a failed step is never cached as a success:
   - Downloads follow redirects, raise on HTTP errors and stream to a temporary file that is only
     renamed into place after the download completed.
-  - ffmpeg (resample, chunk split, WAV conversion) and `whisper-cli` run with `check=True`, write to
+  - ffmpeg (resample, chunk split, WAV conversion) and `whisper-cli` check exit status, write to
     temporary outputs that are renamed into place on success, and include the tool's stderr in the error.
   - The chunk split records the complete chunk set in `chunks/chunks.json` after all chunks are in
     place. Chunk directories without this manifest (interrupted splits) are split again once; existing
