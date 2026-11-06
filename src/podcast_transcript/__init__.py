@@ -54,11 +54,15 @@ def transcribe_cli():
 
     # Initialize the argument parser
     parser = argparse.ArgumentParser(
-        description="Transcribe an MP3 file from a given URL."
+        description="Transcribe audio from a local file path or an HTTP(S) URL."
     )
 
-    # Add the mp3_url positional argument
-    parser.add_argument("mp3_url", type=str, help="URL of the MP3 file to transcribe.")
+    parser.add_argument(
+        "mp3_url",
+        metavar="source",
+        type=str,
+        help="Local file path or HTTP(S) URL of the audio to transcribe.",
+    )
     parser.add_argument(
         "--backend",
         choices=["groq", "mlx", "voxhelm", "whisper-cpp"],
@@ -109,7 +113,7 @@ def transcribe_cli():
                     markup=False,
                 )
                 console.print(
-                    'Or run without installing: uvx --from "podcast-transcript[mlx]" transcribe --backend mlx <mp3_url>.',
+                    'Or run without installing: uvx --from "podcast-transcript[mlx]" transcribe --backend mlx <audio_source>.',
                     markup=False,
                 )
                 console.print("Note: MLX runs on macOS on Apple Silicon.", style="dim")

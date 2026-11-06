@@ -4,7 +4,22 @@ import tempfile
 
 import pytest
 
-# Settings are constructed at import time; never open the real transcript store.
+# Settings are constructed at import time; use only synthetic configuration.
+for _key in (
+    "GROQ_API_KEY",
+    "VOXHELM_API_BASE",
+    "VOXHELM_API_KEY",
+    "TRANSCRIPT_MODEL_NAME",
+    "TRANSCRIPT_LANGUAGE",
+    "TRANSCRIPT_PROMPT",
+    "TRANSCRIPT_HTTP_READ_TIMEOUT",
+    "TRANSCRIPT_SOURCE_MAX_BYTES",
+    "TRANSCRIPT_SOURCE_TOTAL_TIMEOUT",
+    "TRANSCRIPT_MEDIA_TIMEOUT",
+    "TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT",
+):
+    os.environ.pop(_key, None)
+# Never open the real transcript store.
 _test_home = tempfile.TemporaryDirectory(prefix="transcript-tests-")
 atexit.register(_test_home.cleanup)
 os.environ["TRANSCRIPT_HOME"] = _test_home.name

@@ -37,14 +37,25 @@ A simple command-line tool to generate transcripts for podcast episodes or other
 - Python >=3.10
   - MLX backend (via `mlx-whisper`) requires macOS on Apple Silicon and a Python version supported by the `mlx-whisper` / `torch` wheels.
 - [ffmpeg](https://ffmpeg.org/) installed and available in your system’s PATH.
-- A [Groq API key](https://groq.com/) for transcription services.
+- For the default `whisper-cpp` backend: `whisper-cli` on PATH and a model in
+  `TRANSCRIPT_HOME/whisper-cpp-models` (see [Configuration](#configuration)).
+- Local `whisper-cpp` and MLX backends need no API credentials. Only `--backend groq` requires
+  a [Groq API key](https://groq.com/); `--backend voxhelm` requires a Voxhelm API base and key.
+
+Settings currently prints a missing `GROQ_API_KEY` warning even for other backends and `--help`.
+This warning is harmless when using `whisper-cpp`, MLX or Voxhelm; a Groq key is required only
+when selecting `--backend groq`.
 
 ## Installation
 
 1. **Install the package**:
 
 ```shell
-pip install podcast-transcript  # or pipx/uvx install podcast-transcript
+pip install podcast-transcript
+# or install an isolated command-line tool:
+pipx install podcast-transcript
+# or:
+uv tool install podcast-transcript
 ```
 
 2. **(Optional) Install MLX backend dependencies** (macOS on Apple Silicon only):
@@ -55,10 +66,12 @@ pip install "podcast-transcript[mlx]"
 uv pip install "podcast-transcript[mlx]"
 ```
 
-To run without installing into your environment:
+For a one-shot run without a persistent tool installation:
 
 ```shell
-uvx --from "podcast-transcript[mlx]" transcribe --backend mlx <mp3_url>
+uvx --from podcast-transcript transcribe <audio_source>
+# or with the optional MLX backend:
+uvx --from "podcast-transcript[mlx]" transcribe --backend mlx <audio_source>
 ```
 
 Example (pin Python + package version):
@@ -79,7 +92,7 @@ Set the GROQ_API_KEY environment variable in your shell:
 ```shell
 export GROQ_API_KEY=your_api_key_here
 # or
-GROQ_API_KEY=your_api_key_here podcast-transcript ...
+GROQ_API_KEY=your_api_key_here transcribe --backend groq <audio_source>
 ```
 
 - **.env File**:
@@ -168,10 +181,13 @@ These limits apply only to source HTTP(S) downloads, not local copies or backend
 
 ## Usage
 
-To transcribe a podcast episode, run the transcribe command followed by the URL of the MP3 file:
+The installed executable is `transcribe`. Pass a local audio file path or an HTTP(S) URL;
+MP3, AAC, WAV and FLAC input are supported. The default backend is local `whisper-cpp`:
 
 ```shell
-transcribe <mp3_url>
+transcribe <audio_source>
+transcribe "/path/to/local audio.wav"
+transcribe --help
 ```
 
 Example:
@@ -386,6 +402,12 @@ Show coverage:
 ```shell
 coverage run -m pytest && coverage html && open htmlcov/index.html
 ```
+
+CLI tests exercise successful dispatch through all four real backend factories with synthetic
+settings, replacing only the transcription boundary; optional MLX native imports are isolated.
+They check default backend/model selection, explicit processor and settings forwarding, output paths,
+and failure exits. Tests set isolated transcript directories before importing package settings and
+use no accounts or real audio.
 
 ### Code Style and Linting
 
