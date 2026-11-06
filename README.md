@@ -236,6 +236,16 @@ discarded and transcribed again; the downloaded, resampled and chunked audio is 
 run or transcription raises an error and is retried on the next run. Chunked transcripts are combined
 using each chunk's audio duration, so timestamps stay aligned for episodes longer than 2 hours.
 
+MLX caches also include `word_timestamps`. Changing this option retranscribes while keeping
+prepared audio; older MLX caches rebuild transcripts once. Remote API key rotation still reuses
+transcripts.
+
+Each `transcribe` invocation holds a per-episode OS file lock from preparation through final exports.
+A concurrent invocation for the same episode exits with “Episode cache is busy”; retry when the
+first run finishes. Other episodes can run concurrently. Locks are released on failures and process
+exit. Leave library-managed files in the `.locks` directory under `TRANSCRIPT_DIR` alone
+(they persist on Unix); do not manually remove locks or episode data while a transcription is active.
+
 ## Output Formats
 
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.

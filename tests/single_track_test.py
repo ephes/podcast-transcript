@@ -848,3 +848,53 @@ def test_bad_new_chunk_probe_does_not_publish_preparation_markers(mocker, tmp_pa
     assert not audio.source_metadata_path.exists()
     assert not audio.chunks_manifest_path.exists()
     assert not list(audio.episode_chunks_dir.glob(".split-*"))
+
+
+def test_mlx_word_timestamps_invalidate_only_transcripts(mocker, tmp_path):
+    from podcast_transcript.backends import MLX
+
+    mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
+    # Exercise real preparation/cache reuse with synthetic media boundaries.
+    mocker.patch(
+        "podcast_transcript.audio.download",
+        side_effect=lambda _, p: p.write_bytes(b"source"),
+    )
+    resample = mocker.patch(
+        "podcast_transcript.audio.resample_audio",
+        side_effect=lambda _, p: p.write_bytes(b"resampled"),
+    )
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
+    calls = []
+
+    def infer(path, **kwargs):
+        calls.append(kwargs["word_timestamps"])
+        return {"segments": [{"start": 0, "end": 1, "text": str(calls[-1])}]}
+
+    import types
+
+    mocker.patch.dict(
+        "sys.modules", {"mlx_whisper": types.SimpleNamespace(transcribe=infer)}
+    )
+    url = "https://example.test/synthetic.mp3"
+    backend = MLX(model_name=None)
+    paths = transcribe(url, backend)
+    audio = Audio(base_dir=tmp_path, url=url)
+    # Simulate an old cache missing the new option: invalidate exactly once.
+    legacy = backend_cache_metadata(backend)
+    legacy.pop("word_timestamps", None)
+    audio.cache_metadata_path.write_text(json.dumps(legacy))
+    transcribe(url, backend)
+    transcribe(url, backend)
+    backend.word_timestamps = True
+    transcribe(url, backend)
+    transcribe(url, backend)
+    assert calls == [False, False, True]
+    assert paths["plain text"].read_text() == "True"
+    assert (
+        json.loads((audio.episode_chunks_dir / "chunk_000.json").read_text())[
+            "segments"
+        ][0]["text"]
+        == "True"
+    )
+    assert json.loads(audio.cache_metadata_path.read_text())["word_timestamps"] is True
+    resample.assert_called_once()
