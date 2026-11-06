@@ -7,6 +7,10 @@
 
 ### Fixes
 
+- Include MLX `word_timestamps` in transcript cache identity; older MLX caches rebuild once,
+  retaining prepared audio. Serialize the full pipeline with a per-episode OS file lock;
+  competing runs fail with a busy/retry message and unrelated episodes remain concurrent.
+
 - Bound source HTTP(S) downloads by decoded bytes (`TRANSCRIPT_SOURCE_MAX_BYTES`, default 2 GiB)
   and monotonic elapsed time (`TRANSCRIPT_SOURCE_TOTAL_TIMEOUT`, default one hour), in addition
   to per-operation timeouts. Reject oversized headers and streams, close failed responses and

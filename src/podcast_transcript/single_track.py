@@ -6,10 +6,11 @@ from html import escape
 
 from pathlib import Path
 
+from filelock import FileLock, Timeout
 from rich import print as rprint
 
 from .audio import Audio, get_audio_duration
-from .backends import TranscriptionBackend, Voxhelm
+from .backends import MLX, TranscriptionBackend, Voxhelm
 from .config import settings
 from .safe_io import atomic_output, write_text_atomic
 
@@ -26,6 +27,8 @@ def backend_cache_metadata(backend: TranscriptionBackend) -> dict:
         "language": getattr(backend, "language", None),
         "prompt": getattr(backend, "prompt", None),
     }
+    if isinstance(backend, MLX):
+        metadata["word_timestamps"] = backend.word_timestamps
     if isinstance(backend, Voxhelm):
         metadata["service"] = backend.cache_service_identity
     return metadata
@@ -218,8 +221,26 @@ def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
 
 
 def transcribe(url: str, backend: TranscriptionBackend) -> dict[str, Path]:
-    transcript_paths = {}
     audio = Audio(base_dir=settings.transcript_dir, url=url)
+    # Outside the episode directory: deleting/rebuilding episode data must not
+    # change the inode used to serialize generations. Leave lock lifecycle to filelock.
+    lock_dir = audio.base_dir / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(lock_dir / f"{audio.cache_key}.lock")
+    try:
+        lock.acquire(timeout=0)
+    except Timeout as exc:
+        raise RuntimeError(
+            "Episode cache is busy; retry after the other transcription finishes."
+        ) from exc
+    try:
+        return _transcribe_locked(audio, backend)
+    finally:
+        lock.release()
+
+
+def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str, Path]:
+    transcript_paths = {}
     audio_chunks = audio.prepare_audio_for_transcription()
     # Probe before transcription or invalidating outputs, so malformed audio
     # cannot publish transcripts or discard the previous run's combined files.

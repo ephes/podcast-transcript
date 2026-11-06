@@ -711,6 +711,7 @@ name = "podcast-transcript"
 version = "0.1.7"
 source = { editable = "." }
 dependencies = [
+    { name = "filelock" },
     { name = "httpx" },
     { name = "rich" },
 ]
@@ -732,6 +733,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "filelock", specifier = ">=3.20.3" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mlx-whisper", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mlx'" },
     { name = "rich", specifier = ">=13" },
