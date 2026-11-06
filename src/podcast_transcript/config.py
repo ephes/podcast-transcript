@@ -51,6 +51,9 @@ class Settings:
     # Seconds to wait for a remote backend's response once the upload is sent.
     transcript_http_read_timeout: str | float = 1800.0
 
+    transcript_source_max_bytes: str | int = 2 * 1024**3
+    transcript_source_total_timeout: str | float = 3600.0
+
     def __init__(self):
         self.console = Console()
         # Set the transcript home directory - this is special because we want to create
@@ -120,6 +123,8 @@ class Settings:
             "VOXHELM_API_BASE",
             "VOXHELM_API_KEY",
             "TRANSCRIPT_HTTP_READ_TIMEOUT",
+            "TRANSCRIPT_SOURCE_MAX_BYTES",
+            "TRANSCRIPT_SOURCE_TOTAL_TIMEOUT",
         }
         for key, value in os.environ.items():
             if key in transcript_keys:
@@ -143,6 +148,32 @@ class Settings:
         if not math.isfinite(seconds) or seconds <= 0:
             raise ValueError(
                 f"TRANSCRIPT_HTTP_READ_TIMEOUT must be greater than zero, got {raw!r}."
+            )
+        return seconds
+
+    @property
+    def source_max_bytes(self) -> int:
+        try:
+            limit = int(self.transcript_source_max_bytes)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(
+                "TRANSCRIPT_SOURCE_MAX_BYTES must be a positive integer."
+            ) from None
+        if limit <= 0:
+            raise ValueError("TRANSCRIPT_SOURCE_MAX_BYTES must be a positive integer.")
+        return limit
+
+    @property
+    def source_total_timeout_seconds(self) -> float:
+        try:
+            seconds = float(self.transcript_source_total_timeout)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(
+                "TRANSCRIPT_SOURCE_TOTAL_TIMEOUT must be positive finite seconds."
+            ) from None
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError(
+                "TRANSCRIPT_SOURCE_TOTAL_TIMEOUT must be positive finite seconds."
             )
         return seconds
 

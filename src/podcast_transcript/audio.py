@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import os
 import re
 import httpx
@@ -8,13 +9,16 @@ import subprocess
 import uuid
 
 from pathlib import Path
+from time import monotonic
 from urllib.parse import unquote, urlparse
 
 from rich import print as rprint
 
+from .config import settings
 from .safe_io import atomic_output, run_checked, write_text_atomic
 
-DOWNLOAD_TIMEOUT = httpx.Timeout(60.0, connect=30.0)
+FFPROBE_TIMEOUT_SECONDS = 60.0
+FFPROBE_STDERR_LIMIT = 2000
 GENERATED_CHUNK_RE = re.compile(r"chunk_\d{3,}\.(?:mp3|wav)")
 # Per-chunk transcript files written by the transcription step: the backend's
 # ``chunk_NNN.json``, whisper-cpp's intermediate ``chunk_NNN.whisper-cpp.json``
@@ -76,14 +80,49 @@ def download(url: str, target_path: Path) -> None:
     temporary file that is only renamed to ``target_path`` after the whole
     download succeeded, so a failed download is never cached as the episode.
     """
+    max_bytes = settings.source_max_bytes
+    total_seconds = settings.source_total_timeout_seconds
+    deadline = monotonic() + total_seconds
+
+    def check_deadline(response: httpx.Response | None = None) -> None:
+        if monotonic() >= deadline:
+            raise RuntimeError(
+                "Source download exceeded TRANSCRIPT_SOURCE_TOTAL_TIMEOUT."
+            )
+
+    # Each blocking operation is also bounded, even for very short total budgets.
+    timeout = httpx.Timeout(min(60.0, total_seconds), connect=min(30.0, total_seconds))
     rprint(f"Downloading {url} to {target_path}")
     with atomic_output(target_path) as tmp_path:
-        with httpx.Client(follow_redirects=True, timeout=DOWNLOAD_TIMEOUT) as client:
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=timeout,
+            event_hooks={"response": [check_deadline]},
+        ) as client:
             with client.stream("GET", url) as response:
                 response.raise_for_status()
+                check_deadline()
+                length = response.headers.get("Content-Length")
+                if length is not None:
+                    try:
+                        declared_bytes = int(length)
+                    except ValueError:
+                        declared_bytes = 0  # Enforce the actual byte count regardless.
+                    if declared_bytes > max_bytes:
+                        raise RuntimeError(
+                            "Source download exceeded TRANSCRIPT_SOURCE_MAX_BYTES."
+                        )
+                received = 0
                 with tmp_path.open("wb") as file:
                     for data in response.iter_bytes():
+                        check_deadline()
+                        received += len(data)
+                        if received > max_bytes:
+                            raise RuntimeError(
+                                "Source download exceeded TRANSCRIPT_SOURCE_MAX_BYTES."
+                            )
                         file.write(data)
+                check_deadline()
 
 
 def get_audio_duration(path) -> float:
@@ -97,17 +136,39 @@ def get_audio_duration(path) -> float:
         "json",  # Output in JSON format for easy parsing
         path,
     ]
-    # Execute the command
-    result = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,  # Return output as string
-        check=True,  # Raise CalledProcessError on non-zero exit
-    )
-    # Parse the JSON output
-    metadata = json.loads(result.stdout)
-    duration = float(metadata["format"]["duration"])
+    # subprocess.run kills and waits for the child if its timeout expires.
+    try:
+        result = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="replace",
+            check=True,
+            timeout=FFPROBE_TIMEOUT_SECONDS,
+        )
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+        stderr = exc.stderr or ""
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        tail = stderr[-FFPROBE_STDERR_LIMIT:].strip()
+        reason = "timed out" if isinstance(exc, subprocess.TimeoutExpired) else "failed"
+        raise RuntimeError(f"ffprobe {reason} for {path}: {tail}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Could not run ffprobe for {path}") from exc
+    try:
+        metadata = json.loads(result.stdout)
+        raw = metadata["format"]["duration"]
+        if isinstance(raw, bool) or not isinstance(raw, (str, int, float)):
+            raise ValueError("invalid duration type")
+        duration = float(raw)
+        if not math.isfinite(duration) or duration < 0:
+            raise ValueError("duration must be finite and nonnegative")
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+        raise RuntimeError(
+            f"ffprobe returned invalid duration metadata for {path}"
+        ) from exc
     return duration
 
 
@@ -243,18 +304,22 @@ class Audio:
         cached = self._load_chunk_manifest()
         if cached is not None:
             return cached
+        exceeds_limit = self.exceeds_size_limit
         # No valid manifest: either an earlier split was interrupted while the
         # chunks were moved into place, or the cache predates the manifest.
         # Remove leftover chunk audio (and WAV files derived from it) and
         # split again so a partial chunk set is never reused.
+        if self.chunks_manifest_path.exists():
+            self._remove_cached_transcripts()
+            self.chunks_manifest_path.unlink()
         self._remove_generated_chunks()
-        if self.exceeds_size_limit:
+        if exceeds_limit:
             rprint(f"Splitting {self.resampled_episode_path} into chunks")
             chunk_names = self._split_resampled_episode()
         else:
             rprint(f"Creating symlink to {self.resampled_episode_path}")
             with atomic_output(self.episode_chunks_dir / "chunk_000.mp3") as tmp_path:
-                tmp_path.symlink_to(self.resampled_episode_path)
+                tmp_path.symlink_to(self.resampled_episode_path.name)
             chunk_names = ["chunk_000.mp3"]
         # The manifest is written last; it marks the chunk set as complete.
         write_text_atomic(self.chunks_manifest_path, json.dumps(chunk_names))
@@ -280,12 +345,29 @@ class Audio:
         """Return the cached chunk paths if a complete chunk set exists."""
         try:
             chunk_names = json.loads(self.chunks_manifest_path.read_text())
-        except (FileNotFoundError, json.JSONDecodeError):
+        except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
             return None
         if not isinstance(chunk_names, list) or not chunk_names:
             return None
-        chunk_paths = [self.episode_chunks_dir / str(name) for name in chunk_names]
-        if not all(path.exists() for path in chunk_paths):
+        # Exact generated names enforce type, containment, uniqueness and order.
+        if chunk_names != [
+            f"chunk_{index:03d}.mp3" for index in range(len(chunk_names))
+        ]:
+            return None
+        chunk_paths = [self.episode_chunks_dir / name for name in chunk_names]
+        try:
+            for path in chunk_paths:
+                if not path.is_file():
+                    return None
+                if path.is_symlink():
+                    # Only the short-episode link to our own resampled audio is valid.
+                    if (
+                        len(chunk_paths) != 1
+                        or self.resampled_episode_path.is_symlink()
+                        or path.resolve() != self.resampled_episode_path.resolve()
+                    ):
+                        return None
+        except (OSError, RuntimeError):
             return None
         return chunk_paths
 
@@ -313,11 +395,17 @@ class Audio:
                 ],
                 description=f"Splitting {self.resampled_episode_path} into chunks",
             )
-            produced = sorted(split_dir.glob("chunk_*.mp3"))
+            produced = sorted(
+                split_dir.glob("chunk_*.mp3"),
+                key=lambda path: int(path.stem.split("_")[1]),
+            )
             if not produced:
                 raise RuntimeError(
                     f"Splitting {self.resampled_episode_path} produced no chunks"
                 )
+            # Validate every new chunk before publishing audio or completion markers.
+            for chunk in produced:
+                get_audio_duration(chunk)
             for chunk in produced:
                 os.replace(chunk, self.episode_chunks_dir / chunk.name)
             return [chunk.name for chunk in produced]

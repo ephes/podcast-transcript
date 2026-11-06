@@ -99,3 +99,57 @@ def test_http_read_timeout_rejects_invalid_values(tmp_path, monkeypatch, value):
 
     with pytest.raises(ValueError, match="TRANSCRIPT_HTTP_READ_TIMEOUT"):
         Settings().http_read_timeout_seconds
+
+
+@pytest.mark.parametrize("source", ["default", "env", "file"])
+def test_source_download_budget_configuration(tmp_path, monkeypatch, source):
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(tmp_path))
+    monkeypatch.setenv("TRANSCRIPT_DIR", str(tmp_path / "transcripts"))
+    monkeypatch.setattr(
+        "podcast_transcript.config.shutil.which", lambda name: "/synthetic/ffmpeg"
+    )
+    monkeypatch.delenv("TRANSCRIPT_SOURCE_MAX_BYTES", raising=False)
+    monkeypatch.delenv("TRANSCRIPT_SOURCE_TOTAL_TIMEOUT", raising=False)
+    if source == "env":
+        monkeypatch.setenv("TRANSCRIPT_SOURCE_MAX_BYTES", "123456")
+        monkeypatch.setenv("TRANSCRIPT_SOURCE_TOTAL_TIMEOUT", "123.5")
+    elif source == "file":
+        (tmp_path / ".env").write_text(
+            "TRANSCRIPT_SOURCE_MAX_BYTES=123456\nTRANSCRIPT_SOURCE_TOTAL_TIMEOUT=123.5\n"
+        )
+    settings = Settings()
+    assert settings.source_max_bytes == (2 * 1024**3 if source == "default" else 123456)
+    assert settings.source_total_timeout_seconds == (
+        3600.0 if source == "default" else 123.5
+    )
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("MAX_BYTES", "0"),
+        ("MAX_BYTES", "-1"),
+        ("MAX_BYTES", "1.5"),
+        ("MAX_BYTES", "nan"),
+        ("TOTAL_TIMEOUT", "0"),
+        ("TOTAL_TIMEOUT", "-1"),
+        ("TOTAL_TIMEOUT", "NaN"),
+        ("TOTAL_TIMEOUT", "inf"),
+        ("TOTAL_TIMEOUT", "later"),
+    ],
+)
+def test_source_download_budget_rejects_invalid_settings(
+    tmp_path, monkeypatch, name, value
+):
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(tmp_path))
+    monkeypatch.setenv("TRANSCRIPT_DIR", str(tmp_path / "transcripts"))
+    monkeypatch.setattr(
+        "podcast_transcript.config.shutil.which", lambda name: "/synthetic/ffmpeg"
+    )
+    monkeypatch.setenv(f"TRANSCRIPT_SOURCE_{name}", value)
+    settings = Settings()
+    with pytest.raises(ValueError, match=f"TRANSCRIPT_SOURCE_{name}"):
+        if name == "MAX_BYTES":
+            settings.source_max_bytes
+        else:
+            settings.source_total_timeout_seconds

@@ -9,7 +9,7 @@ from pathlib import Path
 from rich import print as rprint
 
 from .audio import Audio, get_audio_duration
-from .backends import TranscriptionBackend
+from .backends import TranscriptionBackend, Voxhelm
 from .config import settings
 from .safe_io import atomic_output, write_text_atomic
 
@@ -20,12 +20,15 @@ def backend_cache_metadata(backend: TranscriptionBackend) -> dict:
     episode's ``cache.json``; cached transcripts made with different settings
     are discarded. Secrets such as API keys are never included.
     """
-    return {
+    metadata = {
         "backend": type(backend).__name__,
         "model": getattr(backend, "model_name", None),
         "language": getattr(backend, "language", None),
         "prompt": getattr(backend, "prompt", None),
     }
+    if isinstance(backend, Voxhelm):
+        metadata["service"] = backend.cache_service_identity
+    return metadata
 
 
 def audio_chunks_to_text(
@@ -218,15 +221,18 @@ def transcribe(url: str, backend: TranscriptionBackend) -> dict[str, Path]:
     transcript_paths = {}
     audio = Audio(base_dir=settings.transcript_dir, url=url)
     audio_chunks = audio.prepare_audio_for_transcription()
+    # Probe before transcription or invalidating outputs, so malformed audio
+    # cannot publish transcripts or discard the previous run's combined files.
+    chunk_durations = (
+        [get_audio_duration(chunk) for chunk in audio_chunks]
+        if len(audio_chunks) > 1
+        else [0.0]
+    )
     audio.ensure_transcript_cache_matches(backend_cache_metadata(backend))
     text_chunks = audio_chunks_to_text(backend, audio_chunks)
     dote_chunks = whisper_text_chunks_to_dote(text_chunks)
     dote_path = audio.output_path(".dote.json")
     if not dote_path.exists():
-        if len(audio_chunks) > 1:
-            chunk_durations = [get_audio_duration(chunk) for chunk in audio_chunks]
-        else:
-            chunk_durations = [0.0]  # a single chunk needs no offset
         combine_dote_chunks(dote_chunks, dote_path, chunk_durations)
     transcript_paths["DOTe"] = dote_path
     podlove_path = audio.output_path(".podlove.json")

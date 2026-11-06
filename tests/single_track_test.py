@@ -320,6 +320,7 @@ def test_split_into_chunks_redoes_partial_chunk_set_without_manifest(mocker, aud
     (audio.episode_chunks_dir / "chunk_000.wav").write_bytes(b"stale wav")
     audio.resampled_episode_path.write_bytes(b"dummy data")
     mocker.patch.object(type(audio), "exceeds_size_limit", True)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
 
     def fake_segment(cmd, **kwargs):
         pattern = Path(cmd[-1])
@@ -642,3 +643,208 @@ def test_unchanged_local_source_only_hashes_original(mocker, tmp_path):
     fingerprint = mocker.spy(Audio, "_content_fingerprint")
     audio.prepare_audio_for_transcription()
     fingerprint.assert_called_once_with(source)
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        ["OUTSIDE"],
+        ["../outside.mp3"],
+        [123],
+        ["chunk_000.mp3", "chunk_000.mp3"],
+        ["chunk_001.mp3", "chunk_000.mp3"],
+        ["chunk_001.mp3"],
+        ["chunk_000.wav"],
+        ["chunk_000.mp3", "chunk_002.mp3"],
+    ],
+)
+def test_invalid_chunk_manifest_rebuilds_before_backend(mocker, tmp_path, entries):
+    mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
+    mocker.patch("podcast_transcript.single_track.get_audio_duration", return_value=1.0)
+    url = "https://example.test/episode.mp3"
+    audio = Audio(base_dir=tmp_path, url=url)
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.episode_path.write_bytes(b"source")
+    audio.resampled_episode_path.write_bytes(b"resampled")
+    outside = audio.podcast_dir / "outside.mp3"
+    outside.write_bytes(b"private")
+    for name in ("chunk_000.mp3", "chunk_001.mp3", "chunk_002.mp3", "chunk_000.wav"):
+        (audio.episode_chunks_dir / name).write_bytes(b"stale")
+    (audio.episode_chunks_dir / "123").write_bytes(b"private")
+    entries = [str(outside) if name == "OUTSIDE" else name for name in entries]
+    audio.chunks_manifest_path.write_text(json.dumps(entries))
+    backend = RecordingBackend("m", "fresh")
+    audio.cache_metadata_path.write_text(json.dumps(backend_cache_metadata(backend)))
+    (audio.episode_chunks_dir / "chunk_000.json").write_text(
+        json.dumps({"segments": [{"start": 0, "end": 1, "text": "stale"}]})
+    )
+    audio.output_path(".txt").write_text("stale")
+    paths = transcribe(url, backend)
+    assert paths["plain text"].read_text() == "fresh"
+    assert backend.calls == [audio.episode_chunks_dir / "chunk_000.mp3"]
+    assert backend.calls[0].read_bytes() == b"resampled"
+    assert json.loads(audio.chunks_manifest_path.read_text()) == ["chunk_000.mp3"]
+    assert outside.read_bytes() == b"private"
+
+
+def test_chunk_manifest_symlink_policy(audio, tmp_path):
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.resampled_episode_path.write_bytes(b"resampled")
+    chunk = audio.episode_chunks_dir / "chunk_000.mp3"
+    chunk.symlink_to(audio.resampled_episode_path)
+    audio.chunks_manifest_path.write_text('["chunk_000.mp3"]')
+    assert audio._load_chunk_manifest() == [chunk]
+    chunk.unlink()
+    outside = tmp_path / "outside.mp3"
+    outside.write_bytes(b"private")
+    chunk.symlink_to(outside)
+    assert audio._load_chunk_manifest() is None
+    chunk.unlink()
+    chunk.mkdir()
+    assert audio._load_chunk_manifest() is None
+    chunk.rmdir()
+    chunk.write_bytes(b"first")
+    second = chunk.with_name("chunk_001.mp3")
+    second.write_bytes(b"second")
+    audio.chunks_manifest_path.write_text('["chunk_000.mp3", "chunk_001.mp3"]')
+    assert audio._load_chunk_manifest() == [chunk, second]
+    second.unlink()
+    second.symlink_to(audio.resampled_episode_path)
+    assert audio._load_chunk_manifest() is None
+
+
+def test_voxhelm_service_identity_controls_cache(mocker, tmp_path, capsys):
+    from podcast_transcript.backends import Voxhelm
+
+    mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
+    mocker.patch.object(Audio, "prepare_audio_for_transcription", _fake_prepare)
+    calls = []
+
+    def record(self, audio_file, transcript_path):
+        calls.append(audio_file)
+        transcript_path.write_text(json.dumps({"segments": []}))
+
+    mocker.patch.object(Voxhelm, "transcribe", record)
+
+    def backend(base, key="invented-key"):
+        return Voxhelm(
+            api_base=base, api_key=key, model_name="m", language="en", prompt="p"
+        )
+
+    url = "https://example.test/audio.mp3"
+    first = backend("https://FIRST.example:443/")
+    transcribe(url, first)
+    transcribe(url, backend("https://first.example/v1/", "rotated-key"))
+    assert len(calls) == 1
+    transcribe(url, backend("https://second.example"))
+    assert len(calls) == 2
+    assert backend_cache_metadata(first) != backend_cache_metadata(
+        backend("https://first.example/prefix")
+    )
+    secret = backend(
+        "https://user:invented-password@first.example/v1?key=invented-query#invented-fragment"
+    )
+    assert backend_cache_metadata(secret) == backend_cache_metadata(first)
+    transcribe(url, secret)
+    metadata = Audio(base_dir=tmp_path, url=url).cache_metadata_path.read_text()
+    logged = capsys.readouterr().out
+    for value in (
+        "invented-key",
+        "rotated-key",
+        "invented-password",
+        "invented-query",
+        "invented-fragment",
+    ):
+        assert value not in metadata + logged
+
+
+@pytest.mark.parametrize("cached_chunks", [False, True])
+def test_bad_probe_stops_before_backend_and_preserves_outputs(
+    mocker, tmp_path, cached_chunks
+):
+    mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
+    audio = Audio(base_dir=tmp_path, url="https://example.test/audio.mp3")
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.episode_path.write_bytes(b"source")
+    audio.resampled_episode_path.write_bytes(b"resampled")
+    old_output = audio.output_path(".txt")
+    old_output.write_text("previous output")
+    if cached_chunks:
+        for name in ("chunk_000.mp3", "chunk_001.mp3"):
+            (audio.episode_chunks_dir / name).write_bytes(b"chunk")
+        audio.chunks_manifest_path.write_text('["chunk_000.mp3", "chunk_001.mp3"]')
+    mocker.patch(
+        "subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            [], 0, stdout='{"format": {"duration": "NaN"}}'
+        ),
+    )
+    backend = RecordingBackend("m", "unused")
+    with pytest.raises(RuntimeError, match="ffprobe"):
+        transcribe(audio.url, backend)
+    assert backend.calls == []
+    assert old_output.read_text() == "previous output"
+    assert not audio.cache_metadata_path.exists()
+    assert not audio.source_metadata_path.exists()
+    assert audio.chunks_manifest_path.exists() == cached_chunks
+
+
+def test_invalid_manifest_survives_interrupted_transcript_cleanup(mocker, tmp_path):
+    mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
+    url = "https://example.test/episode.mp3"
+    audio = Audio(base_dir=tmp_path, url=url)
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.episode_path.write_bytes(b"source")
+    audio.resampled_episode_path.write_bytes(b"resampled")
+    audio.chunks_manifest_path.write_text('["chunk_001.mp3"]')
+    (audio.episode_chunks_dir / "chunk_001.mp3").write_bytes(b"stale")
+    backend = RecordingBackend("m", "fresh")
+    audio.cache_metadata_path.write_text(json.dumps(backend_cache_metadata(backend)))
+    (audio.episode_chunks_dir / "chunk_000.json").write_text(
+        json.dumps({"segments": []})
+    )
+    cleanup = mocker.patch.object(
+        Audio, "_remove_cached_transcripts", side_effect=PermissionError("interrupted")
+    )
+    with pytest.raises(PermissionError, match="interrupted"):
+        audio.split_into_chunks()
+    assert audio.chunks_manifest_path.exists()
+    mocker.stop(cleanup)
+    paths = transcribe(url, backend)
+    assert paths["plain text"].read_text() == "fresh"
+    assert len(backend.calls) == 1
+
+
+def test_bad_new_chunk_probe_does_not_publish_preparation_markers(mocker, tmp_path):
+    import shutil
+
+    mocker.patch(
+        "podcast_transcript.single_track.settings.transcript_dir", tmp_path / "cache"
+    )
+    mocker.patch("podcast_transcript.audio.resample_audio", shutil.copyfile)
+    mocker.patch("podcast_transcript.audio.MAX_SIZE_IN_BYTES", 1)
+    source = tmp_path / "source.mp3"
+    source.write_bytes(b"synthetic")
+    audio = Audio(base_dir=tmp_path / "cache", url=str(source))
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "ffprobe":
+            duration = "2.0" if Path(cmd[-1]) == audio.resampled_episode_path else "NaN"
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=json.dumps({"format": {"duration": duration}})
+            )
+        pattern = Path(cmd[-1])
+        for idx in range(2):
+            (pattern.parent / (pattern.name % idx)).write_bytes(b"chunk")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    mocker.patch("subprocess.run", side_effect=fake_run)
+    backend = RecordingBackend("m", "unused")
+    with pytest.raises(RuntimeError, match="ffprobe"):
+        transcribe(str(source), backend)
+    assert backend.calls == []
+    assert not audio.source_metadata_path.exists()
+    assert not audio.chunks_manifest_path.exists()
+    assert not list(audio.episode_chunks_dir.glob(".split-*"))

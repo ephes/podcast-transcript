@@ -278,6 +278,19 @@ class Voxhelm:
         self.prompt = prompt
 
     @property
+    def cache_service_identity(self) -> str:
+        """Canonical API prefix, excluding credentials, query and fragment."""
+        url = httpx.URL(self.api_base)
+        path = url.raw_path.split(b"?", 1)[0].rstrip(b"/")
+        if not path.endswith(b"/v1"):
+            path += b"/v1"
+        return str(
+            url.copy_with(
+                username=None, password=None, query=None, fragment=None, raw_path=path
+            )
+        )
+
+    @property
     def transcription_url(self) -> str:
         if self.api_base.endswith("/v1"):
             return f"{self.api_base}/audio/transcriptions"
