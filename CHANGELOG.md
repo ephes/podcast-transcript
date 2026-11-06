@@ -7,6 +7,29 @@
 
 ### Fixes
 
+- Bound source HTTP(S) downloads by decoded bytes (`TRANSCRIPT_SOURCE_MAX_BYTES`, default 2 GiB)
+  and monotonic elapsed time (`TRANSCRIPT_SOURCE_TOTAL_TIMEOUT`, default one hour), in addition
+  to per-operation timeouts. Reject oversized headers and streams, close failed responses and
+  clean up partial files while preserving existing targets; both budgets support environment
+  and `.env` overrides.
+
+- Limit ffprobe to 60 seconds, reap timed-out processes and report bounded diagnostics. Reject
+  malformed, negative and nonfinite durations before invoking a backend or replacing combined
+  outputs; validate new split chunks before publishing preparation completion markers. Replace
+  invalid stderr bytes in bounded diagnostics.
+
+- Include Voxhelm's normalized service identity in transcript cache metadata, excluding URL
+  credentials, query strings, fragments and API keys. Root and `/v1` aliases reuse transcripts;
+  switching services invalidates them. Existing Voxhelm transcripts rebuild once; audio is kept.
+
+- Make short-audio chunk symlinks relative to their parent, supporting relative cache roots
+  (resolved from the command working directory), including paths with spaces.
+
+- Validate cached chunk manifests as ordered, consecutive generated MP3 basenames, rejecting
+  duplicates, external paths and unexpected symlinks. Invalid manifests rebuild chunks and
+  transcripts while preserving downloaded and resampled audio; interrupted invalid-cache cleanup
+  is retried before regenerating chunks.
+
 - Update the locked certifi CA bundle to 2026.10.19 for the eMudhra/emSign CA compromise
   ([GHSA-6q48-6c7w-9gw2](https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2)).
   Lock-only change: checkout environments get it with `uv sync --frozen`. `uv tool install` does

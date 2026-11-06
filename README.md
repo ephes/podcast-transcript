@@ -106,6 +106,12 @@ export VOXHELM_API_KEY=your_voxhelm_token_here
 `VOXHELM_API_BASE` can point at either the service root or the `/v1` API prefix. The backend uses
 `gpt-4o-mini-transcribe` by default, or `TRANSCRIPT_MODEL_NAME` if you override it.
 
+Voxhelm transcript caches include the service's normalized API prefix. Switching services
+retranscribes; root and `/v1` aliases share a cache, as do default ports and host casing.
+API keys, URL credentials, query strings and fragments are excluded from this identity;
+key rotation alone does not invalidate transcripts. Existing Voxhelm caches without a service
+identity are transcribed again once. Audio caches are retained.
+
 ### Transcript Home
 
 By default, the transcripts home directory is ~/.podcast-transcripts/. You can change this by setting
@@ -129,6 +135,9 @@ You can change this by setting the TRANSCRIPT_DIR environment variable:
 export TRANSCRIPT_DIR=/path/to/your/transcripts
 ```
 
+Relative `TRANSCRIPT_HOME` and `TRANSCRIPT_DIR` paths are resolved from the working directory
+where you run `transcribe`. Short-audio chunk links work with relative paths, including spaces.
+
 ### Other Configuration Options
 
 You can also set the following environment variables or specify them in the .env file:
@@ -141,6 +150,21 @@ You can also set the following environment variables or specify them in the .env
   the upload (default is 1800, 30 minutes). Connecting is limited to 10 seconds, each upload write to 300 seconds.
   A timeout stops the run with an error naming the backend. The Groq backend retries rate-limited (429) requests
   at most 10 times in total and then stops with Groq's last rate-limit message.
+
+HTTP(S) source downloads have separate budgets (environment or `.env`):
+
+- **TRANSCRIPT_SOURCE_MAX_BYTES**: Positive integer maximum for the decoded response body;
+  default 2147483648 (2 GiB), suitable for long episodes. Declared oversized responses are rejected
+  early; actual streamed bytes are always counted, including when Content-Length is absent.
+- **TRANSCRIPT_SOURCE_TOTAL_TIMEOUT**: Positive finite total seconds, default 3600 (one hour).
+  Monotonic elapsed time is checked at each response (including redirects), streamed block and EOF.
+  A blocked operation can take up to 60 seconds (30 for connecting), capped by this setting,
+  before control returns to the deadline check.
+
+Raise these limits for exceptionally large episodes or slow connections, for example
+`TRANSCRIPT_SOURCE_MAX_BYTES=4294967296 TRANSCRIPT_SOURCE_TOTAL_TIMEOUT=7200 transcribe <url>`.
+Rejected downloads close their response and remove partial files; an existing target is preserved.
+These limits apply only to source HTTP(S) downloads, not local copies or backend uploads.
 
 ## Usage
 
@@ -249,6 +273,25 @@ old directories, then delete them once:
 ls ~/.podcast-transcripts/transcripts/  # or $TRANSCRIPT_DIR
 rm -r ~/.podcast-transcripts/transcripts/<old-episode-name>
 ```
+
+### Invalid audio duration or a stalled probe
+
+Each `ffprobe` process has a 60-second limit and is killed and reaped on timeout. Duration metadata
+must contain a finite, nonnegative number (zero is valid). Missing/malformed metadata and process
+failures stop the pipeline with a bounded stderr diagnostic before transcription. Newly split chunks
+are probed before publishing chunk/source completion markers. A failed probe on an already cached
+chunk preserves existing combined outputs; delete `chunks/chunks.json` to regenerate the chunks
+from cached resampled audio, or delete the episode directory to download a corrected URL source.
+Fix a failing ffprobe installation before rerunning.
+
+### Recovering an invalid chunk manifest
+
+`chunks/chunks.json` accepts only consecutive generated MP3 basenames starting at
+`chunk_000.mp3`, in order, without duplicates. Each must be a regular file; the single short-audio
+chunk may be a symlink to the episode's own resampled file. Absolute paths, traversal, other
+symlinks and malformed manifests are rejected. Rerun the same command to rebuild an invalid chunk
+set and its transcripts automatically; downloaded and resampled audio is reused. Invalid manifests
+remain in place until transcript cleanup finishes, so interrupted cleanup is retried.
 
 ### Starting an episode over
 
