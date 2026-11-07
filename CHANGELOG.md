@@ -7,6 +7,16 @@
 
 ### Fixes
 
+- Reject nonpositive `--processors` before backend/audio work; enforce positive integers in
+  the public whisper-cpp constructor while preserving the default of four and exact forwarding.
+- Request identity HTTP encoding for source audio and reject compressed responses before decoding,
+  preserving prior targets and cleaning partial downloads on rejection.
+- Apply the configured remote request budget to elapsed upload, computation and response transfer
+  time; cancel trickle responses, close transports and preserve previous transcripts on expiry.
+- Stage changed local-source audio through copying, resampling and chunk validation before
+  retiring the previous generation. Failed preparation keeps completed files recoverable with
+  no current-source marker; retry never returns stale transcripts for changed bytes.
+
 - Validate Whisper result envelopes, segment text and finite, nonnegative ordered times before
   caching backend results or reusing raw chunks. Accept silence and zero-length cues; preserve
   millisecond rounding and report cached filenames and bounded segment positions without transcript text.

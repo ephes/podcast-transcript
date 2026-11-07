@@ -6,6 +6,7 @@ import re
 import httpx
 import shutil
 import subprocess
+import tempfile
 import uuid
 
 from pathlib import Path
@@ -112,6 +113,16 @@ def download(url: str, target_path: Path) -> None:
                 "Source download exceeded TRANSCRIPT_SOURCE_TOTAL_TIMEOUT."
             )
 
+    def check_response(response: httpx.Response) -> None:
+        check_deadline()
+        # Runs before httpx consumes redirects as well as the final response.
+        encoding = response.headers.get("Content-Encoding", "identity")
+        if encoding.strip().lower() != "identity":
+            raise RuntimeError(
+                "Source download requires identity Content-Encoding; "
+                "compressed responses are not supported."
+            )
+
     # Each blocking operation is also bounded, even for very short total budgets.
     timeout = httpx.Timeout(min(60.0, total_seconds), connect=min(30.0, total_seconds))
     rprint(f"Downloading {safe_display_source(url)} to {target_path}")
@@ -120,7 +131,8 @@ def download(url: str, target_path: Path) -> None:
             with httpx.Client(
                 follow_redirects=True,
                 timeout=timeout,
-                event_hooks={"response": [check_deadline]},
+                event_hooks={"response": [check_response]},
+                headers={"Accept-Encoding": "identity"},
             ) as client:
                 with client.stream("GET", url) as response:
                     response.raise_for_status()
@@ -472,7 +484,7 @@ class Audio:
     def source_metadata_path(self) -> Path:
         return self.podcast_dir / "source.json"
 
-    def _invalidate_changed_local_source(self) -> bool:
+    def _local_source_changed(self) -> bool:
         source_path = Path(get_cache_source(self.url))
         try:
             fingerprint = self._content_fingerprint(source_path)
@@ -487,14 +499,40 @@ class Audio:
             cached = None
         if cached == {"sha256": fingerprint}:
             return False
-        # Remove the completion marker first so interrupted preparation is retried.
+        # An absent marker explicitly makes the preserved generation non-current.
         self.source_metadata_path.unlink(missing_ok=True)
-        self._remove_cached_transcripts()
-        self._remove_generated_chunks()
-        self.chunks_manifest_path.unlink(missing_ok=True)
-        self.resampled_episode_path.unlink(missing_ok=True)
-        self.episode_path.unlink(missing_ok=True)
         return True
+
+    def _prepare_changed_local_source(self) -> list[Path]:
+        """Prepare fully before retiring any files from the previous generation."""
+        with tempfile.TemporaryDirectory(
+            prefix=".prepare-", dir=self.podcast_dir
+        ) as directory:
+            staged = Audio(base_dir=self.base_dir, url=self.url, title=self.title)
+            staged.podcast_dir = Path(directory)
+            staged.episode_chunks_dir = staged.podcast_dir / "chunks"
+            staged.make_sure_audio_file_exists()
+            staged.make_sure_audio_file_is_resampled()
+            chunks = staged.split_into_chunks()
+            fingerprint = self._content_fingerprint(staged.episode_path)
+
+            # Preparation succeeded. A promotion interrupted before source.json
+            # is written is retried in staging on the next invocation.
+            self._remove_cached_transcripts()
+            self._remove_generated_chunks()
+            self.chunks_manifest_path.unlink(missing_ok=True)
+            self.episode_chunks_dir.mkdir(parents=True, exist_ok=True)
+            for path in [
+                staged.episode_path,
+                staged.resampled_episode_path,
+                *chunks,
+                staged.chunks_manifest_path,
+            ]:
+                os.replace(path, self.episode_chunks_dir / path.name)
+            write_text_atomic(
+                self.source_metadata_path, json.dumps({"sha256": fingerprint})
+            )
+            return [self.episode_chunks_dir / chunk.name for chunk in chunks]
 
     def prepare_audio_for_transcription(self) -> list[Path]:
         """
@@ -504,15 +542,8 @@ class Audio:
             - Split the audio file into smaller chunks if needed
         """
         self.podcast_dir.mkdir(parents=True, exist_ok=True)
-        source_changed = False
-        if not self._is_http_url:
-            source_changed = self._invalidate_changed_local_source()
+        if not self._is_http_url and self._local_source_changed():
+            return self._prepare_changed_local_source()
         self.make_sure_audio_file_exists()
         self.make_sure_audio_file_is_resampled()
-        chunks = self.split_into_chunks()
-        if source_changed:
-            write_text_atomic(
-                self.source_metadata_path,
-                json.dumps({"sha256": self._content_fingerprint(self.episode_path)}),
-            )
-        return chunks
+        return self.split_into_chunks()

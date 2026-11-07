@@ -188,3 +188,51 @@ def test_cli_help_describes_local_and_http_audio(monkeypatch, capsys):
     assert "local file path" in output
     assert "http(s) url" in output
     assert "source" in output
+
+
+@pytest.mark.parametrize("value", ["-1", "0"])
+def test_processors_rejected_before_backend_or_pipeline(
+    mocker, monkeypatch, capsys, value
+):
+    factory = mocker.patch.object(
+        podcast_transcript, "whisper_cpp_from_settings_and_args"
+    )
+    pipeline = mocker.patch.object(podcast_transcript, "transcribe")
+    monkeypatch.setattr(
+        sys, "argv", ["transcribe", "--processors", value, "synthetic.wav"]
+    )
+    with pytest.raises(SystemExit) as error:
+        podcast_transcript.transcribe_cli()
+    assert error.value.code == 2
+    assert "positive integer" in capsys.readouterr().err
+    factory.assert_not_called()
+    pipeline.assert_not_called()
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5, "2"])
+def test_whisper_constructor_requires_positive_integer(value):
+    from podcast_transcript.backends import WhisperCpp
+
+    with pytest.raises(ValueError, match="positive integer"):
+        WhisperCpp(processors=value)
+
+
+@pytest.mark.parametrize("args,expected", [([], 4), (["--processors", "1"], 1)])
+def test_processor_count_reaches_whisper_argv(
+    mocker, monkeypatch, tmp_path, args, expected
+):
+    from podcast_transcript import backends
+
+    command = mocker.patch.object(backends, "run_checked")
+
+    def pipeline(source, backend):
+        backend.run_whisper_cli(tmp_path / "synthetic.wav", tmp_path / "output")
+        return {}
+
+    mocker.patch.object(podcast_transcript, "transcribe", side_effect=pipeline)
+    monkeypatch.setattr(sys, "argv", ["transcribe", "synthetic.wav", *args])
+    with pytest.raises(SystemExit) as error:
+        podcast_transcript.transcribe_cli()
+    assert error.value.code == 0
+    argv = command.call_args.args[0]
+    assert argv[argv.index("-p") + 1] == str(expected)

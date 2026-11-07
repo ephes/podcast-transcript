@@ -2,12 +2,14 @@
 Transcriptions services
 """
 
+import asyncio
 import io
 import re
 import json
 import time
 
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol, runtime_checkable
 
 import httpx
@@ -27,28 +29,45 @@ REMOTE_RESPONSE_MAX_BYTES = 32 * 1024 * 1024
 REMOTE_ERROR_MAX_CHARS = 2000
 
 
-def remote_response(
-    client: httpx.Client, backend: str, url: str, **kwargs
-) -> httpx.Response:
-    """Read a bounded decoded body, closing the transport before parsing/retrying."""
-    with client.stream("POST", url, **kwargs) as response:
-        body = bytearray()
-        for block in response.iter_bytes(chunk_size=64 * 1024):
-            if len(body) + len(block) > REMOTE_RESPONSE_MAX_BYTES:
-                raise RuntimeError(
-                    f"{backend} transcription response exceeded byte limit (32 MiB)."
+def remote_response(backend: str, url: str, **kwargs) -> httpx.Response:
+    """Bound the complete request, including server computation and body transfer."""
+
+    async def receive() -> httpx.Response:
+        async with httpx.AsyncClient() as client:
+            async with client.stream("POST", url, **kwargs) as response:
+                body = bytearray()
+                async for block in response.aiter_bytes(chunk_size=64 * 1024):
+                    if len(body) + len(block) > REMOTE_RESPONSE_MAX_BYTES:
+                        raise RuntimeError(
+                            f"{backend} transcription response exceeded byte limit (32 MiB)."
+                        )
+                    body.extend(block)
+                headers = dict(response.headers)
+                # aiter_bytes decoded the body; retain charset/rate-limit headers.
+                headers.pop("content-encoding", None)
+                headers.pop("content-length", None)
+                return httpx.Response(
+                    response.status_code,
+                    headers=headers,
+                    content=bytes(body),
+                    request=response.request,
                 )
-            body.extend(block)
-        headers = dict(response.headers)
-        # The body was decoded by iter_bytes; retain charset/rate-limit headers.
-        headers.pop("content-encoding", None)
-        headers.pop("content-length", None)
-        return httpx.Response(
-            response.status_code,
-            headers=headers,
-            content=bytes(body),
-            request=response.request,
-        )
+
+    async def bounded_receive() -> httpx.Response:
+        try:
+            return await asyncio.wait_for(receive(), settings.http_read_timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            raise httpx.ReadTimeout(
+                "Elapsed request deadline exceeded TRANSCRIPT_HTTP_READ_TIMEOUT"
+            ) from exc
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(bounded_receive())
+    # Keep the synchronous backend usable by callers already running an event loop.
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(lambda: asyncio.run(bounded_receive())).result()
 
 
 def http_timeout() -> httpx.Timeout:
@@ -56,8 +75,8 @@ def http_timeout() -> httpx.Timeout:
     Timeout for remote transcription uploads.
 
     Connect, write (per chunk sent) and pool waits are short. The read timeout
-    covers the time the server needs to transcribe the upload and is set with
-    ``TRANSCRIPT_HTTP_READ_TIMEOUT`` (default 30 minutes).
+    is also the elapsed request budget (upload, computation and response) set
+    with ``TRANSCRIPT_HTTP_READ_TIMEOUT`` (default 30 minutes).
     """
     return httpx.Timeout(
         connect=HTTP_CONNECT_TIMEOUT,
@@ -189,63 +208,61 @@ class Groq:
         }
         timeout = http_timeout()
         for attempt in range(1, GROQ_MAX_ATTEMPTS + 1):
-            with httpx.Client() as client:
-                try:
-                    response = remote_response(
-                        client,
-                        "Groq",
-                        url,
-                        headers=headers,
-                        files=files,
-                        data=data,
-                        timeout=timeout,
+            try:
+                response = remote_response(
+                    "Groq",
+                    url,
+                    headers=headers,
+                    files=files,
+                    data=data,
+                    timeout=timeout,
+                )
+            except httpx.TimeoutException as e:
+                raise timeout_error("Groq", e) from e
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                if response.status_code == 429:
+                    # Rate limit exceeded
+                    error_message = self.rate_limit_message(response)
+                    if error_message is None:
+                        # No usable rate-limit details, report the raw response
+                        raise self.http_error(response) from e
+                    rprint("rate limit exceeded: ", error_message)
+                    # Extract wait time from error message
+                    match = re.search(
+                        r"Please try again in ((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)",
+                        error_message,
                     )
-                except httpx.TimeoutException as e:
-                    raise timeout_error("Groq", e) from e
-                try:
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as e:
-                    if response.status_code == 429:
-                        # Rate limit exceeded
-                        error_message = self.rate_limit_message(response)
-                        if error_message is None:
-                            # No usable rate-limit details, report the raw response
-                            raise self.http_error(response) from e
-                        rprint("rate limit exceeded: ", error_message)
-                        # Extract wait time from error message
-                        match = re.search(
-                            r"Please try again in ((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)",
-                            error_message,
-                        )
-                        if match:
-                            wait_time_str = match.group(1)
-                            # Parse wait_time_str
-                            wait_seconds = self.parse_duration(wait_time_str)
-                            if wait_seconds > 0:
-                                if attempt == GROQ_MAX_ATTEMPTS:
-                                    raise RuntimeError(
-                                        f"Groq rate limit still hit after {GROQ_MAX_ATTEMPTS} attempts: "
-                                        f"{error_message}"
-                                    ) from e
-                                rprint(
-                                    f"Waiting for {wait_seconds} seconds before retrying..."
-                                )
-                                end_time = (
-                                    time.time() + wait_seconds + 2
-                                )  # Add 2 seconds buffer
-                                self.sleep_until(end_time)
-                                continue  # Retry after waiting
-                            raise RuntimeError(
-                                f"Groq rate limit hit and the wait time could not be parsed: {error_message}"
-                            ) from e
+                    if match:
+                        wait_time_str = match.group(1)
+                        # Parse wait_time_str
+                        wait_seconds = self.parse_duration(wait_time_str)
+                        if wait_seconds > 0:
+                            if attempt == GROQ_MAX_ATTEMPTS:
+                                raise RuntimeError(
+                                    f"Groq rate limit still hit after {GROQ_MAX_ATTEMPTS} attempts: "
+                                    f"{error_message}"
+                                ) from e
+                            rprint(
+                                f"Waiting for {wait_seconds} seconds before retrying..."
+                            )
+                            end_time = (
+                                time.time() + wait_seconds + 2
+                            )  # Add 2 seconds buffer
+                            self.sleep_until(end_time)
+                            continue  # Retry after waiting
                         raise RuntimeError(
-                            f"Groq rate limit hit without a wait time: {error_message}"
+                            f"Groq rate limit hit and the wait time could not be parsed: {error_message}"
                         ) from e
-                    raise self.http_error(response) from e
-                else:
-                    # Success
-                    json_transcript = response.json()
-                    break  # Exit the loop
+                    raise RuntimeError(
+                        f"Groq rate limit hit without a wait time: {error_message}"
+                    ) from e
+                raise self.http_error(response) from e
+            else:
+                # Success
+                json_transcript = response.json()
+                break  # Exit the loop
 
         validate_whisper_transcript(json_transcript)
         write_text_atomic(transcript_path, json.dumps(json_transcript))
@@ -360,30 +377,28 @@ class Voxhelm:
         timeout = http_timeout()
         with audio_file.open("rb") as file_handle:
             files = {"file": (audio_file.name, file_handle)}
-            with httpx.Client() as client:
-                try:
-                    response = remote_response(
-                        client,
-                        "Voxhelm",
-                        self.transcription_url,
-                        headers=headers,
-                        files=files,
-                        data=data,
-                        timeout=timeout,
-                    )
-                except httpx.TimeoutException as exc:
-                    raise timeout_error("Voxhelm", exc) from exc
-                try:
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as exc:
-                    detail = response.text[:REMOTE_ERROR_MAX_CHARS].strip()
-                    if detail:
-                        raise RuntimeError(
-                            f"Voxhelm transcription failed with status {response.status_code}: {detail}"
-                        ) from exc
+            try:
+                response = remote_response(
+                    "Voxhelm",
+                    self.transcription_url,
+                    headers=headers,
+                    files=files,
+                    data=data,
+                    timeout=timeout,
+                )
+            except httpx.TimeoutException as exc:
+                raise timeout_error("Voxhelm", exc) from exc
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                detail = response.text[:REMOTE_ERROR_MAX_CHARS].strip()
+                if detail:
                     raise RuntimeError(
-                        f"Voxhelm transcription failed with status {response.status_code}."
+                        f"Voxhelm transcription failed with status {response.status_code}: {detail}"
                     ) from exc
+                raise RuntimeError(
+                    f"Voxhelm transcription failed with status {response.status_code}."
+                ) from exc
 
         result = response.json()
         validate_whisper_transcript(result)
@@ -403,6 +418,12 @@ class WhisperCpp:
         prompt: str | None = None,
         processors: int = 4,
     ):
+        if (
+            isinstance(processors, bool)
+            or not isinstance(processors, int)
+            or processors < 1
+        ):
+            raise ValueError("processors must be a positive integer")
         if model_name is None:
             model_name = "ggml-large-v3.bin"
         self.model_name = model_name

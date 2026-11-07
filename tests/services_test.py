@@ -26,11 +26,11 @@ def patch_stream(mocker, *, return_value=None, side_effect=None):
             request=httpx.Request("POST", "https://backend.test"),
         )
         context = mocker.MagicMock()
-        context.__enter__.return_value = real_response
+        context.__aenter__.return_value = real_response
         contexts.append(context)
     if side_effect is not None:
-        return mocker.patch("httpx.Client.stream", side_effect=contexts)
-    return mocker.patch("httpx.Client.stream", return_value=contexts[0])
+        return mocker.patch("httpx.AsyncClient.stream", side_effect=contexts)
+    return mocker.patch("httpx.AsyncClient.stream", return_value=contexts[0])
 
 
 def test_groq_model_name_valid():
@@ -364,13 +364,13 @@ def _voxhelm(api_base="https://voxhelm.example"):
 
 
 def _mock_transport_client(monkeypatch, handler):
-    """Make every httpx.Client in the backends use a MockTransport."""
-    real_client = httpx.Client
+    """Make every httpx.AsyncClient in the backends use a MockTransport."""
+    real_client = httpx.AsyncClient
 
     def client_factory(*args, **kwargs):
         return real_client(*args, transport=httpx.MockTransport(handler), **kwargs)
 
-    monkeypatch.setattr(backends.httpx, "Client", client_factory)
+    monkeypatch.setattr(backends.httpx, "AsyncClient", client_factory)
 
 
 def _ok_response(mocker):

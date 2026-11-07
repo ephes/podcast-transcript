@@ -42,10 +42,10 @@ def test_bad_success_never_published_then_retry_recovers(
     monkeypatch, tmp_path, name, invalid
 ):
     results = iter([invalid, {"segments": []}])
-    real_client = httpx.Client
+    real_client = httpx.AsyncClient
     monkeypatch.setattr(
         httpx,
-        "Client",
+        "AsyncClient",
         lambda **kw: real_client(
             transport=httpx.MockTransport(
                 lambda req: httpx.Response(

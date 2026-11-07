@@ -587,6 +587,57 @@ def test_local_source_metadata_written_only_after_preparation(mocker, tmp_path):
     assert audio.prepare_audio_for_transcription()[0].read_bytes() == b"BBBB"
 
 
+@pytest.mark.parametrize("failure", ["copy", "resample", "probe"])
+def test_changed_source_preparation_preserves_previous_generation(
+    mocker, tmp_path, failure
+):
+    import shutil
+    from podcast_transcript import audio as audio_module
+
+    cache = tmp_path / "cache"
+    mocker.patch("podcast_transcript.single_track.settings.transcript_dir", cache)
+    mocker.patch.object(audio_module, "resample_audio", shutil.copyfile)
+    mocker.patch.object(audio_module, "get_audio_duration", return_value=1.0)
+    source = tmp_path / "source.mp3"
+    source.write_bytes(b"original audio")
+    backend = RecordingBackend("model", "original transcript")
+    transcribe(str(source), backend)
+    audio = Audio(base_dir=cache, url=str(source))
+    previous = {
+        path.relative_to(audio.podcast_dir): path.read_bytes()
+        for path in audio.podcast_dir.rglob("*")
+        if path.is_file() and path != audio.source_metadata_path
+    }
+    source.write_bytes(b"changed corrupt audio")
+    target, method = {
+        "copy": (audio_module.shutil, "copy"),
+        "resample": (audio_module, "resample_audio"),
+        "probe": (audio_module, "get_audio_duration"),
+    }[failure]
+    broken = mocker.patch.object(
+        target, method, side_effect=RuntimeError("synthetic preparation failure")
+    )
+    # Both attempts fail rather than returning a transcript for the previous bytes.
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="synthetic preparation failure"):
+            transcribe(str(source), backend)
+        assert len(backend.calls) == 1
+        assert not audio.source_metadata_path.exists()
+        for relative, content in previous.items():
+            assert (audio.podcast_dir / relative).read_bytes() == content
+        assert not list(audio.podcast_dir.glob(".prepare-*"))
+    mocker.stop(broken)
+    backend.text = "replacement transcript"
+    paths = transcribe(str(source), backend)
+    assert paths["plain text"].read_text() == "replacement transcript"
+    assert len(backend.calls) == 2
+    assert audio.episode_path.read_bytes() == b"changed corrupt audio"
+    assert audio.resampled_episode_path.read_bytes() == b"changed corrupt audio"
+    assert json.loads(audio.source_metadata_path.read_text()) == {
+        "sha256": audio._content_fingerprint(source)
+    }
+
+
 def test_webvtt_preserves_literal_text_in_one_cue(tmp_path):
     from html import unescape
     from podcast_transcript.single_track import convert_to_webvtt

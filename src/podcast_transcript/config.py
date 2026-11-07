@@ -138,7 +138,7 @@ class Settings:
     @property
     def http_read_timeout_seconds(self) -> float:
         """
-        The read timeout for remote transcription backends, in seconds.
+        The read timeout and elapsed remote request budget, in seconds.
 
         Set with ``TRANSCRIPT_HTTP_READ_TIMEOUT`` (environment or .env file).
         Raises ValueError unless it is a finite number greater than zero.

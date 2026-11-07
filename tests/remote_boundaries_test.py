@@ -1,8 +1,10 @@
 """Synthetic HTTP boundaries; no external services or platform-specific tools."""
 
+import asyncio
 import gzip
 import json
 import sys
+import time
 
 import httpx
 import pytest
@@ -26,6 +28,12 @@ def transport(monkeypatch, handler):
         httpx,
         "Client",
         lambda **kw: client(transport=httpx.MockTransport(handler), **kw),
+    )
+    async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kw: async_client(transport=httpx.MockTransport(handler), **kw),
     )
 
 
@@ -68,7 +76,7 @@ def test_invalid_api_base_rejected_before_upload(base):
         remote("voxhelm", base)
 
 
-class Blocks(httpx.SyncByteStream):
+class Blocks(httpx.SyncByteStream, httpx.AsyncByteStream):
     def __init__(self, blocks):
         self.blocks = blocks
         self.closed = False
@@ -77,6 +85,13 @@ class Blocks(httpx.SyncByteStream):
         yield from self.blocks
 
     def close(self):
+        self.closed = True
+
+    async def __aiter__(self):
+        for block in self.blocks:
+            yield block
+
+    async def aclose(self):
         self.closed = True
 
 
@@ -195,3 +210,109 @@ def test_error_stream_keeps_declared_charset(monkeypatch, tmp_path, name):
     with pytest.raises(RuntimeError, match="synthétique"):
         remote(name).transcribe(chunk, chunk.with_suffix(".json"))
     assert stream.closed
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "br", "identity, gzip"])
+@pytest.mark.parametrize("status", [200, 302])
+def test_source_rejects_encoding_before_decoding(
+    monkeypatch, tmp_path, encoding, status
+):
+    from podcast_transcript.audio import settings
+
+    monkeypatch.setattr(settings, "transcript_source_max_bytes", "8")
+    stream = Blocks([gzip.compress(b"x" * 100_000)])
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            status,
+            stream=stream,
+            headers={"Content-Encoding": encoding, "Location": "/redirect"},
+        )
+
+    transport(monkeypatch, handler)
+
+    def forbidden_decode(*args, **kwargs):
+        pytest.fail("compressed source was passed to the decoder")
+
+    monkeypatch.setattr(httpx.Response, "iter_bytes", forbidden_decode)
+    target = tmp_path / "audio.mp3"
+    target.write_bytes(b"previous")
+    with pytest.raises(RuntimeError, match="Content-Encoding"):
+        download("https://example.test/audio.mp3", target)
+    assert requests[0].headers["Accept-Encoding"] == "identity"
+    assert stream.closed
+    assert target.read_bytes() == b"previous"
+    assert list(tmp_path.iterdir()) == [target]
+
+
+@pytest.mark.parametrize("name", ["groq", "voxhelm"])
+def test_remote_trickle_deadline_preserves_outputs_and_releases_lock(
+    monkeypatch, tmp_path, name
+):
+    from podcast_transcript.audio import Audio
+    from podcast_transcript import single_track
+    from single_track_test import _fake_prepare
+
+    monkeypatch.setattr(backends.settings, "transcript_http_read_timeout", "0.05")
+    monkeypatch.setattr(single_track.settings, "transcript_dir", tmp_path)
+    monkeypatch.setattr(Audio, "prepare_audio_for_transcription", _fake_prepare)
+
+    class Trickle(Blocks):
+        received = 0
+
+        def __iter__(self):
+            for block in self.blocks:
+                time.sleep(0.01)
+                self.received += 1
+                yield block
+
+        async def __aiter__(self):
+            for block in self.blocks:
+                await asyncio.sleep(0.01)
+                self.received += 1
+                yield block
+
+    stream = Trickle([b" "] * 30 + [b'{"segments": []}'])
+    responses = iter(
+        [
+            httpx.Response(200, stream=stream),
+            httpx.Response(200, json={"segments": []}),
+        ]
+    )
+    transport(monkeypatch, lambda request: next(responses))
+    backend = remote(name)
+    url = "https://example.test/episode.mp3"
+    audio = Audio(base_dir=tmp_path, url=url)
+    audio.podcast_dir.mkdir(parents=True)
+    audio.cache_metadata_path.write_text(
+        json.dumps(single_track.backend_cache_metadata(backend))
+    )
+    previous = audio.output_path(".txt")
+    previous.write_text("previous completed transcript")
+    with pytest.raises(RuntimeError, match="timed out.*ReadTimeout"):
+        single_track.transcribe(url, backend)
+    assert stream.received < len(stream.blocks)
+    assert stream.closed
+    assert previous.read_text() == "previous completed transcript"
+    assert not (audio.episode_chunks_dir / "chunk_000.json").exists()
+    # The failed request released the episode lock: a valid response can retry.
+    paths = single_track.transcribe(url, backend)
+    assert paths["plain text"].read_text() == "previous completed transcript"
+
+
+@pytest.mark.parametrize("name", ["groq", "voxhelm"])
+def test_sync_backend_still_works_inside_running_event_loop(
+    monkeypatch, tmp_path, name
+):
+    transport(monkeypatch, lambda request: httpx.Response(200, json={"segments": []}))
+    chunk = tmp_path / "audio.mp3"
+    chunk.write_bytes(b"synthetic audio")
+    output = chunk.with_suffix(".json")
+
+    async def caller():
+        remote(name).transcribe(chunk, output)
+
+    asyncio.run(caller())
+    assert json.loads(output.read_text()) == {"segments": []}
