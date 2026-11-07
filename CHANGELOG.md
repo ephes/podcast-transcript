@@ -7,6 +7,10 @@
 
 ### Fixes
 
+- Retire all dependent transcripts when rebuilding chunks with a missing completion manifest.
+- Validate combined DOTe before returning outputs and atomically regenerate derived exports on
+  every run, repairing truncated caches without another backend call.
+
 - Validate Whisper result envelopes, segment text and finite, nonnegative ordered times before
   caching backend results or reusing raw chunks. Accept silence and zero-length cues; preserve
   millisecond rounding and report cached filenames and bounded segment positions without transcript text.

@@ -251,17 +251,15 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
     dote_path = audio.output_path(".dote.json")
     if not dote_path.exists():
         combine_dote_chunks(dote_chunks, dote_path, chunk_durations)
+    load_dote(dote_path)
     transcript_paths["DOTe"] = dote_path
     podlove_path = audio.output_path(".podlove.json")
-    if not podlove_path.exists():
-        convert_dote_to_podlove(dote_path, podlove_path)
+    convert_dote_to_podlove(dote_path, podlove_path)
     transcript_paths["podlove"] = podlove_path
     webvtt_path = audio.output_path(".webvtt")
-    if not webvtt_path.exists():
-        convert_to_webvtt(dote_path, webvtt_path)
+    convert_to_webvtt(dote_path, webvtt_path)
     transcript_paths["WebVTT"] = webvtt_path
     plaintext_path = audio.output_path(".txt")
-    if not plaintext_path.exists():
-        convert_to_plaintext(dote_path, plaintext_path)
+    convert_to_plaintext(dote_path, plaintext_path)
     transcript_paths["plain text"] = plaintext_path
     return transcript_paths

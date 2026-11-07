@@ -254,8 +254,9 @@ preparation succeeds; backend-setting invalidation remains independent. The orig
 remain available on each run for content verification; a missing source produces an error asking you
 to restore it, even if copied audio is cached.
 
-Each step caches its result as a file in that directory and is skipped on later runs if the file
-exists. The directory also holds a `cache.json` that records the backend, model, language and prompt
+Audio and chunk transcripts are cached in that directory. Prepared chunks are reused only with
+an admitted complete `chunks/chunks.json`; rebuilding a missing or invalid manifest retires all
+dependent raw, DOTe and combined transcripts, even if stale transcript files still exist. The directory also holds a `cache.json` that records the backend, model, language and prompt
 used for the transcripts. If you re-run with different settings (for example `--backend groq` after
 `whisper-cpp`, or another `TRANSCRIPT_MODEL_NAME`), the cached chunk transcripts and combined outputs are
 discarded and transcribed again; the downloaded, resampled and chunked audio is reused. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
@@ -271,6 +272,11 @@ A concurrent invocation for the same episode exits with “Episode cache is busy
 first run finishes. Other episodes can run concurrently. Locks are released on failures and process
 exit. Leave library-managed files in the `.locks` directory under `TRANSCRIPT_DIR` alone
 (they persist on Unix); do not manually remove locks or episode data while a transcription is active.
+
+The combined DOTe cache is validated on every run before advertising any outputs. Invalid combined
+DOTe causes a controlled error; remove it and rerun to combine the validated chunk caches again.
+Podlove, WebVTT and plaintext are always atomically regenerated from validated combined DOTe; file
+existence is never their completion rule, so edited or truncated exports are repaired on rerun.
 
 ### Transcript and cached-artifact validation
 
@@ -307,9 +313,8 @@ the invalid DOTe cache and regenerate its combined exports before retrying.
 
 ### Regenerating cached WebVTT exports
 
-Existing `.webvtt` files remain cached. To apply the literal-text escaping fix to an existing export,
-delete just that file in the episode cache directory and rerun the same transcription command with
-the same backend settings. The cached transcript is reused to generate the corrected WebVTT file.
+Rerun the same transcription command with the same backend settings. The validated combined
+transcript is reused and the WebVTT export is regenerated automatically.
 
 ### Cache directories from versions before 0.1.7
 

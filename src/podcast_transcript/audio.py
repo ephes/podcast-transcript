@@ -343,9 +343,8 @@ class Audio:
         # chunks were moved into place, or the cache predates the manifest.
         # Remove leftover chunk audio (and WAV files derived from it) and
         # split again so a partial chunk set is never reused.
-        if self.chunks_manifest_path.exists():
-            self._remove_cached_transcripts()
-            self.chunks_manifest_path.unlink()
+        self._remove_cached_transcripts()
+        self.chunks_manifest_path.unlink(missing_ok=True)
         self._remove_generated_chunks()
         if exceeds_limit:
             rprint(f"Splitting {self.resampled_episode_path} into chunks")
