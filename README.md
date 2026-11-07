@@ -272,6 +272,27 @@ first run finishes. Other episodes can run concurrently. Locks are released on f
 exit. Leave library-managed files in the `.locks` directory under `TRANSCRIPT_DIR` alone
 (they persist on Unix); do not manually remove locks or episode data while a transcription is active.
 
+### Transcript and cached-artifact validation
+
+All backend results must be Whisper objects containing a `segments` list. An empty list is a valid
+silent transcript. Each segment requires string `text` plus numeric `start` and `end` in seconds;
+optional top-level `text` must also be a string. Times must be finite, nonnegative, representable
+in milliseconds, and ordered (`end >= start`); booleans and numeric strings are rejected.
+Zero-length cues are allowed. Valid fractional seconds retain nearest-millisecond rounding.
+Invalid backend results never replace raw transcript caches, so a corrected response can be retried.
+
+Cached raw chunks are validated before reuse. If an older or edited raw chunk is rejected, remove
+that `chunks/chunk_NNN.json` and its derived `chunk_NNN.dote.json`, plus the combined episode
+outputs, then rerun to retranscribe that chunk. Valid prepared audio and other raw chunks are reused.
+Errors identify the cached filename and segment position without including transcript text.
+
+DOTe `speakerDesignation` is optional (defaults to an empty speaker in Podlove); when present it
+must be a string. Cached DOTe cues use full `HH:MM:SS,mmm` strings: at least two hour digits, exactly two minute/second
+digits (00–59), and exactly three millisecond digits. Hours may exceed 24. Suffixes, malformed
+widths and reversed cues are rejected consistently before combining (including single-chunk copies)
+or writing any export. Existing output bytes are preserved on validation failure. Correct or remove
+the invalid DOTe cache and regenerate its combined exports before retrying.
+
 ## Output Formats
 
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
