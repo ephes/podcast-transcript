@@ -117,7 +117,7 @@ def test_voxhelm_audio_file_to_text(mocker, audio):
 def test_voxhelm_uses_existing_v1_prefix(mocker, audio):
     mock_response = mocker.MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {"text": "Hello"}
+    mock_response.json.return_value = {"text": "Hello", "segments": []}
     post = patch_stream(mocker, return_value=mock_response)
 
     audio_chunk = audio.episode_chunks_dir / "chunk_000.mp3"

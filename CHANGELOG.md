@@ -7,6 +7,13 @@
 
 ### Fixes
 
+- Validate Whisper result envelopes, segment text and finite, nonnegative ordered times before
+  caching backend results or reusing raw chunks. Accept silence and zero-length cues; preserve
+  millisecond rounding and report cached filenames and bounded segment positions without transcript text.
+- Validate cached DOTe timecodes with one strict parser across combination and all exports,
+  including single-chunk copies. Reject component overflow, suffix junk and reversed cues while
+  preserving multi-day hours and previous outputs; document invalid-cache recovery.
+
 - Validate Voxhelm HTTP(S) API prefixes before uploads and use the same prefix for requests and
   cache identity; reject credentials, query strings and fragments while preserving custom paths.
 - Stream Groq/Voxhelm responses with a 32 MiB decoded-byte limit and cap displayed error details

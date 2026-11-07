@@ -12,6 +12,13 @@ from rich import print as rprint
 from .audio import Audio, get_audio_duration
 from .backends import MLX, TranscriptionBackend, Voxhelm
 from .config import settings
+from .transcript_validation import (
+    validate_segments,
+    load_whisper_transcript,
+    load_dote,
+    parse_dote_timecode,
+    format_dote_timecode,
+)
 from .safe_io import atomic_output, write_text_atomic
 
 
@@ -46,12 +53,19 @@ def audio_chunks_to_text(
         chunk_name = chunk.name.split(".")[0]
         transcript_name = f"{chunk_name}.json"
         transcript_path = chunk.parent / transcript_name
-        if not transcript_path.exists():
+        cached = transcript_path.exists()
+        if not cached:
             service.transcribe(chunk, transcript_path)
             if not transcript_path.exists():
                 raise RuntimeError(
                     f"Transcription backend did not produce {transcript_path}"
                 )
+        try:
+            load_whisper_transcript(transcript_path)
+        except ValueError:
+            if not cached:
+                transcript_path.unlink(missing_ok=True)
+            raise
         raw_transcripts.append(transcript_path)
     return raw_transcripts
 
@@ -67,6 +81,7 @@ def whisper_to_dote(input_data):
         millis = total_milliseconds % 1000
         return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
 
+    validate_segments(input_data)
     output_data = {"lines": []}
     for item in input_data:
         line = {
@@ -85,10 +100,10 @@ def whisper_text_chunks_to_dote(raw_text_chunks: list[Path]) -> list[Path]:
     for chunk in raw_text_chunks:
         dote_path = chunk.with_suffix(".dote.json")
         if dote_path.exists():
+            load_dote(dote_path)
             dote_paths.append(dote_path)
             continue
-        with chunk.open("r") as file:
-            whisper_transcript = json.load(file)
+        whisper_transcript = load_whisper_transcript(chunk)
         rprint(f"Converting {chunk.name} to DOTe format")
         dote_transcript = whisper_to_dote(whisper_transcript["segments"])
         write_text_atomic(dote_path, json.dumps(dote_transcript))
@@ -114,25 +129,11 @@ def combine_dote_chunks(
     if len(dote_chunks) == 1:
         # Copy and return early
         [source_dote_file] = dote_chunks
+        load_dote(source_dote_file)
         rprint(f"Copying {source_dote_file} to {output_path}")
         with atomic_output(output_path) as tmp_path:
             shutil.copy(source_dote_file, tmp_path)
         return None
-
-    def parse_timecode(timecode):
-        match = re.match(r"(\d+):(\d+):(\d+),(\d+)", timecode)
-        if not match:
-            raise ValueError(f"Invalid timecode format: {timecode}")
-        h, m, s, ms = map(int, match.groups())
-        return timedelta(hours=h, minutes=m, seconds=s, milliseconds=ms)
-
-    def format_timecode(delta):
-        total_seconds = int(delta.total_seconds())
-        hours = total_seconds // 3600
-        minutes = (total_seconds % 3600) // 60
-        seconds = total_seconds % 60
-        milliseconds = delta.microseconds // 1000
-        return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
 
     rprint(f"Combining {len(dote_chunks)} DOTe chunks into {output_path}")
 
@@ -140,17 +141,20 @@ def combine_dote_chunks(
     offset = timedelta()
 
     for filename, chunk_duration in zip(dote_chunks, chunk_durations):
-        with open(filename, "r") as f:
-            data = json.load(f)
+        data = load_dote(filename)
 
         for line in data["lines"]:
             new_line = dict(line)
-            start_time = parse_timecode(line["startTime"])
-            end_time = parse_timecode(line["endTime"])
+            start_time = parse_dote_timecode(line["startTime"])
+            end_time = parse_dote_timecode(line["endTime"])
 
             # Adjust times with offset
-            new_line["startTime"] = format_timecode(start_time + offset)
-            new_line["endTime"] = format_timecode(end_time + offset)
+            new_line["startTime"] = format_dote_timecode(
+                start_time + offset // timedelta(milliseconds=1)
+            )
+            new_line["endTime"] = format_dote_timecode(
+                end_time + offset // timedelta(milliseconds=1)
+            )
             combined_lines.append(new_line)
 
         # The next chunk starts where this chunk's audio ends
@@ -160,24 +164,18 @@ def combine_dote_chunks(
 
 
 def convert_dote_to_podlove(dote_path: Path, podlove_path: Path) -> None:
-    def time_to_ms(time_str):
-        h, m, s_ms = time_str.split(":")
-        s, ms = s_ms.split(",")
-        return int(h) * 3600000 + int(m) * 60000 + int(s) * 1000 + int(ms)
-
-    with open(dote_path, "r") as infile:
-        dote_data = json.load(infile)
+    dote_data = load_dote(dote_path)
 
     transcripts = []
     for line in dote_data.get("lines", []):
-        start_ms = time_to_ms(line["startTime"])
-        end_ms = time_to_ms(line["endTime"])
+        start_ms = parse_dote_timecode(line["startTime"])
+        end_ms = parse_dote_timecode(line["endTime"])
         transcript = {
             "start": line["startTime"].replace(",", "."),
             "start_ms": start_ms,
             "end": line["endTime"].replace(",", "."),
             "end_ms": end_ms,
-            "speaker": line["speakerDesignation"],
+            "speaker": line.get("speakerDesignation", ""),
             "voice": "",  # assuming no voice data is available
             "text": line["text"],
         }
@@ -188,8 +186,7 @@ def convert_dote_to_podlove(dote_path: Path, podlove_path: Path) -> None:
 
 def convert_to_webvtt(dote_path: Path, vtt_path: Path) -> None:
     """Converts DOTe format to WebVTT format."""
-    with open(dote_path, "r") as f:
-        dote_data = json.load(f)
+    dote_data = load_dote(dote_path)
 
     lines = dote_data.get("lines", [])
     output = ["WEBVTT\n"]
@@ -208,8 +205,7 @@ def convert_to_webvtt(dote_path: Path, vtt_path: Path) -> None:
 
 def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
     """Converts DOTe format to plain text."""
-    with open(dote_path, "r") as f:
-        dote_data = json.load(f)
+    dote_data = load_dote(dote_path)
 
     lines = dote_data.get("lines", [])
     output = []

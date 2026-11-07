@@ -15,6 +15,7 @@ import httpx
 from rich import print as rprint
 
 from .config import settings
+from .transcript_validation import validate_whisper_transcript
 from .safe_io import atomic_output, run_checked, write_text_atomic
 
 
@@ -246,6 +247,7 @@ class Groq:
                     json_transcript = response.json()
                     break  # Exit the loop
 
+        validate_whisper_transcript(json_transcript)
         write_text_atomic(transcript_path, json.dumps(json_transcript))
 
 
@@ -286,6 +288,7 @@ class MLX:
             initial_prompt=self.prompt,
             language=self.language,  # type: ignore
         )
+        validate_whisper_transcript(result)
         write_text_atomic(transcript_path, json.dumps(result, indent=2))
 
 
@@ -382,7 +385,9 @@ class Voxhelm:
                         f"Voxhelm transcription failed with status {response.status_code}."
                     ) from exc
 
-        write_text_atomic(transcript_path, json.dumps(response.json()))
+        result = response.json()
+        validate_whisper_transcript(result)
+        write_text_atomic(transcript_path, json.dumps(result))
 
 
 class WhisperCpp:
@@ -515,6 +520,7 @@ class WhisperCpp:
         with input_path.open("r") as file:
             cpp_transcript = json.load(file)
         transformed_transcript = self.transform_transcription(cpp_transcript)
+        validate_whisper_transcript(transformed_transcript)
         write_text_atomic(output_path, json.dumps(transformed_transcript))
 
     def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
