@@ -7,6 +7,10 @@
 
 ### Fixes
 
+- Parse CLI help and usage before loading operational settings. Defer storage creation and
+  ffmpeg checks to transcription; preserve lazy package reexports. Document separate whisper-cli
+  and model preparation, exact default/override paths and read-only prerequisite checks.
+
 - Apply process-over-file precedence to Groq credentials and transcript directories. Normalize
   selected directories before creation/use; keep home relocation environment-only and ignore
   unsupported `.env` attributes.

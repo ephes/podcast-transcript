@@ -27,6 +27,8 @@ from podcast_transcript.audio import Audio
 from podcast_transcript import single_track
 from podcast_transcript.single_track import transcribe, settings
 single_track.get_audio_duration = lambda _: 10.0
+from podcast_transcript import config
+config.shutil.which = lambda name: "/synthetic/" + name
 settings.transcript_dir = Path(sys.argv[1])
 def prepare(self):
     self.episode_chunks_dir.mkdir(parents=True, exist_ok=True)

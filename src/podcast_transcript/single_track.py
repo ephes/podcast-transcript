@@ -228,6 +228,7 @@ def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
 
 
 def transcribe(url: str, backend: TranscriptionBackend) -> dict[str, Path]:
+    settings.prepare()
     audio = Audio(base_dir=settings.transcript_dir, url=url)
     # Outside the episode directory: deleting/rebuilding episode data must not
     # change the inode used to serialize generations. Leave lock lifecycle to filelock.

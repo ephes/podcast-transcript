@@ -4,7 +4,7 @@ import tempfile
 
 import pytest
 
-# Settings are constructed at import time; use only synthetic configuration.
+# Use only synthetic configuration, even for tests importing settings directly.
 for _key in (
     "GROQ_API_KEY",
     "VOXHELM_API_BASE",
@@ -32,3 +32,11 @@ def audio(tmp_path):
 
     url = "https://example.com/test.mp3"
     return Audio(base_dir=tmp_path, url=url)
+
+
+@pytest.fixture(autouse=True)
+def synthetic_media_prerequisite(monkeypatch):
+    # Media calls are separately mocked; no host ffmpeg installation is needed.
+    monkeypatch.setattr(
+        "podcast_transcript.config.shutil.which", lambda name: f"/synthetic/{name}"
+    )

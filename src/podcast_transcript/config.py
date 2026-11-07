@@ -74,8 +74,7 @@ class Settings:
 
     def __init__(self):
         self.console = Console()
-        # Set the transcript home directory - this is special because we want to create
-        # the directory if it does not exist which is why we cannot wait until read_env_vars()
+        # Environment-only bootstrap path selects the configuration file.
         if (transcript_home := os.getenv("TRANSCRIPT_HOME")) is not None:
             self.transcript_home = Path(transcript_home)
         else:
@@ -93,8 +92,6 @@ class Settings:
         self.read_env_vars()
 
         self.transcript_dir = Path(self.transcript_dir)
-        self.transcript_home.mkdir(parents=True, exist_ok=True)
-        self.transcript_dir.mkdir(parents=True, exist_ok=True)
 
         # Make sure the groq api key is set - this is special because the api key is required
         if not hasattr(self, "groq_api_key"):
@@ -105,13 +102,14 @@ class Settings:
                     style="yellow",
                 )
 
-        # Check if ffmpeg is installed
+    def prepare(self) -> None:
+        """Check media prerequisites and create storage for an actual transcription."""
         if shutil.which("ffmpeg") is None:
-            self.console.print(
-                "Error: ffmpeg is not installed or not found in PATH. Please install ffmpeg and ensure it's in your system's PATH.",
-                style="bold red",
+            raise RuntimeError(
+                "ffmpeg is not installed or not found in PATH. Please install ffmpeg and ensure it is on PATH."
             )
-            exit(1)
+        self.transcript_home.mkdir(parents=True, exist_ok=True)
+        self.transcript_dir.mkdir(parents=True, exist_ok=True)
 
     def read_env_file(self, env_file: Path):
         """

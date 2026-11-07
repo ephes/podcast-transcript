@@ -203,6 +203,7 @@ def test_directory_values_resolved_before_creation(tmp_path, monkeypatch, source
     assert settings.transcript_home == home
     assert isinstance(settings.transcript_dir, Path)
     assert settings.transcript_dir == expected
+    settings.prepare()
     assert settings.transcript_dir.is_dir()
     if source != "default":
         assert not (home / "transcripts").exists()

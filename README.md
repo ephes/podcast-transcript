@@ -36,13 +36,13 @@ A simple command-line tool to generate transcripts for podcast episodes or other
 
 - Python >=3.10
   - MLX backend (via `mlx-whisper`) requires macOS on Apple Silicon and a Python version supported by the `mlx-whisper` / `torch` wheels.
-- [ffmpeg](https://ffmpeg.org/) installed and available in your system’s PATH.
+- [ffmpeg and ffprobe](https://ffmpeg.org/) installed and available in your system’s PATH.
 - For the default `whisper-cpp` backend: `whisper-cli` on PATH and a model in
   `TRANSCRIPT_HOME/whisper-cpp-models` (see [Configuration](#configuration)).
 - Local `whisper-cpp` and MLX backends need no API credentials. Only `--backend groq` requires
   a [Groq API key](https://groq.com/); `--backend voxhelm` requires a Voxhelm API base and key.
 
-Settings currently prints a missing `GROQ_API_KEY` warning even for other backends and `--help`.
+Operational settings print a missing `GROQ_API_KEY` warning even for other backends.
 This warning is harmless when using `whisper-cpp`, MLX or Voxhelm; a Groq key is required only
 when selecting `--backend groq`.
 
@@ -80,6 +80,39 @@ Example (pin Python + package version):
 time TRANSCRIPT_LANGUAGE=de uvx --python python3.14.2 --from "podcast-transcript[mlx]==0.1.5" transcribe --backend mlx https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp_67.mp3
 ```
 
+### First local whisper-cpp run
+
+The Python package supplies `transcribe`; prepare whisper.cpp and a compatible local GGML model
+separately. Install/build `whisper-cli` using the [whisper.cpp instructions](https://github.com/ggml-org/whisper.cpp),
+and acquire a compatible model there before transcription. The command never downloads a whisper-cpp model.
+Place the model at the exact path `$TRANSCRIPT_HOME/whisper-cpp-models/ggml-large-v3.bin`
+(default home: `$HOME/.podcast-transcripts`). For a differently named model, place it in the same
+directory and set `TRANSCRIPT_MODEL_NAME` to its basename, for example `ggml-base.en.bin`.
+
+After preparing the executable and model, these read-only checks verify their locations:
+
+```shell
+command -v ffmpeg
+command -v ffprobe
+command -v whisper-cli
+whisper-cli --help
+model_home="${TRANSCRIPT_HOME:-$HOME/.podcast-transcripts}/whisper-cpp-models"
+model_name="${TRANSCRIPT_MODEL_NAME:-ggml-large-v3.bin}"
+test -r "$model_home/$model_name" || echo "Missing or unreadable local model: $model_home/$model_name"
+```
+
+These shell checks reflect process environment values; if model selection is in the home's `.env`,
+set the same `TRANSCRIPT_MODEL_NAME` in the shell before checking. A readable file check does not
+verify model format/compatibility; whisper-cli validates that when it runs. For an invented local example:
+
+```shell
+TRANSCRIPT_MODEL_NAME=ggml-base.en.bin transcribe --backend whisper-cpp "/tmp/synthetic episode.wav"
+```
+
+Replace that path with your own local audio. Missing executables produce a command-not-found failure;
+missing/incompatible models are reported by whisper-cli through the bounded command diagnostic.
+No API key is required for this backend.
+
 ## Configuration
 
 ### Setting the Groq API Key
@@ -97,7 +130,7 @@ GROQ_API_KEY=your_api_key_here transcribe --backend groq <audio_source>
 
 - **.env File**:
 
-Create a .env file in the transcript directory (default is ~/.podcast-transcripts/) and add the following line:
+Create a .env file in the transcript home directory (default is ~/.podcast-transcripts/) and add the following line:
 ```shell
 GROQ_API_KEY=your_api_key_here
 ```
@@ -105,7 +138,8 @@ GROQ_API_KEY=your_api_key_here
 Supported settings use process environment values in preference to `.env` values, including
 `GROQ_API_KEY`, `VOXHELM_API_KEY` and `TRANSCRIPT_DIR`. `TRANSCRIPT_HOME` is an environment-only
 bootstrap setting: the `.env` inside that home cannot relocate it. Unknown file keys are ignored.
-Directory values become Paths before use, and only the final selected output directory is created.
+Directory values become Paths before use. Storage creation and the ffmpeg check happen only when
+transcription starts; only the final selected output directory is created.
 
 The .env file has one `KEY=value` per line. Only the first `=` separates key and value, so values may
 contain `=`. Blank lines and lines starting with `#` are ignored, an optional `export ` prefix is
@@ -195,6 +229,10 @@ Rejected downloads close their response and remove partial files; an existing ta
 These limits apply only to source HTTP(S) downloads, not local copies or backend uploads.
 
 ## Usage
+
+`transcribe --help` and argument/usage errors work without ffmpeg or a configured home and create no
+transcript directories. Importing the package also performs no operational settings initialization.
+Actual transcription checks ffmpeg before creating storage; ffprobe is needed to probe duration.
 
 The installed executable is `transcribe`. Pass a local audio file path or an HTTP(S) URL;
 MP3, AAC, WAV and FLAC input are supported. The default backend is local `whisper-cpp`:

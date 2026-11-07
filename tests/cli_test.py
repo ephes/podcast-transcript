@@ -188,3 +188,127 @@ def test_cli_help_describes_local_and_http_audio(monkeypatch, capsys):
     assert "local file path" in output
     assert "http(s) url" in output
     assert "source" in output
+
+
+@pytest.mark.parametrize(
+    "args,code", [(["--help"], 0), ([], 2), (["--backend", "unknown", "x.wav"], 2)]
+)
+def test_installed_entrypoint_usage_without_operational_side_effects(
+    tmp_path, args, code
+):
+    import json
+    import os
+    import subprocess
+
+    home = tmp_path / "unused home"
+    blocked = tmp_path / "file"
+    blocked.write_text("not a directory")
+    env = dict(
+        os.environ,
+        HOME=str(tmp_path),
+        PATH="",
+        TRANSCRIPT_HOME=str(home),
+        TRANSCRIPT_DIR=str(blocked / "out"),
+    )
+    script = (
+        "import importlib.metadata, sys; "
+        f"sys.argv = ['transcribe'] + {json.dumps(args)}; "
+        "entry = next(e for e in importlib.metadata.distribution('podcast-transcript').entry_points "
+        "if e.name == 'transcribe'); entry.load()()"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == code, result.stderr + result.stdout
+    assert "usage:" in result.stdout + result.stderr
+    assert "ffmpeg" not in result.stderr + result.stdout
+    assert not home.exists()
+    assert blocked.read_text() == "not a directory"
+
+
+def test_actual_transcription_requires_ffmpeg(tmp_path):
+    import os
+    import subprocess
+
+    home = tmp_path / "unused home"
+    env = dict(
+        os.environ, PATH="", TRANSCRIPT_HOME=str(home), TRANSCRIPT_DIR=str(home / "out")
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from podcast_transcript import transcribe_cli; transcribe_cli()",
+            "x.wav",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 1
+    assert "ffmpeg" in result.stdout
+    assert not home.exists()
+
+
+@pytest.mark.parametrize("model_name", [None, "ggml-base.en.bin"])
+def test_local_runbook_model_selection(tmp_path, monkeypatch, model_name):
+    import argparse
+    from pathlib import Path
+    from podcast_transcript import backends, whisper_cpp_from_settings_and_args
+    from podcast_transcript.safe_io import run_checked
+
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(tmp_path / "local home"))
+    monkeypatch.delenv("TRANSCRIPT_MODEL_NAME", raising=False)
+    if model_name:
+        monkeypatch.setenv("TRANSCRIPT_MODEL_NAME", model_name)
+    settings = Settings()
+    monkeypatch.setattr(backends, "settings", settings)
+    expected = settings.whisper_cpp_models_dir / (model_name or "ggml-large-v3.bin")
+    expected.parent.mkdir(parents=True)
+    expected.write_bytes(b"synthetic model, no inference")
+    backend = whisper_cpp_from_settings_and_args(
+        settings, argparse.Namespace(processors=2)
+    )
+    assert backend.model_path == expected
+    # Fake CLI launched via Python so executable/shebang rules are platform independent.
+    fake_cli = tmp_path / "fake_whisper.py"
+    fake_cli.write_text(
+        "import sys\nfrom pathlib import Path\n"
+        "model = Path(sys.argv[sys.argv.index('-m') + 1])\n"
+        "if not model.is_file():\n"
+        "    print('Missing local model', file=sys.stderr)\n    sys.exit(2)\n"
+        "out = sys.argv[sys.argv.index('-of') + 1]\n"
+        "Path(out + '.json').write_text('{}')\n"
+    )
+
+    def fake_command(cmd, **kwargs):
+        assert cmd[0] == "whisper-cli"
+        return run_checked([sys.executable, str(fake_cli), *cmd[1:]], **kwargs)
+
+    monkeypatch.setattr(backends, "run_checked", fake_command)
+    source = tmp_path / "synthetic episode.wav"
+    source.write_bytes(b"synthetic audio")
+    out = tmp_path / "output"
+    backend.run_whisper_cli(source, out)
+    assert Path(str(out) + ".json").exists()
+    expected.unlink()
+    with pytest.raises(RuntimeError, match="Missing local model"):
+        backend.run_whisper_cli(source, out)
+
+
+def test_missing_local_executable_diagnostic(monkeypatch, tmp_path):
+    from podcast_transcript import backends
+
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("whisper-cli not found")
+
+    monkeypatch.setattr("podcast_transcript.safe_io.subprocess.Popen", missing)
+    with pytest.raises(FileNotFoundError, match="whisper-cli"):
+        backends.WhisperCpp().run_whisper_cli(
+            tmp_path / "synthetic.wav", tmp_path / "output"
+        )

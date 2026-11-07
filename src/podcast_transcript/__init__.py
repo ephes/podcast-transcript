@@ -1,14 +1,31 @@
+from __future__ import annotations
+
 import argparse
+from typing import TYPE_CHECKING
 import importlib.util
 from rich.console import Console
 
-from .single_track import transcribe
-from .config import settings, Settings
-from . import backends
-from .audio import safe_display_source, safe_diagnostic
+if TYPE_CHECKING:
+    from .config import Settings
+    from . import backends
+
+
+def __getattr__(name):
+    # Preserve the package's existing reexports without preparing a CLI run.
+    if name in {"settings", "Settings"}:
+        from . import config
+
+        return getattr(config, name)
+    if name == "transcribe":
+        from .single_track import transcribe
+
+        return transcribe
+    raise AttributeError(name)
 
 
 def groq_from_settings(my_settings: Settings) -> backends.Groq:
+    from . import backends
+
     return backends.Groq(
         api_key=my_settings.groq_api_key,
         model_name=my_settings.transcript_model_name,
@@ -18,6 +35,8 @@ def groq_from_settings(my_settings: Settings) -> backends.Groq:
 
 
 def mlx_from_settings(my_settings: Settings) -> backends.MLX:
+    from . import backends
+
     return backends.MLX(
         model_name=my_settings.transcript_model_name,
         language=my_settings.transcript_language,
@@ -26,6 +45,8 @@ def mlx_from_settings(my_settings: Settings) -> backends.MLX:
 
 
 def voxhelm_from_settings(my_settings: Settings) -> backends.Voxhelm:
+    from . import backends
+
     if not my_settings.voxhelm_api_base:
         raise ValueError("VOXHELM_API_BASE is not set.")
     if not my_settings.voxhelm_api_key:
@@ -42,6 +63,8 @@ def voxhelm_from_settings(my_settings: Settings) -> backends.Voxhelm:
 def whisper_cpp_from_settings_and_args(
     my_settings: Settings, args: argparse.Namespace
 ) -> backends.WhisperCpp:
+    from . import backends
+
     return backends.WhisperCpp(
         model_name=my_settings.transcript_model_name,
         language=my_settings.transcript_language,
@@ -96,7 +119,11 @@ def transcribe_cli():
         exit(1)
 
     # Start transcription process
+    from .audio import safe_display_source, safe_diagnostic
+
     try:
+        from . import settings, transcribe
+
         console.print(
             f"Starting transcription for: {safe_display_source(mp3_url)}",
             style="blue",
