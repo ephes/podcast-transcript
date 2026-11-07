@@ -283,6 +283,9 @@ def test_transcribe_uses_ffprobe_chunk_durations(mocker, tmp_path):
 
 
 def test_transcribe_fails_when_backend_writes_nothing(mocker, tmp_path):
+    mocker.patch(
+        "podcast_transcript.single_track.get_audio_duration", return_value=10.0
+    )
     chunks_dir = tmp_path / "test" / "chunks"
     chunks_dir.mkdir(parents=True)
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
@@ -448,6 +451,9 @@ def _fake_prepare(self):
 
 
 def test_two_episodes_with_same_basename_get_their_own_transcripts(mocker, tmp_path):
+    mocker.patch(
+        "podcast_transcript.single_track.get_audio_duration", return_value=10.0
+    )
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
     mocker.patch.object(Audio, "prepare_audio_for_transcription", _fake_prepare)
 
@@ -464,6 +470,9 @@ def test_two_episodes_with_same_basename_get_their_own_transcripts(mocker, tmp_p
 
 
 def test_backend_change_retranscribes(mocker, tmp_path):
+    mocker.patch(
+        "podcast_transcript.single_track.get_audio_duration", return_value=10.0
+    )
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
     mocker.patch.object(Audio, "prepare_audio_for_transcription", _fake_prepare)
     url = "https://example.com/test.mp3"
@@ -492,6 +501,9 @@ def test_backend_change_retranscribes(mocker, tmp_path):
 
 
 def test_backend_class_change_retranscribes(mocker, tmp_path):
+    mocker.patch(
+        "podcast_transcript.single_track.get_audio_duration", return_value=10.0
+    )
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
     mocker.patch.object(Audio, "prepare_audio_for_transcription", _fake_prepare)
     url = "https://example.com/test.mp3"
@@ -540,6 +552,9 @@ def test_transcript_cache_without_metadata_is_discarded_but_audio_kept(tmp_path)
 
 
 def test_local_source_changes_invalidate_pipeline(mocker, tmp_path):
+    mocker.patch(
+        "podcast_transcript.single_track.get_audio_duration", return_value=10.0
+    )
     import shutil
 
     mocker.patch(
@@ -719,6 +734,9 @@ def test_chunk_manifest_symlink_policy(audio, tmp_path):
 
 
 def test_voxhelm_service_identity_controls_cache(mocker, tmp_path, capsys):
+    mocker.patch(
+        "podcast_transcript.single_track.get_audio_duration", return_value=10.0
+    )
     from podcast_transcript.backends import Voxhelm
 
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
@@ -794,6 +812,9 @@ def test_bad_probe_stops_before_backend_and_preserves_outputs(
 
 
 def test_invalid_manifest_survives_interrupted_transcript_cleanup(mocker, tmp_path):
+    mocker.patch(
+        "podcast_transcript.single_track.get_audio_duration", return_value=10.0
+    )
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
     mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
     url = "https://example.test/episode.mp3"
@@ -855,6 +876,9 @@ def test_bad_new_chunk_probe_does_not_publish_preparation_markers(mocker, tmp_pa
 
 
 def test_mlx_word_timestamps_invalidate_only_transcripts(mocker, tmp_path):
+    mocker.patch(
+        "podcast_transcript.single_track.get_audio_duration", return_value=10.0
+    )
     from podcast_transcript.backends import MLX
 
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)

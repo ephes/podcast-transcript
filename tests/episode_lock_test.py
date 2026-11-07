@@ -13,6 +13,9 @@ from single_track_test import RecordingBackend, _fake_prepare
 @pytest.mark.parametrize("fail", [False, True])
 def test_episode_generation_has_one_process_writer(tmp_path, monkeypatch, fail):
     """A second process cannot prepare/invalidate while a backend is working."""
+    monkeypatch.setattr(
+        "podcast_transcript.single_track.get_audio_duration", lambda _: 10.0
+    )
     cache = tmp_path / "cache"
     entered = tmp_path / "entered"
     worker = tmp_path / "worker.py"
@@ -21,7 +24,9 @@ import json
 import sys
 from pathlib import Path
 from podcast_transcript.audio import Audio
+from podcast_transcript import single_track
 from podcast_transcript.single_track import transcribe, settings
+single_track.get_audio_duration = lambda _: 10.0
 settings.transcript_dir = Path(sys.argv[1])
 def prepare(self):
     self.episode_chunks_dir.mkdir(parents=True, exist_ok=True)
@@ -93,6 +98,9 @@ except RuntimeError:
 
 @pytest.mark.parametrize("stage", ["preparation", "export"])
 def test_episode_lock_released_on_pipeline_failure(mocker, tmp_path, stage):
+    mocker.patch(
+        "podcast_transcript.single_track.get_audio_duration", return_value=10.0
+    )
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
     prepare = mocker.patch.object(
         Audio, "prepare_audio_for_transcription", _fake_prepare

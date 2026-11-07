@@ -1,6 +1,7 @@
 import json
 import re
 import shutil
+import tempfile
 from datetime import timedelta
 from html import escape
 
@@ -42,30 +43,37 @@ def backend_cache_metadata(backend: TranscriptionBackend) -> dict:
 
 
 def audio_chunks_to_text(
-    service: TranscriptionBackend, audio_chunks: list[Path]
+    service: TranscriptionBackend,
+    audio_chunks: list[Path],
+    chunk_durations: list[float] | None = None,
 ) -> list[Path]:
     """Convert the audio chunks to text. Only convert if the transcript does not exist yet."""
     file_names = " ".join([chunk.name for chunk in audio_chunks])
     rprint(f"Converting {file_names} to text")
 
+    if chunk_durations is None:
+        chunk_durations = [get_audio_duration(chunk) for chunk in audio_chunks]
+    if len(audio_chunks) != len(chunk_durations):
+        raise ValueError("Require one audio duration per chunk.")
     raw_transcripts = []
-    for chunk in audio_chunks:
-        chunk_name = chunk.name.split(".")[0]
-        transcript_name = f"{chunk_name}.json"
-        transcript_path = chunk.parent / transcript_name
-        cached = transcript_path.exists()
-        if not cached:
-            service.transcribe(chunk, transcript_path)
-            if not transcript_path.exists():
-                raise RuntimeError(
-                    f"Transcription backend did not produce {transcript_path}"
-                )
-        try:
-            load_whisper_transcript(transcript_path)
-        except ValueError:
-            if not cached:
-                transcript_path.unlink(missing_ok=True)
-            raise
+    for chunk, duration in zip(audio_chunks, chunk_durations):
+        transcript_path = chunk.with_suffix(".json")
+        if not transcript_path.exists():
+            # Keep backend output and sidecars private until duration admission succeeds.
+            with tempfile.TemporaryDirectory(
+                prefix=".transcribe-", dir=chunk.parent
+            ) as scratch:
+                candidate = Path(scratch) / transcript_path.name
+                service.transcribe(chunk, candidate)
+                if not candidate.exists():
+                    raise RuntimeError(
+                        f"Transcription backend did not produce {transcript_path}"
+                    )
+                load_whisper_transcript(candidate, duration)
+                with atomic_output(transcript_path) as tmp_path:
+                    shutil.copyfile(candidate, tmp_path)
+        else:
+            load_whisper_transcript(transcript_path, duration)
         raw_transcripts.append(transcript_path)
     return raw_transcripts
 
@@ -94,13 +102,16 @@ def whisper_to_dote(input_data):
     return output_data
 
 
-def whisper_text_chunks_to_dote(raw_text_chunks: list[Path]) -> list[Path]:
+def whisper_text_chunks_to_dote(
+    raw_text_chunks: list[Path], chunk_durations: list[float] | None = None
+) -> list[Path]:
     """Transform the raw Whisper text chunks to DOTe format."""
     dote_paths = []
-    for chunk in raw_text_chunks:
+    for index, chunk in enumerate(raw_text_chunks):
+        duration = chunk_durations[index] if chunk_durations is not None else None
         dote_path = chunk.with_suffix(".dote.json")
         if dote_path.exists():
-            load_dote(dote_path)
+            load_dote(dote_path, duration)
             dote_paths.append(dote_path)
             continue
         whisper_transcript = load_whisper_transcript(chunk)
@@ -129,7 +140,7 @@ def combine_dote_chunks(
     if len(dote_chunks) == 1:
         # Copy and return early
         [source_dote_file] = dote_chunks
-        load_dote(source_dote_file)
+        load_dote(source_dote_file, chunk_durations[0])
         rprint(f"Copying {source_dote_file} to {output_path}")
         with atomic_output(output_path) as tmp_path:
             shutil.copy(source_dote_file, tmp_path)
@@ -141,7 +152,7 @@ def combine_dote_chunks(
     offset = timedelta()
 
     for filename, chunk_duration in zip(dote_chunks, chunk_durations):
-        data = load_dote(filename)
+        data = load_dote(filename, chunk_duration)
 
         for line in data["lines"]:
             new_line = dict(line)
@@ -240,18 +251,14 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
     audio_chunks = audio.prepare_audio_for_transcription()
     # Probe before transcription or invalidating outputs, so malformed audio
     # cannot publish transcripts or discard the previous run's combined files.
-    chunk_durations = (
-        [get_audio_duration(chunk) for chunk in audio_chunks]
-        if len(audio_chunks) > 1
-        else [0.0]
-    )
+    chunk_durations = [get_audio_duration(chunk) for chunk in audio_chunks]
     audio.ensure_transcript_cache_matches(backend_cache_metadata(backend))
-    text_chunks = audio_chunks_to_text(backend, audio_chunks)
-    dote_chunks = whisper_text_chunks_to_dote(text_chunks)
+    text_chunks = audio_chunks_to_text(backend, audio_chunks, chunk_durations)
+    dote_chunks = whisper_text_chunks_to_dote(text_chunks, chunk_durations)
     dote_path = audio.output_path(".dote.json")
     if not dote_path.exists():
         combine_dote_chunks(dote_chunks, dote_path, chunk_durations)
-    load_dote(dote_path)
+    load_dote(dote_path, sum(chunk_durations))
     transcript_paths["DOTe"] = dote_path
     podlove_path = audio.output_path(".podlove.json")
     convert_dote_to_podlove(dote_path, podlove_path)

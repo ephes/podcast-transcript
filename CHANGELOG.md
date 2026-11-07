@@ -7,6 +7,10 @@
 
 ### Fixes
 
+- Bound raw/DOTe cache JSON reads to 64 MiB and normalize decoding/nesting failures without
+  transcript values. Check endpoints against each chunk’s probed duration with 0.1-second tolerance,
+  including single-chunk input, before publishing raw or canonical cache success.
+
 - Retire all dependent transcripts when rebuilding chunks with a missing completion manifest.
 - Validate combined DOTe before returning outputs and atomically regenerate derived exports on
   every run, repairing truncated caches without another backend call.

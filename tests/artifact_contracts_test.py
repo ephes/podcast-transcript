@@ -75,7 +75,7 @@ def test_invalid_raw_cache_is_rejected(monkeypatch, tmp_path, invalid):
 
     with pytest.raises(ValueError, match=r"chunk\.json.*Invalid transcript"):
         track.audio_chunks_to_text(
-            SimpleNamespace(transcribe=unexpected), [raw.with_suffix(".mp3")]
+            SimpleNamespace(transcribe=unexpected), [raw.with_suffix(".mp3")], [10.0]
         )
     assert not raw.with_suffix(".dote.json").exists()
 
@@ -156,11 +156,11 @@ def dote(path, start, end):
 
 
 def combine_one(source, out):
-    track.combine_dote_chunks([source], out, [0])
+    track.combine_dote_chunks([source], out, [500000])
 
 
 def combine_multiple(source, out):
-    track.combine_dote_chunks([source, source], out, [1, 1])
+    track.combine_dote_chunks([source, source], out, [500000, 500000])
 
 
 EXPORTERS = [

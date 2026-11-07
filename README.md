@@ -287,6 +287,15 @@ in milliseconds, and ordered (`end >= start`); booleans and numeric strings are 
 Zero-length cues are allowed. Valid fractional seconds retain nearest-millisecond rounding.
 Invalid backend results never replace raw transcript caches, so a corrected response can be retried.
 
+Each raw or DOTe cache JSON file is read as UTF-8 with a 64 MiB ceiling, enforced on the opened
+stream (at most the limit plus one byte). Oversize, invalid encoding, numeric decoder and nesting
+failures produce value-free validation errors. Split unusually large transcripts into smaller inputs.
+
+Every chunk, including single-chunk episodes, is duration-probed before transcription. Raw and DOTe
+segment endpoints must fit their own chunk duration, allowing 0.1 seconds for encoder/timestamp
+rounding. Trailing silence and zero-length cues are supported; out-of-range speech is rejected,
+never retimed. New backend output is admitted in a temporary directory before raw cache publication.
+
 Cached raw chunks are validated before reuse. If an older or edited raw chunk is rejected, remove
 that `chunks/chunk_NNN.json` and its derived `chunk_NNN.dote.json`, plus the combined episode
 outputs, then rerun to retranscribe that chunk. Valid prepared audio and other raw chunks are reused.
