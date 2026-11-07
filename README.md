@@ -121,7 +121,9 @@ export VOXHELM_API_KEY=your_voxhelm_token_here
 
 Voxhelm transcript caches include the service's normalized API prefix. Switching services
 retranscribes; root and `/v1` aliases share a cache, as do default ports and host casing.
-API keys, URL credentials, query strings and fragments are excluded from this identity;
+API bases require HTTP(S) and a host; credentials, queries and fragments are rejected before
+uploads. Custom path prefixes are supported (for example `/proxy/v1`); a prefix without `/v1`
+has `/v1` appended. The validated prefix is shared by requests and cache identity. API keys are excluded from this identity;
 key rotation alone does not invalidate transcripts. Existing Voxhelm caches without a service
 identity are transcribed again once. Audio caches are retained.
 
@@ -163,6 +165,14 @@ You can also set the following environment variables or specify them in the .env
   the upload (default is 1800, 30 minutes). Connecting is limited to 10 seconds, each upload write to 300 seconds.
   A timeout stops the run with an error naming the backend. The Groq backend retries rate-limited (429) requests
   at most 10 times in total and then stops with Groq's last rate-limit message.
+
+Remote Groq and Voxhelm responses (success and error) are streamed with a 32 MiB decoded-body
+limit, independent of Content-Length or compression. Overflow closes the response, fails the run
+and preserves previous transcript files. Displayed backend error details are limited to 2,000
+characters, including rate-limit messages.
+
+Source progress and request-error diagnostics omit URL credentials, query strings and fragments,
+including redirect URLs. Requests and source cache hashing still use the original URL.
 
 HTTP(S) source downloads have separate budgets (environment or `.env`):
 

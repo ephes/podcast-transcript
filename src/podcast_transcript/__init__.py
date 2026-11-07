@@ -5,6 +5,7 @@ from rich.console import Console
 from .single_track import transcribe
 from .config import settings, Settings
 from . import backends
+from .audio import safe_display_source, safe_diagnostic
 
 
 def groq_from_settings(my_settings: Settings) -> backends.Groq:
@@ -96,7 +97,11 @@ def transcribe_cli():
 
     # Start transcription process
     try:
-        console.print(f"[blue]Starting transcription for:[/blue] {mp3_url}")
+        console.print(
+            f"Starting transcription for: {safe_display_source(mp3_url)}",
+            style="blue",
+            markup=False,
+        )
         if args.backend == "mlx":
             if importlib.util.find_spec("mlx_whisper") is None:
                 console.print(
@@ -136,7 +141,11 @@ def transcribe_cli():
         console.print("[green]Transcription complete![/green]")
         exit(0)
     except Exception as e:
-        console.print(f"Error during transcription: {e}", style="red", markup=False)
+        console.print(
+            f"Error during transcription: {safe_diagnostic(str(e))}",
+            style="red",
+            markup=False,
+        )
         exit(1)
 
 

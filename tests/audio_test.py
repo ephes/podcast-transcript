@@ -79,7 +79,7 @@ def test_download_http_error_raises_and_caches_nothing(mock_http, audio):
     routes, _ = mock_http
     routes["https://example.com/test.mp3"] = httpx.Response(404, content=b"not found")
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(RuntimeError, match="Source download failed.*status 404"):
         audio.make_sure_audio_file_exists()
 
     assert not audio.episode_path.exists()
@@ -104,7 +104,7 @@ def test_download_interrupted_stream_caches_nothing(mocker, audio):
         ),
     )
 
-    with pytest.raises(httpx.ReadError):
+    with pytest.raises(RuntimeError, match="Source download failed.*ReadError"):
         audio.make_sure_audio_file_exists()
 
     assert not audio.episode_path.exists()

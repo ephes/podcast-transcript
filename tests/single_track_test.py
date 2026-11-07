@@ -746,11 +746,10 @@ def test_voxhelm_service_identity_controls_cache(mocker, tmp_path, capsys):
     assert backend_cache_metadata(first) != backend_cache_metadata(
         backend("https://first.example/prefix")
     )
-    secret = backend(
-        "https://user:invented-password@first.example/v1?key=invented-query#invented-fragment"
-    )
-    assert backend_cache_metadata(secret) == backend_cache_metadata(first)
-    transcribe(url, secret)
+    with pytest.raises(ValueError, match="VOXHELM_API_BASE"):
+        backend(
+            "https://user:invented-password@first.example/v1?key=invented-query#invented-fragment"
+        )
     metadata = Audio(base_dir=tmp_path, url=url).cache_metadata_path.read_text()
     logged = capsys.readouterr().out
     for value in (

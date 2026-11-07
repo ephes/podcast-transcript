@@ -10,6 +10,29 @@ from podcast_transcript import backends
 from podcast_transcript.backends import Groq, Voxhelm, WhisperCpp
 
 
+def patch_stream(mocker, *, return_value=None, side_effect=None):
+    """Keep legacy request assertions while exercising real response parsing."""
+    responses = side_effect if side_effect is not None else [return_value]
+    contexts = []
+    for response in responses:
+        body = (
+            response.text
+            if isinstance(response.text, str) and response.text
+            else json.dumps(response.json.return_value)
+        )
+        real_response = httpx.Response(
+            response.status_code,
+            content=body.encode(),
+            request=httpx.Request("POST", "https://backend.test"),
+        )
+        context = mocker.MagicMock()
+        context.__enter__.return_value = real_response
+        contexts.append(context)
+    if side_effect is not None:
+        return mocker.patch("httpx.Client.stream", side_effect=contexts)
+    return mocker.patch("httpx.Client.stream", return_value=contexts[0])
+
+
 def test_groq_model_name_valid():
     # Given a valid model name
     model_name = "whisper-large-v3"
@@ -37,7 +60,7 @@ def test_groq_audio_file_to_text(mocker, audio):
     mock_response.json.return_value = {
         "segments": [{"start": 0.0, "end": 1.0, "text": "Hello world"}]
     }
-    mocker.patch("httpx.Client.post", return_value=mock_response)
+    patch_stream(mocker, return_value=mock_response)
 
     # And a dummy audio chunk
     audio_chunk = audio.episode_chunks_dir / "chunk_000.mp3"
@@ -52,7 +75,6 @@ def test_groq_audio_file_to_text(mocker, audio):
     groq.transcribe(audio_chunk, transcript_path)
 
     # Then the Groq API is called with the correct parameters
-    mock_response.raise_for_status.assert_called_once()
     # And the transcript is written to the transcript path
     assert transcript_path.exists()
 
@@ -64,7 +86,7 @@ def test_voxhelm_audio_file_to_text(mocker, audio):
         "text": "Hello world",
         "segments": [{"id": 0, "start": 0.0, "end": 1.0, "text": "Hello world"}],
     }
-    post = mocker.patch("httpx.Client.post", return_value=mock_response)
+    post = patch_stream(mocker, return_value=mock_response)
 
     audio_chunk = audio.episode_chunks_dir / "chunk_000.mp3"
     audio_chunk.parent.mkdir(parents=True, exist_ok=True)
@@ -80,10 +102,9 @@ def test_voxhelm_audio_file_to_text(mocker, audio):
     )
     backend.transcribe(audio_chunk, transcript_path)
 
-    mock_response.raise_for_status.assert_called_once()
     assert transcript_path.exists()
     assert json.loads(transcript_path.read_text()) == mock_response.json.return_value
-    assert post.call_args.args[0] == "https://voxhelm.example/v1/audio/transcriptions"
+    assert post.call_args.args[1] == "https://voxhelm.example/v1/audio/transcriptions"
     assert post.call_args.kwargs["headers"] == {"Authorization": "Bearer secret-token"}
     assert post.call_args.kwargs["data"] == {
         "model": "gpt-4o-mini-transcribe",
@@ -97,7 +118,7 @@ def test_voxhelm_uses_existing_v1_prefix(mocker, audio):
     mock_response = mocker.MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {"text": "Hello"}
-    post = mocker.patch("httpx.Client.post", return_value=mock_response)
+    post = patch_stream(mocker, return_value=mock_response)
 
     audio_chunk = audio.episode_chunks_dir / "chunk_000.mp3"
     audio_chunk.parent.mkdir(parents=True, exist_ok=True)
@@ -113,7 +134,7 @@ def test_voxhelm_uses_existing_v1_prefix(mocker, audio):
     backend.transcribe(audio_chunk, audio_chunk.with_suffix(".json"))
 
     assert post.call_args.kwargs["headers"] == {"Authorization": "Bearer secret-token"}
-    assert post.call_args.args[0] == "https://voxhelm.example/v1/audio/transcriptions"
+    assert post.call_args.args[1] == "https://voxhelm.example/v1/audio/transcriptions"
     assert post.call_args.kwargs["data"] == {
         "model": "whisper-1",
         "response_format": "verbose_json",
@@ -129,7 +150,7 @@ def test_voxhelm_http_error_includes_status_and_body(mocker, audio):
         request=mocker.MagicMock(),
         response=mock_response,
     )
-    mocker.patch("httpx.Client.post", return_value=mock_response)
+    patch_stream(mocker, return_value=mock_response)
 
     audio_chunk = audio.episode_chunks_dir / "chunk_000.mp3"
     audio_chunk.parent.mkdir(parents=True, exist_ok=True)
@@ -166,7 +187,7 @@ def _dummy_chunk(audio):
 
 def test_groq_server_error_raises(mocker, audio):
     mock_response = _http_error_response(mocker, 500, "internal error")
-    mocker.patch("httpx.Client.post", return_value=mock_response)
+    patch_stream(mocker, return_value=mock_response)
     audio_chunk = _dummy_chunk(audio)
     transcript_path = audio_chunk.with_suffix(".json")
 
@@ -186,7 +207,7 @@ def test_groq_server_error_raises(mocker, audio):
 def test_groq_rate_limit_without_usable_wait_raises(mocker, audio, message):
     mock_response = _http_error_response(mocker, 429, "")
     mock_response.json.return_value = {"error": {"message": message}}
-    post = mocker.patch("httpx.Client.post", return_value=mock_response)
+    post = patch_stream(mocker, return_value=mock_response)
     audio_chunk = _dummy_chunk(audio)
     transcript_path = audio_chunk.with_suffix(".json")
 
@@ -284,7 +305,7 @@ def test_groq_rate_limit_with_fractional_wait_retries(mocker, audio):
     ok = mocker.MagicMock()
     ok.status_code = 200
     ok.json.return_value = {"segments": []}
-    mocker.patch("httpx.Client.post", side_effect=[rate_limited, ok])
+    patch_stream(mocker, side_effect=[rate_limited, ok])
     sleep_until = mocker.patch.object(Groq, "sleep_until")
     mocker.patch("podcast_transcript.backends.time.time", return_value=1000.0)
     audio_chunk = _dummy_chunk(audio)
@@ -313,7 +334,7 @@ def test_groq_rate_limit_with_unexpected_body_raises(mocker, audio, body, json_r
         mock_response.json.side_effect = json_result
     else:
         mock_response.json.return_value = json_result
-    mocker.patch("httpx.Client.post", return_value=mock_response)
+    patch_stream(mocker, return_value=mock_response)
     audio_chunk = _dummy_chunk(audio)
     transcript_path = audio_chunk.with_suffix(".json")
 
@@ -364,7 +385,7 @@ EXPECTED_TIMEOUT = httpx.Timeout(connect=10.0, write=300.0, read=1800.0, pool=10
 
 @pytest.mark.parametrize("make_backend", [_groq, _voxhelm])
 def test_remote_backends_pass_bounded_timeout(mocker, audio, make_backend):
-    post = mocker.patch("httpx.Client.post", return_value=_ok_response(mocker))
+    post = patch_stream(mocker, return_value=_ok_response(mocker))
     audio_chunk = _dummy_chunk(audio)
 
     make_backend().transcribe(audio_chunk, audio_chunk.with_suffix(".json"))
@@ -377,7 +398,7 @@ def test_remote_backends_use_configured_read_timeout(
     mocker, monkeypatch, audio, make_backend
 ):
     monkeypatch.setattr(backends.settings, "transcript_http_read_timeout", "90")
-    post = mocker.patch("httpx.Client.post", return_value=_ok_response(mocker))
+    post = patch_stream(mocker, return_value=_ok_response(mocker))
     audio_chunk = _dummy_chunk(audio)
 
     make_backend().transcribe(audio_chunk, audio_chunk.with_suffix(".json"))
