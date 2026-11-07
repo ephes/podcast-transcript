@@ -102,6 +102,11 @@ Create a .env file in the transcript directory (default is ~/.podcast-transcript
 GROQ_API_KEY=your_api_key_here
 ```
 
+Supported settings use process environment values in preference to `.env` values, including
+`GROQ_API_KEY`, `VOXHELM_API_KEY` and `TRANSCRIPT_DIR`. `TRANSCRIPT_HOME` is an environment-only
+bootstrap setting: the `.env` inside that home cannot relocate it. Unknown file keys are ignored.
+Directory values become Paths before use, and only the final selected output directory is created.
+
 The .env file has one `KEY=value` per line. Only the first `=` separates key and value, so values may
 contain `=`. Blank lines and lines starting with `#` are ignored, an optional `export ` prefix is
 allowed, and one pair of surrounding quotes is removed from the value. Comments after a value are not
@@ -144,7 +149,7 @@ unless you specify a different directory.
 ### Transcripts Directory
 
 By default, transcripts are stored in `~/.podcast-transcripts/transcripts/`.
-You can change this by setting the TRANSCRIPT_DIR environment variable:
+You can change this with `TRANSCRIPT_DIR` in the process environment or the home’s `.env` file:
 
 ```shell
 export TRANSCRIPT_DIR=/path/to/your/transcripts

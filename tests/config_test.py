@@ -153,3 +153,60 @@ def test_source_download_budget_rejects_invalid_settings(
             settings.source_max_bytes
         else:
             settings.source_total_timeout_seconds
+
+
+@pytest.mark.parametrize("source", ["file", "process", "both"])
+def test_groq_credential_precedence_and_forwarding(
+    tmp_path, monkeypatch, capsys, source
+):
+    from podcast_transcript import groq_from_settings
+
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(tmp_path))
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    if source in {"file", "both"}:
+        (tmp_path / ".env").write_text("GROQ_API_KEY=invented-file-value\n")
+    if source in {"process", "both"}:
+        monkeypatch.setenv("GROQ_API_KEY", "invented-process-value")
+    settings = Settings()
+    expected = "invented-file-value" if source == "file" else "invented-process-value"
+    assert settings.groq_api_key == expected
+    assert groq_from_settings(settings).api_key == expected
+    output = capsys.readouterr().out
+    assert "invented-file-value" not in output
+    assert "invented-process-value" not in output
+
+
+@pytest.mark.parametrize("source", ["file", "process", "both", "default"])
+def test_directory_values_resolved_before_creation(tmp_path, monkeypatch, source):
+    from pathlib import Path
+
+    monkeypatch.chdir(tmp_path)
+    home = tmp_path / "config home"
+    home.mkdir()
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(home))
+    monkeypatch.delenv("TRANSCRIPT_DIR", raising=False)
+    (home / ".env").write_text(
+        "TRANSCRIPT_HOME=ignored-home\nTRANSCRIPT_DIR=file output\n"
+        if source in {"file", "both"}
+        else ""
+    )
+    if source in {"process", "both"}:
+        monkeypatch.setenv("TRANSCRIPT_DIR", "process output")
+    settings = Settings()
+    expected = (
+        Path("process output")
+        if source in {"process", "both"}
+        else Path("file output")
+        if source == "file"
+        else home / "transcripts"
+    )
+    assert settings.transcript_home == home
+    assert isinstance(settings.transcript_dir, Path)
+    assert settings.transcript_dir == expected
+    assert settings.transcript_dir.is_dir()
+    if source != "default":
+        assert not (home / "transcripts").exists()
+    if source == "both":
+        assert not Path("file output").exists()
+    assert not Path("ignored-home").exists()
+    assert settings.transcript_dir / "episode" == expected / "episode"

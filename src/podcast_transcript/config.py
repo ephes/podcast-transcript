@@ -57,6 +57,21 @@ class Settings:
     transcript_source_max_bytes: str | int = 2 * 1024**3
     transcript_source_total_timeout: str | float = 3600.0
 
+    env_keys = {
+        "TRANSCRIPT_DIR",
+        "GROQ_API_KEY",
+        "TRANSCRIPT_PROMPT",
+        "TRANSCRIPT_MODEL_NAME",
+        "TRANSCRIPT_LANGUAGE",
+        "VOXHELM_API_BASE",
+        "VOXHELM_API_KEY",
+        "TRANSCRIPT_HTTP_READ_TIMEOUT",
+        "TRANSCRIPT_MEDIA_TIMEOUT",
+        "TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT",
+        "TRANSCRIPT_SOURCE_MAX_BYTES",
+        "TRANSCRIPT_SOURCE_TOTAL_TIMEOUT",
+    }
+
     def __init__(self):
         self.console = Console()
         # Set the transcript home directory - this is special because we want to create
@@ -66,18 +81,8 @@ class Settings:
         else:
             self.transcript_home = Path.home() / ".podcast-transcripts"
 
-        # Create the transcript_home directory if it does not exist
-        self.transcript_home.mkdir(parents=True, exist_ok=True)
-
-        # Set the transcript directory - this is special because we want to create
-        # the directory if it does not exist which is why we cannot wait until read_env_vars()
-        if (transcript_dir := os.getenv("TRANSCRIPT_DIR")) is not None:
-            self.transcript_dir = Path(transcript_dir)
-        else:
-            self.transcript_dir = self.transcript_home / "transcripts"
-
-        # Create the transcript directory if it does not exist
-        self.transcript_dir.mkdir(parents=True, exist_ok=True)
+        # Resolve values first; only the selected directories may be created.
+        self.transcript_dir = self.transcript_home / "transcripts"
 
         # Read the .env file
         env_file = self.transcript_home / ".env"
@@ -86,6 +91,10 @@ class Settings:
 
         # Read environment variables
         self.read_env_vars()
+
+        self.transcript_dir = Path(self.transcript_dir)
+        self.transcript_home.mkdir(parents=True, exist_ok=True)
+        self.transcript_dir.mkdir(parents=True, exist_ok=True)
 
         # Make sure the groq api key is set - this is special because the api key is required
         if not hasattr(self, "groq_api_key"):
@@ -113,26 +122,15 @@ class Settings:
                 parsed = parse_env_line(line)
                 if parsed is not None:
                     key, value = parsed
-                    setattr(self, key.lower(), value)
+                    if key in self.env_keys:
+                        setattr(self, key.lower(), value)
 
     def read_env_vars(self):
         """
         Read the environment variables and set the attributes accordingly.
         """
-        transcript_keys = {
-            "TRANSCRIPT_PROMPT",
-            "TRANSCRIPT_MODEL_NAME",
-            "TRANSCRIPT_LANGUAGE",
-            "VOXHELM_API_BASE",
-            "VOXHELM_API_KEY",
-            "TRANSCRIPT_HTTP_READ_TIMEOUT",
-            "TRANSCRIPT_MEDIA_TIMEOUT",
-            "TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT",
-            "TRANSCRIPT_SOURCE_MAX_BYTES",
-            "TRANSCRIPT_SOURCE_TOTAL_TIMEOUT",
-        }
         for key, value in os.environ.items():
-            if key in transcript_keys:
+            if key in self.env_keys:
                 setattr(self, key.lower(), value)
 
     @property

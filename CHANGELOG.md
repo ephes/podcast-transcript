@@ -7,6 +7,10 @@
 
 ### Fixes
 
+- Apply process-over-file precedence to Groq credentials and transcript directories. Normalize
+  selected directories before creation/use; keep home relocation environment-only and ignore
+  unsupported `.env` attributes.
+
 - Bound raw/DOTe cache JSON reads to 64 MiB and normalize decoding/nesting failures without
   transcript values. Check endpoints against each chunk’s probed duration with 0.1-second tolerance,
   including single-chunk input, before publishing raw or canonical cache success.
