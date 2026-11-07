@@ -161,8 +161,10 @@ You can also set the following environment variables or specify them in the .env
   (default is "ggml-large-v3.bin" for whisper-cpp, "whisper-large-v3" for Groq and "mlx-community/whisper-large-v3-mlx" for MLX).
 - **TRANSCRIPT_PROMPT**: The prompt to use for the transcription (default is "podcast-transcript").
 - **TRANSCRIPT_LANGUAGE**: The language code for the transcription (default is en, you could set it to de for example).
-- **TRANSCRIPT_HTTP_READ_TIMEOUT**: Seconds the Groq and Voxhelm backends wait for the server's response after
-  the upload (default is 1800, 30 minutes). Connecting is limited to 10 seconds, each upload write to 300 seconds.
+- **TRANSCRIPT_HTTP_READ_TIMEOUT**: Positive finite seconds for each complete Groq or Voxhelm request,
+  including upload, server computation and response transfer (default is 1800, 30 minutes).
+  This elapsed deadline cancels slow trickle responses as well as stalled reads. Connecting is
+  also limited to 10 seconds, each upload write to 300 seconds.
   A timeout stops the run with an error naming the backend. The Groq backend retries rate-limited (429) requests
   at most 10 times in total and then stops with Groq's last rate-limit message.
 
@@ -176,7 +178,7 @@ including redirect URLs. Requests and source cache hashing still use the origina
 
 HTTP(S) source downloads have separate budgets (environment or `.env`):
 
-- **TRANSCRIPT_SOURCE_MAX_BYTES**: Positive integer maximum for the decoded response body;
+- **TRANSCRIPT_SOURCE_MAX_BYTES**: Positive integer maximum for the response body;
   default 2147483648 (2 GiB), suitable for long episodes. Declared oversized responses are rejected
   early; actual streamed bytes are always counted, including when Content-Length is absent.
 - **TRANSCRIPT_SOURCE_TOTAL_TIMEOUT**: Positive finite total seconds, default 3600 (one hour).
@@ -188,6 +190,10 @@ Raise these limits for exceptionally large episodes or slow connections, for exa
 `TRANSCRIPT_SOURCE_MAX_BYTES=4294967296 TRANSCRIPT_SOURCE_TOTAL_TIMEOUT=7200 transcribe <url>`.
 Rejected downloads close their response and remove partial files; an existing target is preserved.
 These limits apply only to source HTTP(S) downloads, not local copies or backend uploads.
+Source requests send `Accept-Encoding: identity`. Servers must return no `Content-Encoding`
+or `identity`; compressed responses (including gzip) are rejected before decoding to prevent
+decompression from allocating beyond the byte budget. Compressed audio formats such as MP3
+remain supported; this restriction concerns HTTP content encoding.
 
 ## Usage
 
@@ -199,6 +205,11 @@ transcribe <audio_source>
 transcribe "/path/to/local audio.wav"
 transcribe --help
 ```
+
+`--processors` accepts a positive integer (1 or greater, default 4), with no upper cap.
+Invalid values fail at argument parsing before backend construction or audio preparation.
+The count applies to whisper-cpp CPU processing; GPU processing ignores it. The public
+`WhisperCpp` constructor enforces the same positive-integer requirement.
 
 Example:
 
@@ -248,9 +259,13 @@ readable cache-directory stem; their old directories are left untouched and a on
 transcription rebuild occurs. Copy any outputs you need before deleting those old directories. Generated chunk names are reserved and prefixed with `episode_`.
 
 Local files are fingerprinted by SHA-256 on each run. Editing or replacing audio at the same path
-invalidates copied, resampled and chunk audio plus all transcripts, even when the size stays the same.
-Local caches without a fingerprint are rebuilt once. The fingerprint is recorded after audio
-preparation succeeds; backend-setting invalidation remains independent. The original source must
+prepares new copied, resampled and chunk audio in owned staging, even when the size stays the same.
+Only successful preparation retires the previous audio and transcripts. On copy, resample or probe
+failure, previous completed files remain available for manual recovery. Their `source.json` completion
+marker is removed, so they are explicitly non-current and never returned for the changed source.
+Restore valid source audio and rerun to retry; abandoned staging from a process crash can be removed
+manually when no invocation is active. Local caches without a fingerprint are rebuilt once.
+The new fingerprint is recorded after preparation succeeds; backend-setting invalidation remains independent. The original source must
 remain available on each run for content verification; a missing source produces an error asking you
 to restore it, even if copied audio is cached.
 

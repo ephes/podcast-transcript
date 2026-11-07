@@ -50,6 +50,18 @@ def whisper_cpp_from_settings_and_args(
     )
 
 
+def positive_processors(value: str) -> int:
+    try:
+        count = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "processors must be a positive integer"
+        ) from None
+    if count < 1:
+        raise argparse.ArgumentTypeError("processors must be a positive integer")
+    return count
+
+
 def transcribe_cli():
     console = Console()
 
@@ -77,10 +89,10 @@ def transcribe_cli():
     )
     parser.add_argument(
         "--processors",
-        type=int,
-        default="4",
+        type=positive_processors,
+        default=4,
         help=(
-            "Number of processors to use for whisper-cpp based local transcription."
+            "Positive integer number of processors for whisper-cpp based local transcription. "
             "Defaults to 4. Only applicable when using whisper-cpp backend. When whisper-cpp "
             "uses the GPU instead of the CPU, this argument is also ignored."
         ),
