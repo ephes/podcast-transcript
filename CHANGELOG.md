@@ -7,6 +7,13 @@
 
 ### Fixes
 
+- Validate Voxhelm HTTP(S) API prefixes before uploads and use the same prefix for requests and
+  cache identity; reject credentials, query strings and fragments while preserving custom paths.
+- Stream Groq/Voxhelm responses with a 32 MiB decoded-byte limit and cap displayed error details
+  at 2,000 characters; close responses and preserve previous transcripts on failure.
+- Omit source URL credentials, queries and fragments from progress and request-error diagnostics,
+  including redirected failures, while retaining original request/cache identity.
+
 - Cover successful CLI dispatch for all four backend factories, including the default local backend,
   processor/settings forwarding, output paths and pipeline error exits, using synthetic fixtures.
 - Align README installation and usage examples with the installed `transcribe` executable.

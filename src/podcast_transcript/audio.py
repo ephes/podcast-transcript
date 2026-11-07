@@ -34,6 +34,28 @@ def is_url(url: str) -> bool:
     return urlparse(url).scheme.lower() in {"http", "https"}
 
 
+def safe_display_source(source: str) -> str:
+    """Keep local paths, but omit URL credentials, queries and fragments."""
+    try:
+        url = urlparse(source)
+        if url.scheme.lower() in {"http", "https"}:
+            return url._replace(
+                netloc=url.netloc.rsplit("@", 1)[-1], query="", fragment=""
+            ).geturl()
+    except ValueError:
+        return "<invalid source URL>"
+    return source
+
+
+def safe_diagnostic(message: str) -> str:
+    return re.sub(
+        r"https?://[^\s\"'<>]+",
+        lambda match: safe_display_source(match.group()),
+        message,
+        flags=re.IGNORECASE,
+    )
+
+
 def get_url_filename(url: str) -> str:
     """A single safe filename from the URL path, excluding query and fragment."""
     name = unquote(urlparse(url).path.rsplit("/", 1)[-1])
@@ -92,37 +114,49 @@ def download(url: str, target_path: Path) -> None:
 
     # Each blocking operation is also bounded, even for very short total budgets.
     timeout = httpx.Timeout(min(60.0, total_seconds), connect=min(30.0, total_seconds))
-    rprint(f"Downloading {url} to {target_path}")
-    with atomic_output(target_path) as tmp_path:
-        with httpx.Client(
-            follow_redirects=True,
-            timeout=timeout,
-            event_hooks={"response": [check_deadline]},
-        ) as client:
-            with client.stream("GET", url) as response:
-                response.raise_for_status()
-                check_deadline()
-                length = response.headers.get("Content-Length")
-                if length is not None:
-                    try:
-                        declared_bytes = int(length)
-                    except ValueError:
-                        declared_bytes = 0  # Enforce the actual byte count regardless.
-                    if declared_bytes > max_bytes:
-                        raise RuntimeError(
-                            "Source download exceeded TRANSCRIPT_SOURCE_MAX_BYTES."
-                        )
-                received = 0
-                with tmp_path.open("wb") as file:
-                    for data in response.iter_bytes():
-                        check_deadline()
-                        received += len(data)
-                        if received > max_bytes:
+    rprint(f"Downloading {safe_display_source(url)} to {target_path}")
+    try:
+        with atomic_output(target_path) as tmp_path:
+            with httpx.Client(
+                follow_redirects=True,
+                timeout=timeout,
+                event_hooks={"response": [check_deadline]},
+            ) as client:
+                with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    check_deadline()
+                    length = response.headers.get("Content-Length")
+                    if length is not None:
+                        try:
+                            declared_bytes = int(length)
+                        except ValueError:
+                            declared_bytes = (
+                                0  # Enforce the actual byte count regardless.
+                            )
+                        if declared_bytes > max_bytes:
                             raise RuntimeError(
                                 "Source download exceeded TRANSCRIPT_SOURCE_MAX_BYTES."
                             )
-                        file.write(data)
-                check_deadline()
+                    received = 0
+                    with tmp_path.open("wb") as file:
+                        for data in response.iter_bytes():
+                            check_deadline()
+                            received += len(data)
+                            if received > max_bytes:
+                                raise RuntimeError(
+                                    "Source download exceeded TRANSCRIPT_SOURCE_MAX_BYTES."
+                                )
+                            file.write(data)
+                    check_deadline()
+    except httpx.HTTPError as exc:
+        detail = (
+            f"status {exc.response.status_code}"
+            if isinstance(exc, httpx.HTTPStatusError)
+            else type(exc).__name__
+        )
+        raise RuntimeError(
+            f"Source download failed ({detail}) for {safe_display_source(url)}"
+        ) from None
 
 
 def get_audio_duration(path) -> float:

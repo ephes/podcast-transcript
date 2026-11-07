@@ -22,6 +22,32 @@ HTTP_CONNECT_TIMEOUT = 10.0
 HTTP_WRITE_TIMEOUT = 300.0
 HTTP_POOL_TIMEOUT = 10.0
 GROQ_MAX_ATTEMPTS = 10
+REMOTE_RESPONSE_MAX_BYTES = 32 * 1024 * 1024
+REMOTE_ERROR_MAX_CHARS = 2000
+
+
+def remote_response(
+    client: httpx.Client, backend: str, url: str, **kwargs
+) -> httpx.Response:
+    """Read a bounded decoded body, closing the transport before parsing/retrying."""
+    with client.stream("POST", url, **kwargs) as response:
+        body = bytearray()
+        for block in response.iter_bytes(chunk_size=64 * 1024):
+            if len(body) + len(block) > REMOTE_RESPONSE_MAX_BYTES:
+                raise RuntimeError(
+                    f"{backend} transcription response exceeded byte limit (32 MiB)."
+                )
+            body.extend(block)
+        headers = dict(response.headers)
+        # The body was decoded by iter_bytes; retain charset/rate-limit headers.
+        headers.pop("content-encoding", None)
+        headers.pop("content-length", None)
+        return httpx.Response(
+            response.status_code,
+            headers=headers,
+            content=bytes(body),
+            request=response.request,
+        )
 
 
 def http_timeout() -> httpx.Timeout:
@@ -126,11 +152,11 @@ class Groq:
         if not isinstance(details, dict):
             return None
         message = details.get("message")
-        return message if isinstance(message, str) else None
+        return message[:REMOTE_ERROR_MAX_CHARS] if isinstance(message, str) else None
 
     @staticmethod
     def http_error(response: httpx.Response) -> RuntimeError:
-        detail = response.text.strip()
+        detail = response.text[:REMOTE_ERROR_MAX_CHARS].strip()
         if detail:
             return RuntimeError(
                 f"Groq transcription failed with status {response.status_code}: {detail}"
@@ -164,8 +190,14 @@ class Groq:
         for attempt in range(1, GROQ_MAX_ATTEMPTS + 1):
             with httpx.Client() as client:
                 try:
-                    response = client.post(
-                        url, headers=headers, files=files, data=data, timeout=timeout
+                    response = remote_response(
+                        client,
+                        "Groq",
+                        url,
+                        headers=headers,
+                        files=files,
+                        data=data,
+                        timeout=timeout,
                     )
                 except httpx.TimeoutException as e:
                     raise timeout_error("Groq", e) from e
@@ -271,7 +303,27 @@ class Voxhelm:
         language: str | None,
         prompt: str | None,
     ):
-        self.api_base = api_base.rstrip("/")
+        try:
+            url = httpx.URL(api_base)
+        except (httpx.InvalidURL, ValueError):
+            raise ValueError(
+                "Invalid VOXHELM_API_BASE: expected an HTTP(S) service prefix."
+            ) from None
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.host
+            or url.userinfo
+            or b"?" in url.raw_path
+            or "#" in api_base
+        ):
+            raise ValueError(
+                "Invalid VOXHELM_API_BASE: require HTTP(S), a host, and no credentials, query or fragment."
+            )
+        self.api_base = str(url).rstrip("/")
+        path = url.raw_path.rstrip(b"/")
+        if not path.endswith(b"/v1"):
+            path += b"/v1"
+        self._api_prefix = url.copy_with(raw_path=path)
         self.api_key = api_key
         self.model_name = model_name or "gpt-4o-mini-transcribe"
         self.language = language
@@ -279,22 +331,16 @@ class Voxhelm:
 
     @property
     def cache_service_identity(self) -> str:
-        """Canonical API prefix, excluding credentials, query and fragment."""
-        url = httpx.URL(self.api_base)
-        path = url.raw_path.split(b"?", 1)[0].rstrip(b"/")
-        if not path.endswith(b"/v1"):
-            path += b"/v1"
-        return str(
-            url.copy_with(
-                username=None, password=None, query=None, fragment=None, raw_path=path
-            )
-        )
+        """The same validated, canonical API prefix used for requests."""
+        return str(self._api_prefix)
 
     @property
     def transcription_url(self) -> str:
-        if self.api_base.endswith("/v1"):
-            return f"{self.api_base}/audio/transcriptions"
-        return f"{self.api_base}/v1/audio/transcriptions"
+        return str(
+            self._api_prefix.copy_with(
+                raw_path=self._api_prefix.raw_path + b"/audio/transcriptions"
+            )
+        )
 
     def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
         rprint("audio chunk to text: ", audio_file)
@@ -313,7 +359,9 @@ class Voxhelm:
             files = {"file": (audio_file.name, file_handle)}
             with httpx.Client() as client:
                 try:
-                    response = client.post(
+                    response = remote_response(
+                        client,
+                        "Voxhelm",
                         self.transcription_url,
                         headers=headers,
                         files=files,
@@ -325,7 +373,7 @@ class Voxhelm:
                 try:
                     response.raise_for_status()
                 except httpx.HTTPStatusError as exc:
-                    detail = response.text.strip()
+                    detail = response.text[:REMOTE_ERROR_MAX_CHARS].strip()
                     if detail:
                         raise RuntimeError(
                             f"Voxhelm transcription failed with status {response.status_code}: {detail}"
