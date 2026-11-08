@@ -166,12 +166,14 @@ You can also set the following environment variables or specify them in the .env
   This elapsed deadline cancels slow trickle responses as well as stalled reads. Connecting is
   also limited to 10 seconds, each upload write to 300 seconds.
   A timeout stops the run with an error naming the backend. The Groq backend retries rate-limited (429) requests
-  at most 10 times in total and then stops with Groq's last rate-limit message.
+  at most 10 times in total. Rate-limit waits (including a two-second buffer) must be finite,
+  positive and fit a cumulative wait budget equal to this setting. Waiting uses a monotonic clock;
+  unusable delays stop with a retry-later error.
 
 Remote Groq and Voxhelm responses (success and error) are streamed with a 32 MiB decoded-body
 limit, independent of Content-Length or compression. Overflow closes the response, fails the run
-and preserves previous transcript files. Displayed backend error details are limited to 2,000
-characters, including rate-limit messages.
+and preserves previous transcript files. Remote failures report status or category without response bodies, prompts, URLs or exception
+messages. Timeout errors retain the relevant setting hint.
 
 Source progress and request-error diagnostics omit URL credentials, query strings and fragments,
 including redirect URLs. Requests and source cache hashing still use the original URL.

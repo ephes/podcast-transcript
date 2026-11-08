@@ -141,7 +141,7 @@ def test_voxhelm_uses_existing_v1_prefix(mocker, audio):
     }
 
 
-def test_voxhelm_http_error_includes_status_and_body(mocker, audio):
+def test_voxhelm_http_error_keeps_status_private_body(mocker, audio):
     mock_response = mocker.MagicMock()
     mock_response.status_code = 503
     mock_response.text = '{"error":"backend unavailable"}'
@@ -164,8 +164,9 @@ def test_voxhelm_http_error_includes_status_and_body(mocker, audio):
         prompt=None,
     )
 
-    with pytest.raises(RuntimeError, match="status 503:"):
+    with pytest.raises(RuntimeError, match="status 503") as error:
         backend.transcribe(audio_chunk, audio_chunk.with_suffix(".json"))
+    assert "backend unavailable" not in str(error.value)
 
 
 def _http_error_response(mocker, status_code: int, text: str):
@@ -194,8 +195,9 @@ def test_groq_server_error_raises(mocker, audio):
     groq = Groq(
         api_key="dummy", model_name="whisper-large-v3", language="en", prompt="dummy"
     )
-    with pytest.raises(RuntimeError, match="status 500: internal error"):
+    with pytest.raises(RuntimeError, match="status 500") as error:
         groq.transcribe(audio_chunk, transcript_path)
+    assert "internal error" not in str(error.value)
 
     assert not transcript_path.exists()
 
@@ -307,7 +309,7 @@ def test_groq_rate_limit_with_fractional_wait_retries(mocker, audio):
     ok.json.return_value = {"segments": []}
     patch_stream(mocker, side_effect=[rate_limited, ok])
     sleep_until = mocker.patch.object(Groq, "sleep_until")
-    mocker.patch("podcast_transcript.backends.time.time", return_value=1000.0)
+    mocker.patch("podcast_transcript.backends.time.monotonic", return_value=1000.0)
     audio_chunk = _dummy_chunk(audio)
     transcript_path = audio_chunk.with_suffix(".json")
 
@@ -464,9 +466,7 @@ def test_groq_rate_limit_retries_are_capped(mocker, monkeypatch, audio):
     audio_chunk = _dummy_chunk(audio)
     transcript_path = audio_chunk.with_suffix(".json")
 
-    with pytest.raises(
-        RuntimeError, match=r"after 10 attempts: Rate limit reached \(10\)"
-    ):
+    with pytest.raises(RuntimeError, match=r"after 10 attempts"):
         _groq().transcribe(audio_chunk, transcript_path)
 
     assert len(requests) == backends.GROQ_MAX_ATTEMPTS == 10

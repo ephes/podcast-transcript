@@ -7,6 +7,9 @@
 
 ### Fixes
 
+- Bound Groq rate-limit waits to a finite cumulative request-sized budget and use monotonic time.
+- Keep remote status, rate-limit, transport and timeout diagnostics free of remote bodies and messages.
+
 - Reject nonpositive `--processors` before backend/audio work; enforce positive integers in
   the public whisper-cpp constructor while preserving the default of four and exact forwarding.
 - Request identity HTTP encoding for source audio and reject compressed responses before decoding,
@@ -26,8 +29,8 @@
 
 - Validate Voxhelm HTTP(S) API prefixes before uploads and use the same prefix for requests and
   cache identity; reject credentials, query strings and fragments while preserving custom paths.
-- Stream Groq/Voxhelm responses with a 32 MiB decoded-byte limit and cap displayed error details
-  at 2,000 characters; close responses and preserve previous transcripts on failure.
+- Stream Groq/Voxhelm responses with a 32 MiB decoded-byte limit and omit remote bodies
+  from failure diagnostics; close responses and preserve previous transcripts on failure.
 - Omit source URL credentials, queries and fragments from progress and request-error diagnostics,
   including redirected failures, while retaining original request/cache identity.
 
@@ -94,8 +97,8 @@
 - The Groq and Voxhelm backends no longer wait forever for a server that never answers. Requests use a
   10 s connect, 300 s write and 10 s pool timeout, and a read timeout set by the new
   `TRANSCRIPT_HTTP_READ_TIMEOUT` setting (seconds, default 1800). A timeout raises a `RuntimeError` naming
-  the backend. Groq rate-limit (429) retries stop after 10 attempts with a `RuntimeError` carrying Groq's
-  last rate-limit message.
+  the backend. Groq rate-limit (429) retries stop after 10 attempts with a `RuntimeError`
+  suggesting a later retry.
 - Make every pipeline step fail closed so a failed step is never cached as a success:
   - Downloads follow redirects, raise on HTTP errors and stream to a temporary file that is only
     renamed into place after the download completed.
