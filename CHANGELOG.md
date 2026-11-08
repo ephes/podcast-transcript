@@ -7,6 +7,10 @@
 
 ### Fixes
 
+- Drain native command stderr to a bounded memory tail with explicit truncation, avoiding disk spools.
+- Validate cached and newly converted WAV samples and shape before native inference; rebuild corrupt
+  intermediates while preserving source audio and previous transcripts on conversion failure.
+
 - Bind local model transcript caches to model file/directory bytes; retain prepared audio on changes.
 - Create new cache directories owner-only and stage outputs privately with new files owner-only,
   retaining existing destination permissions. Omit prompt-bearing cache metadata from progress logs.

@@ -7,6 +7,7 @@ import io
 import re
 import json
 import math
+import wave
 import time
 
 from pathlib import Path
@@ -420,6 +421,30 @@ class WhisperCpp:
         self.processors = processors
 
     @staticmethod
+    def valid_wav(path: Path) -> bool:
+        """Validate cached PCM through the public wave API with bounded reads."""
+        try:
+            with wave.open(str(path), "rb") as source:
+                if (
+                    source.getnchannels(),
+                    source.getframerate(),
+                    source.getsampwidth(),
+                    source.getcomptype(),
+                ) != (1, 16000, 2, "NONE"):
+                    return False
+                remaining = source.getnframes() * 2
+                if remaining <= 0 or remaining > path.stat().st_size:
+                    return False
+                while remaining:
+                    block = source.readframes(min(32768, remaining // 2))
+                    if not block or len(block) % 2:
+                        return False
+                    remaining -= len(block)
+                return True
+        except (OSError, EOFError, wave.Error):
+            return False
+
+    @staticmethod
     def convert_to_wav(input_path: Path, output_path: Path) -> None:
         """
         Convert an audio file to WAV format with specific parameters:
@@ -448,6 +473,10 @@ class WhisperCpp:
                 ],
                 description=f"Converting {input_path} to WAV",
             )
+            if not WhisperCpp.valid_wav(tmp_path):
+                raise RuntimeError(
+                    "Converted WAV is invalid; require nonempty 16kHz mono PCM16 audio."
+                )
 
     def transcribe_wav(
         self,
@@ -538,7 +567,7 @@ class WhisperCpp:
     def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
         # Convert the audio file to WAV format
         wav_file = audio_file.with_suffix(".wav")
-        if not wav_file.exists():
+        if not self.valid_wav(wav_file):
             self.convert_to_wav(audio_file, wav_file)
         # Transcribe the WAV file
         whisper_transcript_path = transcript_path.with_suffix(

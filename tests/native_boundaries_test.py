@@ -153,7 +153,8 @@ def test_probe_capture_requires_finite_timeout(timeout):
         )
 
 
-def test_probe_parent_exit_keeps_identity_until_pipe_cleanup(monkeypatch):
+@pytest.mark.parametrize("capture", [True, False])
+def test_probe_parent_exit_keeps_identity_until_pipe_cleanup(monkeypatch, capture):
     import threading
 
     cleaned = threading.Event()
@@ -168,7 +169,7 @@ def test_probe_parent_exit_keeps_identity_until_pipe_cleanup(monkeypatch):
 
     class ExitedLeader:
         returncode = None
-        stdout = Pipe()
+        stdout = Pipe() if capture else None
         stderr = Pipe()
 
         def __enter__(self):
@@ -193,7 +194,6 @@ def test_probe_parent_exit_keeps_identity_until_pipe_cleanup(monkeypatch):
 
     monkeypatch.setattr(safe_io, "_kill_owned_tree", cleanup)
     with pytest.raises(RuntimeError, match="timed out"):
-        safe_io.capture_checked(
-            ["synthetic-probe"], description="synthetic probe", timeout=0.05
-        )
+        run = safe_io.capture_checked if capture else safe_io.run_checked
+        run(["synthetic-probe"], description="synthetic probe", timeout=0.05)
     assert cleaned.is_set()
