@@ -7,6 +7,9 @@
 
 ### Fixes
 
+- Bound ffprobe stdout/stderr capture during execution; kill and reap overflowing probes.
+- Validate native whisper-cpp timestamp syntax and schema before publishing converted transcripts.
+
 - Bound Groq rate-limit waits to a finite cumulative request-sized budget and use monotonic time.
 - Keep remote status, rate-limit, transport and timeout diagnostics free of remote bodies and messages.
 

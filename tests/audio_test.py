@@ -174,10 +174,8 @@ def test_short_audio_cache_root_with_spaces(tmp_path, monkeypatch, mocker, relat
     ],
 )
 def test_ffprobe_rejects_invalid_duration(mocker, output):
-    import subprocess
-
     mocker.patch(
-        "subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout=output)
+        "podcast_transcript.audio.capture_checked", return_value=output.encode()
     )
     with pytest.raises(RuntimeError, match="ffprobe"):
         audio_module.get_audio_duration("synthetic.mp3")
@@ -185,34 +183,14 @@ def test_ffprobe_rejects_invalid_duration(mocker, output):
 
 @pytest.mark.parametrize("duration", ["0", "12.5"])
 def test_ffprobe_accepts_finite_nonnegative_duration(mocker, duration):
-    import subprocess
     import json
 
     run = mocker.patch(
-        "subprocess.run",
-        return_value=subprocess.CompletedProcess(
-            [], 0, stdout=json.dumps({"format": {"duration": duration}})
-        ),
+        "podcast_transcript.audio.capture_checked",
+        return_value=json.dumps({"format": {"duration": duration}}).encode(),
     )
     assert audio_module.get_audio_duration("synthetic.mp3") == float(duration)
-    assert run.call_args.kwargs["errors"] == "replace"
     assert run.call_args.kwargs["timeout"] == 60.0
-    assert run.call_args.kwargs["stdin"] == subprocess.DEVNULL
-
-
-@pytest.mark.parametrize("timeout", [True, False])
-def test_ffprobe_process_errors_are_controlled_and_bounded(mocker, timeout):
-    import subprocess
-
-    error = (
-        subprocess.TimeoutExpired(["ffprobe"], 60, stderr=b"x" * 10000)
-        if timeout
-        else subprocess.CalledProcessError(1, ["ffprobe"], stderr="x" * 10000)
-    )
-    mocker.patch("subprocess.run", side_effect=error)
-    with pytest.raises(RuntimeError, match="ffprobe") as exc:
-        audio_module.get_audio_duration("synthetic.mp3")
-    assert len(str(exc.value)) < 2300
 
 
 @pytest.mark.parametrize("length", [None, "20", "0"])
