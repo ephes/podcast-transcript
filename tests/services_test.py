@@ -252,7 +252,9 @@ def test_whisper_cpp_writes_transcript_via_temp_base(mocker, tmp_path):
         commands.append(cmd)
         assert kwargs["description"]
         if cmd[0] == "ffmpeg":
-            Path(cmd[-1]).write_bytes(b"wav")
+            from native_integrity_test import wav_bytes
+
+            Path(cmd[-1]).write_bytes(wav_bytes())
         else:
             base = Path(cmd[cmd.index("-of") + 1])
             Path(f"{base}.json").write_text(json.dumps(cpp_output))
@@ -275,7 +277,9 @@ def test_whisper_cpp_writes_transcript_via_temp_base(mocker, tmp_path):
 def test_whisper_cpp_cli_failure_leaves_no_transcript(mocker, tmp_path):
     def fake_run(cmd, **kwargs):
         if cmd[0] == "ffmpeg":
-            Path(cmd[-1]).write_bytes(b"wav")
+            from native_integrity_test import wav_bytes
+
+            Path(cmd[-1]).write_bytes(wav_bytes())
             return subprocess.CompletedProcess(cmd, 0)
         raise RuntimeError("error: failed to open model")
 

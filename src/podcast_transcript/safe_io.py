@@ -103,35 +103,15 @@ def run_checked(
         timeout = settings.media_timeout_seconds
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("Command timeout must be positive finite seconds")
-    # A file keeps stderr capture out of RAM and cannot leave abort cleanup
-    # waiting for EOF from a descendant that escaped the owned process group.
-    with tempfile.TemporaryFile() as error_log:
-        with subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=error_log,
-            start_new_session=os.name == "posix",
-            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-        ) as process:
-            try:
-                process.wait(timeout=timeout)
-            except BaseException as exc:
-                _kill_owned_tree(process)
-                if isinstance(exc, subprocess.TimeoutExpired):
-                    raise RuntimeError(
-                        f"{description} timed out after {timeout:g} seconds"
-                    ) from exc
-                raise
-            if process.returncode:
-                size = error_log.seek(0, os.SEEK_END)
-                error_log.seek(max(0, size - STDERR_TAIL_CHARS))
-                stderr = error_log.read().decode("utf-8", errors="replace")
-                tail = "\n".join(stderr.strip().splitlines()[-STDERR_TAIL_LINES:])
-                message = f"{description} failed with exit code {process.returncode}"
-                if tail:
-                    message = f"{message}:\n{tail}"
-                raise RuntimeError(message)
+
+    capture_checked(
+        cmd,
+        description=description,
+        timeout=timeout,
+        stdout_limit=None,
+        stderr_limit=STDERR_TAIL_CHARS,
+        stderr_tail=True,
+    )
 
 
 def capture_checked(
@@ -139,8 +119,9 @@ def capture_checked(
     *,
     description: str,
     timeout: float,
-    stdout_limit: int = 64 * 1024,
+    stdout_limit: int | None = 64 * 1024,
     stderr_limit: int = 64 * 1024,
+    stderr_tail: bool = False,
 ) -> bytes:
     """Capture small tool results, killing/reaping the owned tree on overflow."""
     import threading
@@ -151,18 +132,31 @@ def capture_checked(
     buffers = [bytearray(), bytearray()]
     overflow = threading.Event()
     stop = threading.Event()
+    truncated = threading.Event()
     failures: list[BaseException] = []
 
-    def drain(stream, buffer, limit):
+    def diagnostic_tail():
+        text = bytes(buffers[1][-STDERR_TAIL_CHARS:]).decode("utf-8", errors="replace")
+        lines = text.strip().splitlines()
+        dropped = truncated.is_set() or len(lines) > STDERR_TAIL_LINES
+        text = "\n".join(lines[-STDERR_TAIL_LINES:])
+        return ("[stderr truncated]\n" if dropped else "") + text
+
+    def drain(stream, buffer, limit, keep_tail):
         try:
             while not stop.is_set():
                 block = stream.read(8192)
                 if not block:
                     break
-                remaining = limit - len(buffer)
-                buffer.extend(block[:remaining])
-                if len(block) > remaining:
-                    overflow.set()
+                if keep_tail:
+                    if len(buffer) + len(block) > limit:
+                        truncated.set()
+                    buffer[:] = (buffer + block)[-limit:]
+                else:
+                    remaining = limit - len(buffer)
+                    buffer.extend(block[:remaining])
+                    if len(block) > remaining:
+                        overflow.set()
         except OSError as exc:
             if not stop.is_set():
                 failures.append(exc)
@@ -172,17 +166,23 @@ def capture_checked(
     with subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
+        stdout=subprocess.PIPE if stdout_limit is not None else subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         bufsize=0,
         start_new_session=os.name == "posix",
         creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
     ) as process:
         threads = [
-            threading.Thread(target=drain, args=(stream, buffer, limit), daemon=True)
-            for stream, buffer, limit in zip(
-                (process.stdout, process.stderr), buffers, (stdout_limit, stderr_limit)
+            threading.Thread(
+                target=drain, args=(stream, buffer, limit, keep_tail), daemon=True
             )
+            for stream, buffer, limit, keep_tail in zip(
+                (process.stdout, process.stderr),
+                buffers,
+                (stdout_limit, stderr_limit),
+                (False, stderr_tail),
+            )
+            if stream is not None
         ]
         deadline = time.monotonic() + timeout
         try:
@@ -210,11 +210,7 @@ def capture_checked(
             if process.returncode is None:
                 _kill_owned_tree(process)
             if isinstance(exc, subprocess.TimeoutExpired):
-                tail = (
-                    bytes(buffers[1][-STDERR_TAIL_CHARS:])
-                    .decode("utf-8", errors="replace")
-                    .strip()
-                )
+                tail = diagnostic_tail()
                 raise RuntimeError(
                     f"{description} timed out after {timeout:g} seconds: {tail}"
                 ) from None
@@ -226,11 +222,7 @@ def capture_checked(
                     thread.join(timeout=0.2)
 
     if process.returncode:
-        tail = (
-            bytes(buffers[1][-STDERR_TAIL_CHARS:])
-            .decode("utf-8", errors="replace")
-            .strip()
-        )
+        tail = diagnostic_tail()
         raise RuntimeError(
             f"{description} failed with exit code {process.returncode}: {tail}"
         )

@@ -306,6 +306,18 @@ first run finishes. Other episodes can run concurrently. Locks are released on f
 exit. Leave library-managed files in the `.locks` directory under `TRANSCRIPT_DIR` alone
 (they persist on Unix); do not manually remove locks or episode data while a transcription is active.
 
+Native media/model command stderr is drained into a 2,000-byte memory tail (up to 20 displayed
+lines), with `[stderr truncated]` when earlier diagnostics are dropped. No stderr disk spool is
+used. Errors and timeouts include the tail; cancellation and timeouts reap live owned process trees.
+The same deadline includes waiting for inherited output pipes to close: a descendant retaining a
+pipe keeps the command incomplete, even if its parent exited successfully. This preserves process
+identity until cleanup and prevents a background child from silently outliving the command.
+
+whisper-cpp reuses a WAV only after checking nonempty, complete mono 16kHz PCM16 samples through
+the standard WAV reader in bounded blocks. Corrupt, truncated or differently shaped WAV caches
+are rebuilt from the source MP3. New conversions are validated before publication; failed repairs
+preserve the source, old WAV and previous final transcript. A valid WAV is reused unchanged.
+
 Native ffprobe metadata capture is limited to 64 KiB each for stdout and stderr during execution.
 Overflow terminates and reaps the probe's process tree; the existing 60-second timeout also applies.
 Failures preserve previous audio, completion markers and transcript outputs.

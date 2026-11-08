@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import time
+import threading
 from pathlib import Path
 import pytest
 
@@ -20,6 +21,8 @@ def test_media_abort_kills_owned_child_tree_and_preserves_output(
     helper.write_text("""
 import subprocess, sys, time
 from pathlib import Path
+sys.stderr.buffer.write(b'x' * 5000000)
+sys.stderr.flush()
 child = subprocess.Popen([sys.executable, "-c", "import sys,time; from pathlib import Path; Path(sys.argv[1]).write_text('ready'); time.sleep(2); Path(sys.argv[2]).write_text('survived')", sys.argv[2], sys.argv[3]])
 Path(sys.argv[1]).write_bytes(b"partial")
 child.wait()
@@ -37,17 +40,17 @@ child.wait()
         )
         processes.append(process)
         if interrupt:
-            wait = process.wait
+            join = threading.Thread.join
 
             def interrupted(*args, **kw):
                 deadline = time.monotonic() + 10
                 while not ready.exists():
                     assert time.monotonic() < deadline, "helper child did not start"
                     time.sleep(0.01)
-                process.wait = wait
+                monkeypatch.setattr(threading.Thread, "join", join)
                 raise KeyboardInterrupt
 
-            process.wait = interrupted
+            monkeypatch.setattr(threading.Thread, "join", interrupted)
         return process
 
     monkeypatch.setattr("podcast_transcript.safe_io.subprocess.Popen", launch)
