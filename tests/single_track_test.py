@@ -610,7 +610,7 @@ def test_changed_source_preparation_preserves_previous_generation(
     }
     source.write_bytes(b"changed corrupt audio")
     target, method = {
-        "copy": (audio_module.shutil, "copy"),
+        "copy": (Audio, "make_sure_audio_file_exists"),
         "resample": (audio_module, "resample_audio"),
         "probe": (audio_module, "get_audio_duration"),
     }[failure]

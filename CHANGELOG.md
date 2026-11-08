@@ -7,6 +7,11 @@
 
 ### Fixes
 
+- Admit local sources through a nonblocking regular-file descriptor with the source byte/time budgets,
+  preserving completed caches on admission failure.
+- Sync staged artifact data and containing directories before completion markers, including durable
+  marker retirement and explicit symlink handling; document filesystem power-loss guarantees.
+
 - Drain native command stderr to a bounded memory tail with explicit truncation, avoiding disk spools.
 - Validate cached and newly converted WAV samples and shape before native inference; rebuild corrupt
   intermediates while preserving source audio and previous transcripts on conversion failure.

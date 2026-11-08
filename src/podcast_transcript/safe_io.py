@@ -56,7 +56,48 @@ def atomic_output(path: Path) -> Iterator[Path]:
             raise RuntimeError(f"Expected output was not created: {path}")
         if not tmp_path.is_symlink():
             tmp_path.chmod(mode)
-        os.replace(tmp_path, path)
+        durable_replace(tmp_path, path)
+
+
+def sync_directory(path: Path) -> None:
+    """Persist directory entries; propagate unsupported-filesystem errors."""
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def sync_file(path: Path) -> None:
+    """Sync an admitted regular artifact before its completion is recorded."""
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise RuntimeError("Publication requires a regular file or symlink.")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def durable_replace(source: Path, target: Path) -> None:
+    """Persist data before its name; symlinks publish only a directory entry.
+
+    A symlink's target must already be durable. Never open a staged symlink:
+    short-audio links are relative to their final parent, not the staging one.
+    """
+    if not source.is_symlink():
+        sync_file(source)
+    os.replace(source, target)
+    sync_directory(target.parent)
+    if source.parent != target.parent:
+        sync_directory(source.parent)
+
+
+def durable_unlink(path: Path) -> None:
+    """Retire a completion marker before changing the data it describes."""
+    path.unlink(missing_ok=True)
+    if path.parent.exists():
+        sync_directory(path.parent)
 
 
 def write_text_atomic(path: Path, text: str) -> None:

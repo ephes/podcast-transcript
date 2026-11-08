@@ -1,9 +1,11 @@
 import hashlib
 import json
 import math
+from contextlib import nullcontext
 import os
 import re
 import httpx
+import stat
 import shutil
 import tempfile
 import uuid
@@ -15,7 +17,16 @@ from urllib.parse import unquote, urlparse
 from rich import print as rprint
 
 from .config import private_mkdir, settings
-from .safe_io import atomic_output, capture_checked, run_checked, write_text_atomic
+from .safe_io import (
+    atomic_output,
+    capture_checked,
+    run_checked,
+    write_text_atomic,
+    durable_replace,
+    durable_unlink,
+    sync_file,
+    sync_directory,
+)
 
 FFPROBE_TIMEOUT_SECONDS = 60.0
 GENERATED_CHUNK_RE = re.compile(r"chunk_\d{3,}\.(?:mp3|wav)")
@@ -306,7 +317,7 @@ class Audio:
                 download(self.url, self.episode_path)
             else:
                 with atomic_output(self.episode_path) as tmp_path:
-                    shutil.copy(Path(get_cache_source(self.url)), tmp_path)
+                    self._read_local_source(Path(get_cache_source(self.url)), tmp_path)
 
     def make_sure_audio_file_is_resampled(self) -> None:
         """
@@ -337,12 +348,14 @@ class Audio:
         # split again so a partial chunk set is never reused.
         if self.chunks_manifest_path.exists():
             self._remove_cached_transcripts()
-            self.chunks_manifest_path.unlink()
+            durable_unlink(self.chunks_manifest_path)
         self._remove_generated_chunks()
         if exceeds_limit:
             rprint(f"Splitting {self.resampled_episode_path} into chunks")
             chunk_names = self._split_resampled_episode()
         else:
+            sync_file(self.resampled_episode_path)
+            sync_directory(self.episode_chunks_dir)
             rprint(f"Creating symlink to {self.resampled_episode_path}")
             with atomic_output(self.episode_chunks_dir / "chunk_000.mp3") as tmp_path:
                 tmp_path.symlink_to(self.resampled_episode_path.name)
@@ -448,13 +461,57 @@ class Audio:
                     )
             for chunk in produced:
                 chunk.chmod(0o600)
-                os.replace(chunk, self.episode_chunks_dir / chunk.name)
+                durable_replace(chunk, self.episode_chunks_dir / chunk.name)
             return [chunk.name for chunk in produced]
         finally:
             shutil.rmtree(split_dir, ignore_errors=True)
 
     @staticmethod
-    def _content_fingerprint(path: Path) -> str:
+    def _read_local_source(path: Path, target: Path | None = None) -> str:
+        """Hash/copy one admitted descriptor with source byte and elapsed budgets."""
+        limit = settings.source_max_bytes
+        deadline = monotonic() + settings.source_total_timeout_seconds
+
+        def check_deadline():
+            if monotonic() >= deadline:
+                raise RuntimeError(
+                    "Local source exceeded TRANSCRIPT_SOURCE_TOTAL_TIMEOUT."
+                )
+
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode):
+                raise RuntimeError("Local source audio must be a regular file.")
+            if info.st_size > limit:
+                raise RuntimeError("Local source exceeded TRANSCRIPT_SOURCE_MAX_BYTES.")
+            digest = hashlib.sha256()
+            received = 0
+            # Optional destination is owned staging, never an existing cache file.
+            with target.open("wb") if target is not None else nullcontext() as output:
+                while True:
+                    check_deadline()
+                    block = os.read(descriptor, min(1024 * 1024, limit - received + 1))
+                    check_deadline()
+                    if not block:
+                        break
+                    received += len(block)
+                    if received > limit:
+                        raise RuntimeError(
+                            "Local source exceeded TRANSCRIPT_SOURCE_MAX_BYTES."
+                        )
+                    digest.update(block)
+                    if output is not None:
+                        output.write(block)
+            check_deadline()
+            return digest.hexdigest()
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def _content_fingerprint(path: Path, *, source_budget: bool = True) -> str:
+        if source_budget:
+            return Audio._read_local_source(path)
         digest = hashlib.sha256()
         with path.open("rb") as source:
             for block in iter(lambda: source.read(1024 * 1024), b""):
@@ -481,7 +538,7 @@ class Audio:
         if cached == {"sha256": fingerprint}:
             return False
         # An absent marker explicitly makes the preserved generation non-current.
-        self.source_metadata_path.unlink(missing_ok=True)
+        durable_unlink(self.source_metadata_path)
         return True
 
     def _prepare_changed_local_source(self) -> list[Path]:
@@ -499,9 +556,9 @@ class Audio:
 
             # Preparation succeeded. A promotion interrupted before source.json
             # is written is retried in staging on the next invocation.
+            durable_unlink(self.chunks_manifest_path)
             self._remove_cached_transcripts()
             self._remove_generated_chunks()
-            self.chunks_manifest_path.unlink(missing_ok=True)
             private_mkdir(self.episode_chunks_dir)
             for path in [
                 staged.episode_path,
@@ -509,7 +566,7 @@ class Audio:
                 *chunks,
                 staged.chunks_manifest_path,
             ]:
-                os.replace(path, self.episode_chunks_dir / path.name)
+                durable_replace(path, self.episode_chunks_dir / path.name)
             write_text_atomic(
                 self.source_metadata_path, json.dumps({"sha256": fingerprint})
             )
