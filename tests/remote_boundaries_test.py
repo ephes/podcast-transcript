@@ -137,9 +137,9 @@ def test_small_stream_and_bounded_error(monkeypatch, tmp_path, name):
     out = tmp_path / "chunk.json"
     remote(name).transcribe(chunk, out)
     assert json.loads(out.read_text()) == {"segments": []}
-    with pytest.raises(RuntimeError, match="status 503: bad") as error:
+    with pytest.raises(RuntimeError, match="status 503") as error:
         remote(name).transcribe(chunk, out)
-    assert len(str(error.value)) < 2200
+    assert "bad" not in str(error.value)
     assert all(s.closed for s in streams)
 
 
@@ -192,7 +192,7 @@ def test_source_diagnostics_keep_original_request_private(
 
 
 @pytest.mark.parametrize("name", ["groq", "voxhelm"])
-def test_error_stream_keeps_declared_charset(monkeypatch, tmp_path, name):
+def test_error_stream_does_not_echo_decoded_body(monkeypatch, tmp_path, name):
     stream = Blocks([gzip.compress("synthétique".encode("latin-1"))])
     transport(
         monkeypatch,
@@ -207,8 +207,9 @@ def test_error_stream_keeps_declared_charset(monkeypatch, tmp_path, name):
     )
     chunk = tmp_path / "chunk.mp3"
     chunk.write_bytes(b"audio")
-    with pytest.raises(RuntimeError, match="synthétique"):
+    with pytest.raises(RuntimeError, match="status 503") as error:
         remote(name).transcribe(chunk, chunk.with_suffix(".json"))
+    assert "synthétique" not in str(error.value)
     assert stream.closed
 
 

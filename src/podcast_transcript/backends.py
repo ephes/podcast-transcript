@@ -6,6 +6,7 @@ import asyncio
 import io
 import re
 import json
+import math
 import time
 
 from pathlib import Path
@@ -88,10 +89,7 @@ def http_timeout() -> httpx.Timeout:
 
 def timeout_error(backend: str, exc: httpx.TimeoutException) -> RuntimeError:
     kind = type(exc).__name__
-    detail = str(exc).strip()
     message = f"{backend} transcription request timed out ({kind})"
-    if detail:
-        message += f": {detail}"
     if isinstance(exc, httpx.ReadTimeout):
         message += ". Raise TRANSCRIPT_HTTP_READ_TIMEOUT if the server needs longer."
     else:
@@ -154,7 +152,7 @@ class Groq:
     def sleep_until(end_time):
         """Don't just sleep but also check whether sufficient time has passed."""
         while True:
-            now = time.time()
+            now = time.monotonic()
             if now >= end_time:
                 break
             time.sleep(min(10, end_time - now))  # Sleep in small increments
@@ -176,11 +174,6 @@ class Groq:
 
     @staticmethod
     def http_error(response: httpx.Response) -> RuntimeError:
-        detail = response.text[:REMOTE_ERROR_MAX_CHARS].strip()
-        if detail:
-            return RuntimeError(
-                f"Groq transcription failed with status {response.status_code}: {detail}"
-            )
         return RuntimeError(
             f"Groq transcription failed with status {response.status_code}."
         )
@@ -207,6 +200,7 @@ class Groq:
             "prompt": self.prompt,
         }
         timeout = http_timeout()
+        wait_budget = settings.http_read_timeout_seconds
         for attempt in range(1, GROQ_MAX_ATTEMPTS + 1):
             try:
                 response = remote_response(
@@ -218,47 +212,41 @@ class Groq:
                     timeout=timeout,
                 )
             except httpx.TimeoutException as e:
-                raise timeout_error("Groq", e) from e
+                raise timeout_error("Groq", e) from None
+            except httpx.HTTPError:
+                raise RuntimeError(
+                    "Groq transcription request failed (transport error)."
+                ) from None
             try:
                 response.raise_for_status()
-            except httpx.HTTPStatusError as e:
+            except httpx.HTTPStatusError:
                 if response.status_code == 429:
-                    # Rate limit exceeded
-                    error_message = self.rate_limit_message(response)
-                    if error_message is None:
-                        # No usable rate-limit details, report the raw response
-                        raise self.http_error(response) from e
-                    rprint("rate limit exceeded: ", error_message)
-                    # Extract wait time from error message
+                    error_message = self.rate_limit_message(response) or ""
                     match = re.search(
-                        r"Please try again in ((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)",
+                        r"Please try again in ((?:[0-9]+(?:\.[0-9]+)?(?:ms|h|m|s))+)(?![0-9a-z])",
                         error_message,
                     )
-                    if match:
-                        wait_time_str = match.group(1)
-                        # Parse wait_time_str
-                        wait_seconds = self.parse_duration(wait_time_str)
-                        if wait_seconds > 0:
-                            if attempt == GROQ_MAX_ATTEMPTS:
-                                raise RuntimeError(
-                                    f"Groq rate limit still hit after {GROQ_MAX_ATTEMPTS} attempts: "
-                                    f"{error_message}"
-                                ) from e
-                            rprint(
-                                f"Waiting for {wait_seconds} seconds before retrying..."
-                            )
-                            end_time = (
-                                time.time() + wait_seconds + 2
-                            )  # Add 2 seconds buffer
-                            self.sleep_until(end_time)
-                            continue  # Retry after waiting
+                    wait_seconds = self.parse_duration(match.group(1)) if match else 0
+                    if attempt == GROQ_MAX_ATTEMPTS:
                         raise RuntimeError(
-                            f"Groq rate limit hit and the wait time could not be parsed: {error_message}"
-                        ) from e
-                    raise RuntimeError(
-                        f"Groq rate limit hit without a wait time: {error_message}"
-                    ) from e
-                raise self.http_error(response) from e
+                            f"Groq rate limit still hit after {GROQ_MAX_ATTEMPTS} attempts; retry later."
+                        ) from None
+                    delay = wait_seconds + 2
+                    if (
+                        not math.isfinite(delay)
+                        or wait_seconds <= 0
+                        or delay > wait_budget
+                    ):
+                        raise RuntimeError(
+                            "Groq rate limit (status 429) hit without a usable wait within TRANSCRIPT_HTTP_READ_TIMEOUT; retry later."
+                        ) from None
+                    wait_budget -= delay
+                    rprint(
+                        f"Groq rate limit: waiting {delay:g} seconds before retrying."
+                    )
+                    self.sleep_until(time.monotonic() + delay)
+                    continue
+                raise self.http_error(response) from None
             else:
                 # Success
                 json_transcript = response.json()
@@ -387,18 +375,17 @@ class Voxhelm:
                     timeout=timeout,
                 )
             except httpx.TimeoutException as exc:
-                raise timeout_error("Voxhelm", exc) from exc
+                raise timeout_error("Voxhelm", exc) from None
+            except httpx.HTTPError:
+                raise RuntimeError(
+                    "Voxhelm transcription request failed (transport error)."
+                ) from None
             try:
                 response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                detail = response.text[:REMOTE_ERROR_MAX_CHARS].strip()
-                if detail:
-                    raise RuntimeError(
-                        f"Voxhelm transcription failed with status {response.status_code}: {detail}"
-                    ) from exc
+            except httpx.HTTPStatusError:
                 raise RuntimeError(
                     f"Voxhelm transcription failed with status {response.status_code}."
-                ) from exc
+                ) from None
 
         result = response.json()
         validate_whisper_transcript(result)
