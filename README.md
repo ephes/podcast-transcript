@@ -178,9 +178,9 @@ messages. Timeout errors retain the relevant setting hint.
 Source progress and request-error diagnostics omit URL credentials, query strings and fragments,
 including redirect URLs. Requests and source cache hashing still use the original URL.
 
-HTTP(S) source downloads have separate budgets (environment or `.env`):
+Source admission has separate budgets (environment or `.env`):
 
-- **TRANSCRIPT_SOURCE_MAX_BYTES**: Positive integer maximum for the response body;
+- **TRANSCRIPT_SOURCE_MAX_BYTES**: Positive integer maximum for each source hash/copy or response body;
   default 2147483648 (2 GiB), suitable for long episodes. Declared oversized responses are rejected
   early; actual streamed bytes are always counted, including when Content-Length is absent.
 - **TRANSCRIPT_SOURCE_TOTAL_TIMEOUT**: Positive finite total seconds, default 3600 (one hour).
@@ -191,7 +191,11 @@ HTTP(S) source downloads have separate budgets (environment or `.env`):
 Raise these limits for exceptionally large episodes or slow connections, for example
 `TRANSCRIPT_SOURCE_MAX_BYTES=4294967296 TRANSCRIPT_SOURCE_TOTAL_TIMEOUT=7200 transcribe <url>`.
 Rejected downloads close their response and remove partial files; an existing target is preserved.
-These limits apply only to source HTTP(S) downloads, not local copies or backend uploads.
+These limits also bound each local-source hash/copy pass, excluding backend uploads and model hashing.
+Local admission opens one nonblocking descriptor and accepts only regular files; FIFOs, devices and
+sockets are refused before reading. Actual bytes, including file growth, are counted. Elapsed time
+is checked before and after each bounded read/write and at EOF; filesystem I/O must return for the
+check to run. Rejection preserves previous completed files and does not require native inference.
 Source requests send `Accept-Encoding: identity`. Servers must return no `Content-Encoding`
 or `identity`; compressed responses (including gzip) are rejected before decoding to prevent
 decompression from allocating beyond the byte budget. Compressed audio formats such as MP3
@@ -321,6 +325,16 @@ preserve the source, old WAV and previous final transcript. A valid WAV is reuse
 Native ffprobe metadata capture is limited to 64 KiB each for stdout and stderr during execution.
 Overflow terminates and reaps the probe's process tree; the existing 60-second timeout also applies.
 Failures preserve previous audio, completion markers and transcript outputs.
+
+Outputs are synced before rename, then their owning directories are synced. Chunk/source completion
+markers are published and synced after their referenced data; retiring a marker is synced before
+changing that data. Short-audio symlinks sync their directory entries and reference already-published
+resampled audio. Process interruption cannot expose a partially written file. On filesystems that
+honor file and directory fsync, this ordering also protects completion claims across power loss;
+hardware/filesystem guarantees still apply. Unsupported directory syncing fails the step rather than
+claiming durable completion. A sync failure after rename may leave a complete new file visible, but
+no later completion marker is published. Incomplete generations are rebuilt on retry. This does not
+make a multi-file replacement transactional: keep separate backups for recovering an entire old generation.
 
 ### Transcript and cached-artifact validation
 

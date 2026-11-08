@@ -26,7 +26,7 @@ from .safe_io import atomic_output, write_text_atomic
 def local_model_identity(path: Path) -> str | None:
     """Hash local model bytes, including relative filenames for directory models."""
     if path.is_file():
-        return Audio._content_fingerprint(path)
+        return Audio._content_fingerprint(path, source_budget=False)
     if path.is_dir():
         files = []
         for artifact in sorted(path.rglob("*")):
@@ -38,7 +38,7 @@ def local_model_identity(path: Path) -> str | None:
                 files.append(
                     (
                         artifact.relative_to(path).as_posix(),
-                        Audio._content_fingerprint(artifact),
+                        Audio._content_fingerprint(artifact, source_budget=False),
                     )
                 )
         return hashlib.sha256(json.dumps(files).encode()).hexdigest()
