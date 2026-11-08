@@ -18,7 +18,7 @@ import httpx
 from rich import print as rprint
 
 from .config import settings
-from .transcript_validation import validate_whisper_transcript
+from .transcript_validation import parse_dote_timecode, validate_whisper_transcript
 from .safe_io import atomic_output, run_checked, write_text_atomic
 
 
@@ -499,34 +499,38 @@ class WhisperCpp:
         """
 
         def timestamp_to_seconds(timestamp):
-            # Convert "HH:MM:SS,mmm" to seconds
-            hours, minutes, seconds = timestamp.split(":")
-            seconds, milliseconds = seconds.split(",")
-            return (
-                float(hours) * 3600
-                + float(minutes) * 60
-                + float(seconds)
-                + float(milliseconds) / 1000
-            )
+            return parse_dote_timecode(timestamp) / 1000
 
-        segments = []
-        for idx, entry in enumerate(input_data["transcription"]):
-            segment = {
-                "id": idx,
-                "seek": int(
-                    entry["offsets"]["from"]
-                ),  # Using 'from' offset as seek position
-                "start": timestamp_to_seconds(entry["timestamps"]["from"]),
-                "end": timestamp_to_seconds(entry["timestamps"]["to"]),
-                "text": entry["text"].strip(),
-            }
-            segments.append(segment)
+        try:
+            if not isinstance(input_data["transcription"], list):
+                raise ValueError
+            segments = []
+            for idx, entry in enumerate(input_data["transcription"]):
+                segment = {
+                    "id": idx,
+                    "seek": int(
+                        entry["offsets"]["from"]
+                    ),  # Using 'from' offset as seek position
+                    "start": timestamp_to_seconds(entry["timestamps"]["from"]),
+                    "end": timestamp_to_seconds(entry["timestamps"]["to"]),
+                    "text": entry["text"].strip(),
+                }
+                segments.append(segment)
 
-        return {"segments": segments}
+            result = {"segments": segments}
+        except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
+            raise ValueError(
+                "Invalid native transcript: require native segments and HH:MM:SS,mmm timestamps."
+            ) from None
+        validate_whisper_transcript(result)
+        return result
 
     def convert_output_format(self, input_path: Path, output_path: Path) -> None:
-        with input_path.open("r") as file:
-            cpp_transcript = json.load(file)
+        try:
+            with input_path.open("r") as file:
+                cpp_transcript = json.load(file)
+        except (ValueError, UnicodeError):
+            raise ValueError("Invalid native transcript JSON.") from None
         transformed_transcript = self.transform_transcription(cpp_transcript)
         validate_whisper_transcript(transformed_transcript)
         write_text_atomic(output_path, json.dumps(transformed_transcript))

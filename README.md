@@ -289,7 +289,15 @@ first run finishes. Other episodes can run concurrently. Locks are released on f
 exit. Leave library-managed files in the `.locks` directory under `TRANSCRIPT_DIR` alone
 (they persist on Unix); do not manually remove locks or episode data while a transcription is active.
 
+Native ffprobe metadata capture is limited to 64 KiB each for stdout and stderr during execution.
+Overflow terminates and reaps the probe's process tree; the existing 60-second timeout also applies.
+Failures preserve previous audio, completion markers and transcript outputs.
+
 ### Transcript and cached-artifact validation
+
+Native whisper-cpp timestamps require the same full `HH:MM:SS,mmm` grammar as DOTe below,
+including component ranges and multi-day hours. Malformed native schemas and JSON raise a
+controlled error without transcript text and never replace converted raw caches.
 
 All backend results must be Whisper objects containing a `segments` list. An empty list is a valid
 silent transcript. Each segment requires string `text` plus numeric `start` and `end` in seconds;

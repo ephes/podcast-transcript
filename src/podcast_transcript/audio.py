@@ -5,7 +5,6 @@ import os
 import re
 import httpx
 import shutil
-import subprocess
 import tempfile
 import uuid
 
@@ -16,10 +15,9 @@ from urllib.parse import unquote, urlparse
 from rich import print as rprint
 
 from .config import settings
-from .safe_io import atomic_output, run_checked, write_text_atomic
+from .safe_io import atomic_output, capture_checked, run_checked, write_text_atomic
 
 FFPROBE_TIMEOUT_SECONDS = 60.0
-FFPROBE_STDERR_LIMIT = 2000
 GENERATED_CHUNK_RE = re.compile(r"chunk_\d{3,}\.(?:mp3|wav)")
 # Per-chunk transcript files written by the transcription step: the backend's
 # ``chunk_NNN.json``, whisper-cpp's intermediate ``chunk_NNN.whisper-cpp.json``
@@ -182,29 +180,14 @@ def get_audio_duration(path) -> float:
         "json",  # Output in JSON format for easy parsing
         path,
     ]
-    # subprocess.run kills and waits for the child if its timeout expires.
     try:
-        result = subprocess.run(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            errors="replace",
-            check=True,
-            timeout=FFPROBE_TIMEOUT_SECONDS,
+        output = capture_checked(
+            cmd, description=f"ffprobe for {path}", timeout=FFPROBE_TIMEOUT_SECONDS
         )
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
-        stderr = exc.stderr or ""
-        if isinstance(stderr, bytes):
-            stderr = stderr.decode("utf-8", errors="replace")
-        tail = stderr[-FFPROBE_STDERR_LIMIT:].strip()
-        reason = "timed out" if isinstance(exc, subprocess.TimeoutExpired) else "failed"
-        raise RuntimeError(f"ffprobe {reason} for {path}: {tail}") from exc
     except OSError as exc:
         raise RuntimeError(f"Could not run ffprobe for {path}") from exc
     try:
-        metadata = json.loads(result.stdout)
+        metadata = json.loads(output)
         raw = metadata["format"]["duration"]
         if isinstance(raw, bool) or not isinstance(raw, (str, int, float)):
             raise ValueError("invalid duration type")

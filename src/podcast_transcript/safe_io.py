@@ -74,6 +74,11 @@ def _kill_owned_tree(process: subprocess.Popen) -> None:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            # Some sandboxes refuse signaling an already-exited leader. Reap
+            # that child, but do not suppress a real failure to stop a live one.
+            if process.poll() is None:
+                raise
     else:
         # Windows has no killpg; taskkill /T is its process-tree API.
         try:
@@ -128,3 +133,106 @@ def run_checked(
                 if tail:
                     message = f"{message}:\n{tail}"
                 raise RuntimeError(message)
+
+
+def capture_checked(
+    cmd: list[str],
+    *,
+    description: str,
+    timeout: float,
+    stdout_limit: int = 64 * 1024,
+    stderr_limit: int = 64 * 1024,
+) -> bytes:
+    """Capture small tool results, killing/reaping the owned tree on overflow."""
+    import threading
+    import time
+
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("Command timeout must be positive finite seconds")
+    buffers = [bytearray(), bytearray()]
+    overflow = threading.Event()
+    stop = threading.Event()
+    failures: list[BaseException] = []
+
+    def drain(stream, buffer, limit):
+        try:
+            while not stop.is_set():
+                block = stream.read(8192)
+                if not block:
+                    break
+                remaining = limit - len(buffer)
+                buffer.extend(block[:remaining])
+                if len(block) > remaining:
+                    overflow.set()
+        except OSError as exc:
+            if not stop.is_set():
+                failures.append(exc)
+        finally:
+            stream.close()
+
+    with subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+        start_new_session=os.name == "posix",
+        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+    ) as process:
+        threads = [
+            threading.Thread(target=drain, args=(stream, buffer, limit), daemon=True)
+            for stream, buffer, limit in zip(
+                (process.stdout, process.stderr), buffers, (stdout_limit, stderr_limit)
+            )
+        ]
+        deadline = time.monotonic() + timeout
+        try:
+            for thread in threads:
+                thread.start()
+            # Keep the leader unreaped until pipe EOF. Its PID cannot be reused
+            # while cleanup may still need to signal descendants holding a pipe.
+            while True:
+                if overflow.is_set():
+                    raise RuntimeError(f"{description} output exceeded byte limit")
+                active = [thread for thread in threads if thread.is_alive()]
+                if not active:
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                active[0].join(timeout=min(0.05, remaining))
+            if overflow.is_set():
+                raise RuntimeError(f"{description} output exceeded byte limit")
+            if failures:
+                raise RuntimeError(f"{description} output could not be read")
+            process.wait(timeout=max(0, deadline - time.monotonic()))
+        except BaseException as exc:
+            stop.set()
+            if process.returncode is None:
+                _kill_owned_tree(process)
+            if isinstance(exc, subprocess.TimeoutExpired):
+                tail = (
+                    bytes(buffers[1][-STDERR_TAIL_CHARS:])
+                    .decode("utf-8", errors="replace")
+                    .strip()
+                )
+                raise RuntimeError(
+                    f"{description} timed out after {timeout:g} seconds: {tail}"
+                ) from None
+            raise
+        finally:
+            stop.set()
+            for thread in threads:
+                if thread.ident is not None:
+                    thread.join(timeout=0.2)
+
+    if process.returncode:
+        tail = (
+            bytes(buffers[1][-STDERR_TAIL_CHARS:])
+            .decode("utf-8", errors="replace")
+            .strip()
+        )
+        raise RuntimeError(
+            f"{description} failed with exit code {process.returncode}: {tail}"
+        )
+    return bytes(buffers[0])
