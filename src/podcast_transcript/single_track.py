@@ -1,4 +1,5 @@
 import json
+import hashlib
 import re
 import shutil
 from datetime import timedelta
@@ -10,8 +11,8 @@ from filelock import FileLock, Timeout
 from rich import print as rprint
 
 from .audio import Audio, get_audio_duration
-from .backends import MLX, TranscriptionBackend, Voxhelm
-from .config import settings
+from .backends import MLX, TranscriptionBackend, Voxhelm, WhisperCpp
+from .config import private_mkdir, settings
 from .transcript_validation import (
     validate_segments,
     load_whisper_transcript,
@@ -20,6 +21,28 @@ from .transcript_validation import (
     format_dote_timecode,
 )
 from .safe_io import atomic_output, write_text_atomic
+
+
+def local_model_identity(path: Path) -> str | None:
+    """Hash local model bytes, including relative filenames for directory models."""
+    if path.is_file():
+        return Audio._content_fingerprint(path)
+    if path.is_dir():
+        files = []
+        for artifact in sorted(path.rglob("*")):
+            if artifact.is_symlink() and artifact.is_dir():
+                raise ValueError(
+                    "Local model directory must not contain directory symlinks."
+                )
+            if artifact.is_file():
+                files.append(
+                    (
+                        artifact.relative_to(path).as_posix(),
+                        Audio._content_fingerprint(artifact),
+                    )
+                )
+        return hashlib.sha256(json.dumps(files).encode()).hexdigest()
+    return None
 
 
 def backend_cache_metadata(backend: TranscriptionBackend) -> dict:
@@ -34,6 +57,15 @@ def backend_cache_metadata(backend: TranscriptionBackend) -> dict:
         "language": getattr(backend, "language", None),
         "prompt": getattr(backend, "prompt", None),
     }
+    if isinstance(backend, (WhisperCpp, MLX)):
+        model_path = (
+            backend.model_path
+            if isinstance(backend, WhisperCpp)
+            else Path(backend.model_name).expanduser()
+        )
+        identity = local_model_identity(model_path)
+        if identity is not None:
+            metadata["local_model_sha256"] = identity
     if isinstance(backend, MLX):
         metadata["word_timestamps"] = backend.word_timestamps
     if isinstance(backend, Voxhelm):
@@ -221,8 +253,8 @@ def transcribe(url: str, backend: TranscriptionBackend) -> dict[str, Path]:
     # Outside the episode directory: deleting/rebuilding episode data must not
     # change the inode used to serialize generations. Leave lock lifecycle to filelock.
     lock_dir = audio.base_dir / ".locks"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    lock = FileLock(lock_dir / f"{audio.cache_key}.lock")
+    private_mkdir(lock_dir)
+    lock = FileLock(lock_dir / f"{audio.cache_key}.lock", mode=0o600)
     try:
         lock.acquire(timeout=0)
     except Timeout as exc:
