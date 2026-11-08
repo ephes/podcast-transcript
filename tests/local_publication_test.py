@@ -143,7 +143,7 @@ def test_atomic_output_syncs_data_then_rename_then_directory(tmp_path, monkeypat
     assert events[2][0] == "directory"
 
 
-@pytest.mark.parametrize("phase", ["file", "directory"])
+@pytest.mark.parametrize("phase", ["file", "directory", "replace"])
 def test_publication_failure_does_not_publish_completion(tmp_path, monkeypatch, phase):
     store = audio.Audio(base_dir=tmp_path, url="https://example.test/episode.mp3")
     store.episode_chunks_dir.mkdir(parents=True)

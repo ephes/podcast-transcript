@@ -1,6 +1,7 @@
 import hashlib
 import json
 import math
+from contextlib import nullcontext
 import os
 import re
 import httpx
@@ -487,8 +488,6 @@ class Audio:
             digest = hashlib.sha256()
             received = 0
             # Optional destination is owned staging, never an existing cache file.
-            from contextlib import nullcontext
-
             with target.open("wb") if target is not None else nullcontext() as output:
                 while True:
                     check_deadline()
