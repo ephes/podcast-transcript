@@ -7,6 +7,15 @@ from pathlib import Path
 from rich.console import Console
 
 
+def private_mkdir(path: Path) -> None:
+    """Create missing directory components owner-only without changing umask."""
+    if path.is_dir():
+        return
+    if path.parent != path:
+        private_mkdir(path.parent)
+    path.mkdir(mode=0o700, exist_ok=True)
+
+
 def parse_env_line(line: str) -> tuple[str, str] | None:
     """
     Parse one ``KEY=value`` line of a .env file.
@@ -67,7 +76,7 @@ class Settings:
             self.transcript_home = Path.home() / ".podcast-transcripts"
 
         # Create the transcript_home directory if it does not exist
-        self.transcript_home.mkdir(parents=True, exist_ok=True)
+        private_mkdir(self.transcript_home)
 
         # Set the transcript directory - this is special because we want to create
         # the directory if it does not exist which is why we cannot wait until read_env_vars()
@@ -77,7 +86,7 @@ class Settings:
             self.transcript_dir = self.transcript_home / "transcripts"
 
         # Create the transcript directory if it does not exist
-        self.transcript_dir.mkdir(parents=True, exist_ok=True)
+        private_mkdir(self.transcript_dir)
 
         # Read the .env file
         env_file = self.transcript_home / ".env"

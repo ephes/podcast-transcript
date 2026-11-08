@@ -3,14 +3,15 @@ Helpers that make pipeline steps fail closed.
 
 Every step in the pipeline caches its result by checking whether the output
 file exists. That is only safe if an output file appears exclusively after the
-step succeeded. These helpers write to a temporary path next to the final one
-and rename it into place only on success, and they turn failed subprocesses
+step succeeded. These helpers stage files in a private directory beside the final output
+and rename them into place only on success, and they turn failed subprocesses
 into exceptions that carry the tool's stderr.
 """
 
 import math
 import os
 import signal
+import stat
 import subprocess
 import tempfile
 import uuid
@@ -19,7 +20,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from .config import settings
+from .config import private_mkdir, settings
 
 STDERR_TAIL_LINES = 20
 STDERR_TAIL_CHARS = 2000
@@ -35,13 +36,6 @@ def partial_path_for(path: Path) -> Path:
     return path.with_name(f".{path.stem}.{uuid.uuid4().hex}.partial{path.suffix}")
 
 
-def _unlink_quietly(path: Path) -> None:
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        pass
-
-
 @contextmanager
 def atomic_output(path: Path) -> Iterator[Path]:
     """
@@ -51,21 +45,26 @@ def atomic_output(path: Path) -> Iterator[Path]:
     untouched. If the block finishes without creating the temporary file, a
     ``RuntimeError`` is raised instead of silently caching nothing.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = partial_path_for(path)
-    try:
+    private_mkdir(path.parent)
+    # Tools may create their output with ambient permissions. A private staging
+    # directory protects those bytes before publication, even in a shared parent.
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
+    with tempfile.TemporaryDirectory(prefix=".output-", dir=path.parent) as directory:
+        tmp_path = Path(directory) / partial_path_for(path).name
         yield tmp_path
-        if not tmp_path.exists():
+        if not tmp_path.exists() and not tmp_path.is_symlink():
             raise RuntimeError(f"Expected output was not created: {path}")
+        if not tmp_path.is_symlink():
+            tmp_path.chmod(mode)
         os.replace(tmp_path, path)
-    finally:
-        _unlink_quietly(tmp_path)
 
 
 def write_text_atomic(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` so that a crash never leaves a partial file."""
     with atomic_output(path) as tmp_path:
-        tmp_path.write_text(text)
+        descriptor = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w") as file:
+            file.write(text)
 
 
 def _kill_owned_tree(process: subprocess.Popen) -> None:

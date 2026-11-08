@@ -283,6 +283,23 @@ MLX caches also include `word_timestamps`. Changing this option retranscribes wh
 prepared audio; older MLX caches rebuild transcripts once. Remote API key rotation still reuses
 transcripts.
 
+Local whisper-cpp model files and existing local MLX model files/directories are fingerprinted by
+SHA-256 on each run. Directory identities include every regular file, including hidden files and
+VCS/tool metadata, and their relative filenames. Any change can cause retranscription; use a
+model-only directory to avoid incidental cache invalidation. Directory
+symlinks inside a model are refused (file symlinks are hashed by content). Replacing a local model
+at the same path retranscribes while retaining prepared audio. Existing caches without this identity
+rebuild transcripts once. Remote model IDs and API keys are excluded from artifact hashing.
+
+New cache directories (including missing parent components) request owner-only access (0700).
+Outputs are staged inside private directories, and new audio, transcript and metadata files request
+0600 permissions without changing the process umask. These permissions rely on the filesystem's
+access-control support. Existing directories and destination file permissions are preserved; protect
+legacy shared caches with your OS permissions before reuse. Exports in the episode directory are
+private by default. To share them, copy to an intentional public destination or explicitly change
+export permissions; replacement preserves those destination permissions. Cache-change progress
+omits metadata values, including the prompt.
+
 Each `transcribe` invocation holds a per-episode OS file lock from preparation through final exports.
 A concurrent invocation for the same episode exits with “Episode cache is busy”; retry when the
 first run finishes. Other episodes can run concurrently. Locks are released on failures and process

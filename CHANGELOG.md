@@ -7,6 +7,10 @@
 
 ### Fixes
 
+- Bind local model transcript caches to model file/directory bytes; retain prepared audio on changes.
+- Create new cache directories owner-only and stage outputs privately with new files owner-only,
+  retaining existing destination permissions. Omit prompt-bearing cache metadata from progress logs.
+
 - Bound ffprobe stdout/stderr capture during execution; kill and reap overflowing probes.
 - Validate native whisper-cpp timestamp syntax and schema before publishing converted transcripts.
 

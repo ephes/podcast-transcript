@@ -14,7 +14,7 @@ from urllib.parse import unquote, urlparse
 
 from rich import print as rprint
 
-from .config import settings
+from .config import private_mkdir, settings
 from .safe_io import atomic_output, capture_checked, run_checked, write_text_atomic
 
 FFPROBE_TIMEOUT_SECONDS = 60.0
@@ -279,12 +279,9 @@ class Audio:
         if cached == metadata:
             return
         if cached is not None:
-            rprint(
-                f"Transcription settings changed ({cached} -> {metadata}), "
-                "discarding cached transcripts"
-            )
+            rprint("Transcription settings changed, discarding cached transcripts")
         self._remove_cached_transcripts()
-        self.podcast_dir.mkdir(parents=True, exist_ok=True)
+        private_mkdir(self.podcast_dir)
         write_text_atomic(
             self.cache_metadata_path, json.dumps(metadata, sort_keys=True)
         )
@@ -304,7 +301,7 @@ class Audio:
         Make sure the audio file for the episode exists in the local filesystem.
         """
         if not self.episode_path.exists():
-            self.episode_path.parent.mkdir(exist_ok=True, parents=True)
+            private_mkdir(self.episode_path.parent)
             if self._is_http_url:
                 download(self.url, self.episode_path)
             else:
@@ -416,7 +413,7 @@ class Audio:
         # headers and VBR variation. Actual output limits are checked below.
         segment_seconds = 0.9 * min(7200, duration * MAX_SIZE_IN_BYTES / max(size, 1))
         split_dir = self.episode_chunks_dir / f".split-{uuid.uuid4().hex}"
-        split_dir.mkdir(parents=True)
+        private_mkdir(split_dir)
         try:
             run_checked(
                 [
@@ -450,6 +447,7 @@ class Audio:
                         "split the source into shorter files and retry. No chunk manifest was published."
                     )
             for chunk in produced:
+                chunk.chmod(0o600)
                 os.replace(chunk, self.episode_chunks_dir / chunk.name)
             return [chunk.name for chunk in produced]
         finally:
@@ -504,7 +502,7 @@ class Audio:
             self._remove_cached_transcripts()
             self._remove_generated_chunks()
             self.chunks_manifest_path.unlink(missing_ok=True)
-            self.episode_chunks_dir.mkdir(parents=True, exist_ok=True)
+            private_mkdir(self.episode_chunks_dir)
             for path in [
                 staged.episode_path,
                 staged.resampled_episode_path,
@@ -524,7 +522,7 @@ class Audio:
             - Resample the audio file to 16khz
             - Split the audio file into smaller chunks if needed
         """
-        self.podcast_dir.mkdir(parents=True, exist_ok=True)
+        private_mkdir(self.podcast_dir)
         if not self._is_http_url and self._local_source_changed():
             return self._prepare_changed_local_source()
         self.make_sure_audio_file_exists()
