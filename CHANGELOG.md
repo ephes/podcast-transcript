@@ -7,6 +7,10 @@
 
 ### Fixes
 
+- Recheck local model generations before chunk reuse, after inference before chunk publication,
+  and before certifying a completed run. Retire the cache marker during the run so interrupted
+  or changed-model results cannot be reused; retain prepared audio for retry.
+
 - Admit local sources through a nonblocking regular-file descriptor with the source byte/time budgets,
   preserving completed caches on admission failure.
 - Sync staged artifact data and containing directories before completion markers, including durable

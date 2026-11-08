@@ -2,6 +2,8 @@ import json
 import hashlib
 import re
 import shutil
+from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import timedelta
 from html import escape
 
@@ -20,7 +22,7 @@ from .transcript_validation import (
     parse_dote_timecode,
     format_dote_timecode,
 )
-from .safe_io import atomic_output, write_text_atomic
+from .safe_io import atomic_output, durable_unlink, write_text_atomic
 
 
 def local_model_identity(path: Path) -> str | None:
@@ -74,7 +76,10 @@ def backend_cache_metadata(backend: TranscriptionBackend) -> dict:
 
 
 def audio_chunks_to_text(
-    service: TranscriptionBackend, audio_chunks: list[Path]
+    service: TranscriptionBackend,
+    audio_chunks: list[Path],
+    *,
+    validate_model: Callable[[], None] | None = None,
 ) -> list[Path]:
     """Convert the audio chunks to text. Only convert if the transcript does not exist yet."""
     file_names = " ".join([chunk.name for chunk in audio_chunks])
@@ -82,12 +87,29 @@ def audio_chunks_to_text(
 
     raw_transcripts = []
     for chunk in audio_chunks:
+        if validate_model is not None:
+            validate_model()
         chunk_name = chunk.name.split(".")[0]
         transcript_name = f"{chunk_name}.json"
         transcript_path = chunk.parent / transcript_name
         cached = transcript_path.exists()
         if not cached:
-            service.transcribe(chunk, transcript_path)
+            # A local inference result is published only after its model
+            # generation has been checked. The run marker remains retired.
+            staging = (
+                atomic_output(transcript_path)
+                if validate_model is not None
+                else nullcontext(transcript_path)
+            )
+            with staging as target:
+                service.transcribe(chunk, target)
+                if validate_model is not None:
+                    validate_model()
+                    if not target.exists():
+                        raise RuntimeError(
+                            f"Transcription backend did not produce {transcript_path}"
+                        )
+                    load_whisper_transcript(target)
             if not transcript_path.exists():
                 raise RuntimeError(
                     f"Transcription backend did not produce {transcript_path}"
@@ -277,8 +299,23 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
         if len(audio_chunks) > 1
         else [0.0]
     )
-    audio.ensure_transcript_cache_matches(backend_cache_metadata(backend))
-    text_chunks = audio_chunks_to_text(backend, audio_chunks)
+    metadata = backend_cache_metadata(backend)
+    audio.ensure_transcript_cache_matches(metadata)
+    validate_model = None
+    if "local_model_sha256" in metadata:
+        # A crash or failed generation check must not certify unchecked chunks.
+        # A missing marker makes the next run discard all transcript artifacts.
+        durable_unlink(audio.cache_metadata_path)
+
+        def validate_model() -> None:
+            if backend_cache_metadata(backend) != metadata:
+                raise RuntimeError(
+                    "Local model changed during transcription; retry with a stable model."
+                )
+
+    text_chunks = audio_chunks_to_text(
+        backend, audio_chunks, validate_model=validate_model
+    )
     dote_chunks = whisper_text_chunks_to_dote(text_chunks)
     dote_path = audio.output_path(".dote.json")
     if not dote_path.exists():
@@ -296,4 +333,9 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
     if not plaintext_path.exists():
         convert_to_plaintext(dote_path, plaintext_path)
     transcript_paths["plain text"] = plaintext_path
+    if validate_model is not None:
+        validate_model()
+        write_text_atomic(
+            audio.cache_metadata_path, json.dumps(metadata, sort_keys=True)
+        )
     return transcript_paths

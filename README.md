@@ -294,6 +294,14 @@ model-only directory to avoid incidental cache invalidation. Directory
 symlinks inside a model are refused (file symlinks are hashed by content). Replacing a local model
 at the same path retranscribes while retaining prepared audio. Existing caches without this identity
 rebuild transcripts once. Remote model IDs and API keys are excluded from artifact hashing.
+For existing local models, the run rechecks the captured identity before each chunk, after each
+inference before publishing its chunk, and before certifying the completed run. A changed model
+stops transcription with a retry diagnostic. Keep model artifacts unchanged throughout a run;
+these checks detect changes at those boundaries, not a change restored between checks.
+The cache marker is durably retired while the run is in progress and restored only after all
+checks succeed. On interruption or rejection, prepared audio remains, but the next run discards
+uncertified transcript artifacts and starts transcription again. Successful unchanged runs reuse
+completed chunks.
 
 New cache directories (including missing parent components) request owner-only access (0700).
 Outputs are staged inside private directories, and new audio, transcript and metadata files request
