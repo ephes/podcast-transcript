@@ -7,6 +7,10 @@
 
 ### Fixes
 
+- Stage each newly inferred local-model chunk and publish it only after rechecking the model
+  identity recorded for the cache, so chunks from a replaced model are never reused; interrupted
+  runs with an unchanged model still resume and prepared audio is retained.
+
 - Admit native whisper-cli JSON through a bounded (64 MiB) nonblocking regular-file reader before
   parsing; normalize excessive nesting, drop only the refused intermediate and keep prior transcripts.
 - Request identity encoding for Groq/Voxhelm responses and refuse compressed bodies before decoding,
