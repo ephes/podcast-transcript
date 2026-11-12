@@ -285,10 +285,13 @@ class Groq:
 
 # Run the stdlib-only worker file without importing this package (no Settings
 # side effects) and without the current directory on sys.path: "-c" puts it
-# first, so drop it before any further import. Works on Python 3.10.
+# first unless safe-path mode (Python 3.11+) already omitted it, so drop it
+# before any further import. Works on Python 3.10.
 MLX_WORKER_PATH = Path(__file__).with_name("_mlx_worker.py")
 MLX_WORKER_BOOTSTRAP = (
-    "import sys; del sys.path[0]; worker = sys.argv.pop(1); "
+    "import sys\n"
+    "if not getattr(sys.flags, 'safe_path', False): del sys.path[0]\n"
+    "worker = sys.argv.pop(1)\n"
     "import runpy; runpy.run_path(worker, run_name='__main__')"
 )
 

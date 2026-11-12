@@ -110,9 +110,15 @@ def test_hung_worker_is_killed_and_previous_transcript_kept(
     assert not list(tmp_path.glob(".mlx-*"))
 
 
+@pytest.mark.parametrize("safe_path", [False, True])
 def test_worker_ignores_modules_planted_in_current_directory(
-    monkeypatch, tmp_path, fake_mlx
+    monkeypatch, tmp_path, fake_mlx, safe_path
 ):
+    # Safe-path mode (3.11+) omits the current directory; keep PYTHONPATH intact.
+    if safe_path:
+        monkeypatch.setenv("PYTHONSAFEPATH", "1")
+    else:
+        monkeypatch.delenv("PYTHONSAFEPATH", raising=False)
     fake_mlx(SUCCESS)
     planted = tmp_path / "cwd"
     planted.mkdir()
