@@ -7,6 +7,11 @@
 
 ### Fixes
 
+- Admit native whisper-cli JSON through a bounded (64 MiB) nonblocking regular-file reader before
+  parsing; normalize excessive nesting, drop only the refused intermediate and keep prior transcripts.
+- Request identity encoding for Groq/Voxhelm responses and refuse compressed bodies before decoding,
+  so decompression cannot allocate beyond the 32 MiB response limit.
+
 - Admit local sources through a nonblocking regular-file descriptor with the source byte/time budgets,
   preserving completed caches on admission failure.
 - Sync staged artifact data and containing directories before completion markers, including durable

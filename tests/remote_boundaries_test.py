@@ -97,13 +97,15 @@ class Blocks(httpx.SyncByteStream, httpx.AsyncByteStream):
 
 @pytest.mark.parametrize("name", ["groq", "voxhelm"])
 @pytest.mark.parametrize("status", [200, 503, 429])
-@pytest.mark.parametrize("encoding,length", [(None, None), (None, "1"), ("gzip", "1")])
+@pytest.mark.parametrize(
+    "encoding,length", [(None, None), (None, "1"), ("identity", "1")]
+)
 def test_remote_decoded_budget_closes_and_preserves(
     monkeypatch, tmp_path, name, status, encoding, length
 ):
     monkeypatch.setattr(backends, "REMOTE_RESPONSE_MAX_BYTES", 100, raising=False)
     data = b"x" * 101
-    stream = Blocks([gzip.compress(data) if encoding else data])
+    stream = Blocks([data])
     headers = {}
     if encoding:
         headers["Content-Encoding"] = encoding
@@ -207,7 +209,7 @@ def test_error_stream_does_not_echo_decoded_body(monkeypatch, tmp_path, name):
     )
     chunk = tmp_path / "chunk.mp3"
     chunk.write_bytes(b"audio")
-    with pytest.raises(RuntimeError, match="status 503") as error:
+    with pytest.raises(RuntimeError, match="Content-Encoding") as error:
         remote(name).transcribe(chunk, chunk.with_suffix(".json"))
     assert "synthétique" not in str(error.value)
     assert stream.closed

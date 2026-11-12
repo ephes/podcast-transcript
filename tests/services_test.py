@@ -105,7 +105,10 @@ def test_voxhelm_audio_file_to_text(mocker, audio):
     assert transcript_path.exists()
     assert json.loads(transcript_path.read_text()) == mock_response.json.return_value
     assert post.call_args.args[1] == "https://voxhelm.example/v1/audio/transcriptions"
-    assert post.call_args.kwargs["headers"] == {"Authorization": "Bearer secret-token"}
+    assert post.call_args.kwargs["headers"] == {
+        "Authorization": "Bearer secret-token",
+        "Accept-Encoding": "identity",
+    }
     assert post.call_args.kwargs["data"] == {
         "model": "gpt-4o-mini-transcribe",
         "response_format": "verbose_json",
@@ -133,7 +136,10 @@ def test_voxhelm_uses_existing_v1_prefix(mocker, audio):
     )
     backend.transcribe(audio_chunk, audio_chunk.with_suffix(".json"))
 
-    assert post.call_args.kwargs["headers"] == {"Authorization": "Bearer secret-token"}
+    assert post.call_args.kwargs["headers"] == {
+        "Authorization": "Bearer secret-token",
+        "Accept-Encoding": "identity",
+    }
     assert post.call_args.args[1] == "https://voxhelm.example/v1/audio/transcriptions"
     assert post.call_args.kwargs["data"] == {
         "model": "whisper-1",
