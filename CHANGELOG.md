@@ -7,6 +7,10 @@
 
 ### Fixes
 
+- Run MLX inference in an owned worker process bounded by `TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT`;
+  kill and reap stalled workers, release the episode lock, keep previous transcripts, admit the
+  result with the bounded native reader and keep prompts out of the process list.
+
 - Stage each newly inferred local-model chunk and publish it only after rechecking the model
   identity recorded for the cache, so chunks from a replaced model are never reused; interrupted
   runs with an unchanged model still resume and prepared audio is retained.

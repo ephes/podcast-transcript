@@ -32,3 +32,26 @@ def audio(tmp_path):
 
     url = "https://example.com/test.mp3"
     return Audio(base_dir=tmp_path, url=url)
+
+
+@pytest.fixture
+def fake_mlx(tmp_path, monkeypatch):
+    """Install a synthetic ``mlx_whisper`` module for the parent and its worker."""
+    import sys
+    import textwrap
+
+    directory = tmp_path / "fake-mlx"
+
+    def install(source: str):
+        directory.mkdir(exist_ok=True)
+        (directory / "mlx_whisper.py").write_text(textwrap.dedent(source))
+        monkeypatch.syspath_prepend(str(directory))
+        existing = os.environ.get("PYTHONPATH")
+        monkeypatch.setenv(
+            "PYTHONPATH",
+            str(directory) + (os.pathsep + existing if existing else ""),
+        )
+        monkeypatch.delitem(sys.modules, "mlx_whisper", raising=False)
+        return directory
+
+    return install
