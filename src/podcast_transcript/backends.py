@@ -283,6 +283,16 @@ class Groq:
         write_text_atomic(transcript_path, json.dumps(json_transcript))
 
 
+# Run the stdlib-only worker file without importing this package (no Settings
+# side effects) and without the current directory on sys.path: "-c" puts it
+# first, so drop it before any further import. Works on Python 3.10.
+MLX_WORKER_PATH = Path(__file__).with_name("_mlx_worker.py")
+MLX_WORKER_BOOTSTRAP = (
+    "import sys; del sys.path[0]; worker = sys.argv.pop(1); "
+    "import runpy; runpy.run_path(worker, run_name='__main__')"
+)
+
+
 class MLX:
     """
     Transcribe an audio file using the MLX API.
@@ -332,8 +342,9 @@ class MLX:
             run_checked(
                 [
                     sys.executable,
-                    "-m",
-                    "podcast_transcript._mlx_worker",
+                    "-c",
+                    MLX_WORKER_BOOTSTRAP,
+                    str(MLX_WORKER_PATH),
                     str(params_path),
                     str(result_path),
                 ],

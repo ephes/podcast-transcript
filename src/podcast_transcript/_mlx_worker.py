@@ -1,8 +1,10 @@
 """Run one MLX inference in an owned child process.
 
-``MLX.transcribe`` starts this module with a private parameter file and a
-result path. Running inference here gives the CLI a process it can time out,
-kill and reap; the parent admits and validates the result before publishing.
+``MLX.transcribe`` runs this file (not the package) with a private parameter
+file and a result path. It imports only the standard library and
+``mlx_whisper``, so the CLI's settings and their side effects are not loaded.
+Running inference here gives the CLI a process it can time out, kill and reap;
+the parent admits and validates the result before publishing.
 """
 
 import json

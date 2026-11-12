@@ -427,8 +427,9 @@ killed and the direct subprocess reaped (Unix process group; Windows `taskkill /
 are removed and previous final outputs preserved. Timeouts raise an error naming the operation;
 failed commands report a bounded stderr tail. Retrying reruns the unfinished step.
 
-MLX inference runs in a separate worker process (`python -m podcast_transcript._mlx_worker`) owned
-by the CLI, so the CLI process never imports `mlx_whisper`. Model, language and prompt are passed
+MLX inference runs in a separate worker process owned by the CLI, so the CLI process never imports
+`mlx_whisper`. The worker loads only the standard library and `mlx_whisper` (not the CLI settings),
+and the current directory is removed from its import path. Model, language and prompt are passed
 through a private file rather than the command line. A stalled or crashed worker is killed and reaped
 like whisper-cli; the episode lock is released, previous transcripts are kept and a retry starts a
 new worker. The worker's JSON result is admitted with the same 64 MiB regular-file bound and
