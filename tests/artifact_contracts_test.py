@@ -1,7 +1,6 @@
 """Transcript admission and cached timecodes, using synthetic artifacts only."""
 
 import json
-import sys
 from types import SimpleNamespace
 
 import httpx
@@ -80,11 +79,12 @@ def test_invalid_raw_cache_is_rejected(monkeypatch, tmp_path, invalid):
     assert not raw.with_suffix(".dote.json").exists()
 
 
-def test_mlx_invalid_result_preserves_previous_transcript(monkeypatch, tmp_path):
-    monkeypatch.setitem(
-        sys.modules,
-        "mlx_whisper",
-        SimpleNamespace(transcribe=lambda *a, **kw: {"text": "only"}),
+def test_mlx_invalid_result_preserves_previous_transcript(fake_mlx, tmp_path):
+    fake_mlx(
+        """
+        def transcribe(*args, **kwargs):
+            return {"text": "only"}
+        """
     )
     out = tmp_path / "chunk.json"
     out.write_text("old")

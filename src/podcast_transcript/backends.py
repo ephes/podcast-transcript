@@ -3,11 +3,14 @@ Transcriptions services
 """
 
 import asyncio
+import importlib.util
 import io
 import re
 import json
 import math
 import wave
+import sys
+import tempfile
 import time
 
 from pathlib import Path
@@ -18,7 +21,7 @@ import httpx
 
 from rich import print as rprint
 
-from .config import settings
+from .config import private_mkdir, settings
 from .transcript_validation import parse_dote_timecode, validate_whisper_transcript
 from .safe_io import (
     LOCAL_TRANSCRIPT_MAX_BYTES,
@@ -302,21 +305,50 @@ class MLX:
         self.language = language
 
     def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
-        # import only when needed because it's slow (takes 0.5s)
-        try:
-            import mlx_whisper  # type: ignore
-        except ModuleNotFoundError as exc:
+        # Never import MLX here: inference runs in an owned worker process so a
+        # stall is bounded by TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT.
+        if importlib.util.find_spec("mlx_whisper") is None:
             raise RuntimeError(
                 'MLX backend dependencies are not installed. Install with: `pip install "podcast-transcript[mlx]"`.'
-            ) from exc
-
-        result = mlx_whisper.transcribe(
-            str(audio_file),
-            path_or_hf_repo=self.model_name,
-            word_timestamps=self.word_timestamps,
-            initial_prompt=self.prompt,
-            language=self.language,  # type: ignore
-        )
+            )
+        private_mkdir(transcript_path.parent)
+        with tempfile.TemporaryDirectory(
+            prefix=".mlx-", dir=transcript_path.parent
+        ) as directory:
+            params_path = Path(directory) / "params.json"
+            result_path = Path(directory) / "result.json"
+            # Parameters (including the prompt) stay out of the process list.
+            params_path.write_text(
+                json.dumps(
+                    {
+                        "audio": str(audio_file),
+                        "model": self.model_name,
+                        "word_timestamps": self.word_timestamps,
+                        "prompt": self.prompt,
+                        "language": self.language,
+                    }
+                )
+            )
+            run_checked(
+                [
+                    sys.executable,
+                    "-m",
+                    "podcast_transcript._mlx_worker",
+                    str(params_path),
+                    str(result_path),
+                ],
+                description=f"MLX transcription of {audio_file}",
+                timeout=settings.local_transcription_timeout_seconds,
+            )
+            raw = read_regular_bounded(
+                result_path,
+                limit=LOCAL_TRANSCRIPT_MAX_BYTES,
+                description="MLX transcript output",
+            )
+        try:
+            result = json.loads(raw)
+        except (ValueError, UnicodeError, RecursionError):
+            raise ValueError("Invalid MLX transcript JSON.") from None
         validate_whisper_transcript(result)
         write_text_atomic(transcript_path, json.dumps(result, indent=2))
 

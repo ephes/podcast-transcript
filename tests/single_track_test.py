@@ -905,7 +905,7 @@ def test_bad_new_chunk_probe_does_not_publish_preparation_markers(mocker, tmp_pa
     assert not list(audio.episode_chunks_dir.glob(".split-*"))
 
 
-def test_mlx_word_timestamps_invalidate_only_transcripts(mocker, tmp_path):
+def test_mlx_word_timestamps_invalidate_only_transcripts(mocker, tmp_path, fake_mlx):
     from podcast_transcript.backends import MLX
 
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
@@ -919,16 +919,15 @@ def test_mlx_word_timestamps_invalidate_only_transcripts(mocker, tmp_path):
         side_effect=lambda _, p: p.write_bytes(b"resampled"),
     )
     mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
-    calls = []
-
-    def infer(path, **kwargs):
-        calls.append(kwargs["word_timestamps"])
-        return {"segments": [{"start": 0, "end": 1, "text": str(calls[-1])}]}
-
-    import types
-
-    mocker.patch.dict(
-        "sys.modules", {"mlx_whisper": types.SimpleNamespace(transcribe=infer)}
+    log = tmp_path / "mlx-calls.log"
+    fake_mlx(
+        f"""
+        def transcribe(path, **kwargs):
+            with open({str(log)!r}, "a") as file:
+                file.write(str(kwargs["word_timestamps"]) + "\\n")
+            text = str(kwargs["word_timestamps"])
+            return {{"segments": [{{"start": 0, "end": 1, "text": text}}]}}
+        """
     )
     url = "https://example.test/synthetic.mp3"
     backend = MLX(model_name=None)
@@ -943,6 +942,7 @@ def test_mlx_word_timestamps_invalidate_only_transcripts(mocker, tmp_path):
     backend.word_timestamps = True
     transcribe(url, backend)
     transcribe(url, backend)
+    calls = [line == "True" for line in log.read_text().splitlines()]
     assert calls == [False, False, True]
     assert paths["plain text"].read_text() == "True"
     assert (

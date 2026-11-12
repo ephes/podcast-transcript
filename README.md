@@ -420,12 +420,19 @@ Short files within both limits still use a symlink without re-encoding.
 Local commands also have finite budgets (positive finite seconds, environment or `.env`):
 
 - `TRANSCRIPT_MEDIA_TIMEOUT`: 3600 (one hour) per ffmpeg resample, split or WAV conversion.
-- `TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT`: 21600 (six hours) per whisper-cli chunk transcription.
+- `TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT`: 21600 (six hours) per whisper-cli or MLX chunk transcription.
 
 Increase these for unusually slow processing. On timeout or interruption the owned command tree is
 killed and the direct subprocess reaped (Unix process group; Windows `taskkill /T`). Partial outputs
 are removed and previous final outputs preserved. Timeouts raise an error naming the operation;
 failed commands report a bounded stderr tail. Retrying reruns the unfinished step.
+
+MLX inference runs in a separate worker process (`python -m podcast_transcript._mlx_worker`) owned
+by the CLI, so the CLI process never imports `mlx_whisper`. Model, language and prompt are passed
+through a private file rather than the command line. A stalled or crashed worker is killed and reaped
+like whisper-cli; the episode lock is released, previous transcripts are kept and a retry starts a
+new worker. The worker's JSON result is admitted with the same 64 MiB regular-file bound and
+validated before publication. Each chunk pays the worker start-up and model load time.
 
 The JSON that whisper-cli writes is admitted before parsing: it must be a regular file (no FIFO,
 symlink or directory) of at most 64 MiB, counted while reading even if it grows. Oversized,
