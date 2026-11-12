@@ -20,7 +20,13 @@ from rich import print as rprint
 
 from .config import settings
 from .transcript_validation import parse_dote_timecode, validate_whisper_transcript
-from .safe_io import atomic_output, run_checked, write_text_atomic
+from .safe_io import (
+    LOCAL_TRANSCRIPT_MAX_BYTES,
+    atomic_output,
+    read_regular_bounded,
+    run_checked,
+    write_text_atomic,
+)
 
 
 HTTP_CONNECT_TIMEOUT = 10.0
@@ -32,11 +38,28 @@ REMOTE_ERROR_MAX_CHARS = 2000
 
 
 def remote_response(backend: str, url: str, **kwargs) -> httpx.Response:
-    """Bound the complete request, including server computation and body transfer."""
+    """Bound the complete request, including server computation and body transfer.
+
+    Only identity-encoded bodies are accepted. httpx decoders inflate each
+    received block in one call, so a small compressed block could allocate far
+    more than the byte limit before it is counted. Refusing every other
+    Content-Encoding before iteration leaves httpx with its identity decoder,
+    so the counted bytes are exactly the received bytes.
+    """
+    headers = dict(kwargs.pop("headers", None) or {})
+    headers["Accept-Encoding"] = "identity"
 
     async def receive() -> httpx.Response:
         async with httpx.AsyncClient() as client:
-            async with client.stream("POST", url, **kwargs) as response:
+            async with client.stream(
+                "POST", url, headers=headers, **kwargs
+            ) as response:
+                encoding = response.headers.get("Content-Encoding", "identity")
+                if encoding.strip().lower() not in {"", "identity"}:
+                    raise RuntimeError(
+                        f"{backend} transcription response used an unsupported "
+                        "Content-Encoding; identity is required."
+                    )
                 body = bytearray()
                 async for block in response.aiter_bytes(chunk_size=64 * 1024):
                     if len(body) + len(block) > REMOTE_RESPONSE_MAX_BYTES:
@@ -44,13 +67,13 @@ def remote_response(backend: str, url: str, **kwargs) -> httpx.Response:
                             f"{backend} transcription response exceeded byte limit (32 MiB)."
                         )
                     body.extend(block)
-                headers = dict(response.headers)
-                # aiter_bytes decoded the body; retain charset/rate-limit headers.
-                headers.pop("content-encoding", None)
-                headers.pop("content-length", None)
+                response_headers = dict(response.headers)
+                # Retain charset/rate-limit headers; the body is already complete.
+                response_headers.pop("content-encoding", None)
+                response_headers.pop("content-length", None)
                 return httpx.Response(
                     response.status_code,
-                    headers=headers,
+                    headers=response_headers,
                     content=bytes(body),
                     request=response.request,
                 )
@@ -555,10 +578,14 @@ class WhisperCpp:
         return result
 
     def convert_output_format(self, input_path: Path, output_path: Path) -> None:
+        raw = read_regular_bounded(
+            input_path,
+            limit=LOCAL_TRANSCRIPT_MAX_BYTES,
+            description="Native transcript output",
+        )
         try:
-            with input_path.open("r") as file:
-                cpp_transcript = json.load(file)
-        except (ValueError, UnicodeError):
+            cpp_transcript = json.loads(raw)
+        except (ValueError, UnicodeError, RecursionError):
             raise ValueError("Invalid native transcript JSON.") from None
         transformed_transcript = self.transform_transcription(cpp_transcript)
         validate_whisper_transcript(transformed_transcript)
@@ -576,4 +603,9 @@ class WhisperCpp:
         self.transcribe_wav(wav_file, whisper_transcript_path)
         whisper_read_transcript_path = transcript_path.with_suffix(".whisper-cpp.json")
         # Convert the whisper-cpp JSON to original Whisper format
-        self.convert_output_format(whisper_read_transcript_path, transcript_path)
+        try:
+            self.convert_output_format(whisper_read_transcript_path, transcript_path)
+        except (ValueError, RuntimeError):
+            # This run just published the intermediate; drop the refused copy only.
+            whisper_read_transcript_path.unlink(missing_ok=True)
+            raise

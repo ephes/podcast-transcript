@@ -170,8 +170,10 @@ You can also set the following environment variables or specify them in the .env
   positive and fit a cumulative wait budget equal to this setting. Waiting uses a monotonic clock;
   unusable delays stop with a retry-later error.
 
-Remote Groq and Voxhelm responses (success and error) are streamed with a 32 MiB decoded-body
-limit, independent of Content-Length or compression. Overflow closes the response, fails the run
+Remote Groq and Voxhelm responses (success and error) are streamed with a 32 MiB body limit,
+independent of Content-Length. Requests send `Accept-Encoding: identity`; a response with any
+other `Content-Encoding` (gzip, deflate, br, ...) is refused before decoding, so a small compressed
+block cannot expand past the limit. Overflow or refusal closes the response, fails the run
 and preserves previous transcript files. Remote failures report status or category without response bodies, prompts, URLs or exception
 messages. Timeout errors retain the relevant setting hint.
 
@@ -417,6 +419,11 @@ Increase these for unusually slow processing. On timeout or interruption the own
 killed and the direct subprocess reaped (Unix process group; Windows `taskkill /T`). Partial outputs
 are removed and previous final outputs preserved. Timeouts raise an error naming the operation;
 failed commands report a bounded stderr tail. Retrying reruns the unfinished step.
+
+The JSON that whisper-cli writes is admitted before parsing: it must be a regular file (no FIFO,
+symlink or directory) of at most 64 MiB, counted while reading even if it grows. Oversized,
+excessively nested or invalid output fails the chunk, removes only that run's refused
+`*.whisper-cpp.json` intermediate, and keeps any previous transcript and the prepared audio.
 
 ### Invalid audio duration or a stalled probe
 
