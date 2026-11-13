@@ -280,26 +280,40 @@ to restore it, even if copied audio is cached.
 Each step caches its result as a file in that directory and is skipped on later runs if the file
 exists. The directory also holds a `cache.json` that records the backend, model, language and prompt
 used for the transcripts. If you re-run with different settings (for example `--backend groq` after
-`whisper-cpp`, or another `TRANSCRIPT_MODEL_NAME`), the cached chunk transcripts and combined outputs are
-discarded and transcribed again; the downloaded, resampled and chunked audio is reused. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
+`whisper-cpp`, or another `TRANSCRIPT_MODEL_NAME`), replacement chunk transcripts and all four exports are generated in private staging while the
+last complete generation remains available under its original `cache.json`. Failed inference,
+validation or export leaves those previous files unchanged. A retry creates the replacement again;
+returning to the old settings can still reuse the old complete generation. Prepared audio is reused. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
 run or transcription raises an error and is retried on the next run. Chunked transcripts are combined
 using each chunk's audio duration, so timestamps stay aligned for episodes longer than 2 hours.
+Every supplied duration (including the last or only chunk) must be a finite, nonnegative integer
+or float representable in milliseconds; booleans and numeric strings are refused before reading
+chunks or opening output. Zero is valid and a single chunk retains its original bytes. Decimal
+representations of durations are summed exactly, then each cumulative offset is rounded to the
+nearest millisecond, with ties to even. Raw cue conversion uses the same rounding rule. Offsets
+are never rounded per chunk, so equivalent duration partitions do not accumulate rounding drift.
 
 MLX caches also include `word_timestamps`. Changing this option retranscribes while keeping
 prepared audio; older MLX caches rebuild transcripts once. Remote API key rotation still reuses
 transcripts.
 
 Local whisper-cpp model files and existing local MLX model files/directories are fingerprinted by
-SHA-256 on each run. Directory identities include every regular file, including hidden files and
+SHA-256 on each run. Each artifact is opened once with nonblocking/no-follow flags, checked as
+a regular file through that descriptor, and hashed through that same descriptor. File and directory
+symlinks, FIFOs, devices and sockets are refused. Each artifact has a 64 GiB byte limit and a
+one-hour monotonic elapsed budget, separate from audio-source limits; growth is counted and
+time is checked before/after each 1 MiB read and at EOF. Filesystem I/O must return for elapsed
+checks to run. Admission failure starts no inference and preserves existing transcripts.
+Directory identities include every regular file, including hidden files and
 VCS/tool metadata, and their relative filenames. Any change can cause retranscription; use a
 model-only directory to avoid incidental cache invalidation. Directory
-symlinks inside a model are refused (file symlinks are hashed by content). Replacing a local model
+symlinks inside a model are refused, including file symlinks (use their regular-file paths). Replacing a local model
 at the same path retranscribes while retaining prepared audio. Existing caches without this identity
 rebuild transcripts once. Remote model IDs and API keys are excluded from artifact hashing.
 For existing local models, each newly inferred chunk is staged privately and published only after
 the model identity is rechecked against the one recorded for the cache, so a chunk produced after
 the model was replaced never becomes reusable. A changed model stops transcription with a retry
-diagnostic; the next run with the new model discards the old chunks and retains prepared audio.
+diagnostic; the next run with the new model creates replacement transcripts and retains prepared audio.
 Keep model artifacts unchanged throughout a run: the check runs after each inference, so a change
 that is restored before that check is not detected. An interrupted run with an unchanged model
 resumes from its completed chunks. Each recheck hashes the model once, as at run start.
@@ -343,7 +357,15 @@ honor file and directory fsync, this ordering also protects completion claims ac
 hardware/filesystem guarantees still apply. Unsupported directory syncing fails the step rather than
 claiming durable completion. A sync failure after rename may leave a complete new file visible, but
 no later completion marker is published. Incomplete generations are rebuilt on retry. This does not
-make a multi-file replacement transactional: keep separate backups for recovering an entire old generation.
+make a multi-file replacement transactional. Before publishing a successful settings replacement,
+the previous transcript metadata, chunks and all exports are copied durably to
+`<episode-directory>/.previous-transcripts/`. The current `cache.json` is retired before replacing
+files and published last, so interrupted promotion cannot advertise old/mixed bytes under new
+settings. Retry rebuilds an incomplete promotion; the recovery copy remains available. Each
+successful settings replacement replaces this one recovery copy with its predecessor. It contains
+transcripts only, not audio, and is for manual recovery: copy needed exports out before removing it
+or the episode directory. Do not restore its metadata over a different audio generation. Source-audio
+changes retain their separate preparation semantics; keep external backups for older audio/transcripts.
 
 ### Transcript and cached-artifact validation
 
@@ -355,7 +377,8 @@ All backend results must be Whisper objects containing a `segments` list. An emp
 silent transcript. Each segment requires string `text` plus numeric `start` and `end` in seconds;
 optional top-level `text` must also be a string. Times must be finite, nonnegative, representable
 in milliseconds, and ordered (`end >= start`); booleans and numeric strings are rejected.
-Zero-length cues are allowed. Valid fractional seconds retain nearest-millisecond rounding.
+Zero-length cues are allowed. Valid fractional seconds use decimal nearest-millisecond rounding
+with ties to even, matching cumulative chunk offsets.
 Invalid backend results never replace raw transcript caches, so a corrected response can be retried.
 
 Cached raw chunks are validated before reuse. If an older or edited raw chunk is rejected, remove
@@ -528,7 +551,8 @@ CLI tests exercise successful dispatch through all four real backend factories w
 settings, replacing only the transcription boundary; optional MLX native imports are isolated.
 They check default backend/model selection, explicit processor and settings forwarding, output paths,
 and failure exits. Tests set isolated transcript directories before importing package settings and
-use no accounts or real audio.
+use no accounts or personal audio. Timing regressions also probe a tiny generated silent WAV
+with the installed ffprobe, alongside exact-decimal timing and synthetic backend failure/restart checks.
 
 ### Code Style and Linting
 

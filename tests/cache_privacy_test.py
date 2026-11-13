@@ -182,11 +182,10 @@ def test_model_directory_link_policy_without_os_link_privileges(monkeypatch, tmp
     weights.write_bytes(b"synthetic-v1")
     # Model public Path link classification; no platform-specific link privilege.
     monkeypatch.setattr(Path, "is_symlink", lambda path: path == weights)
-    before = single_track.local_model_identity(model)
-    weights.write_bytes(b"synthetic-v2")
-    assert single_track.local_model_identity(model) != before
+    with pytest.raises(RuntimeError, match="symlinks"):
+        single_track.local_model_identity(model)
     directory_link = model / "linked-directory"
     directory_link.mkdir()
     monkeypatch.setattr(Path, "is_symlink", lambda path: path == directory_link)
-    with pytest.raises(ValueError, match="directory symlinks"):
+    with pytest.raises(RuntimeError, match="symlinks"):
         single_track.local_model_identity(model)

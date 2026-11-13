@@ -7,6 +7,18 @@
 
 ### Fixes
 
+- Validate every combined chunk duration before reading chunks or staging output, including
+  single-chunk copies. Reject booleans, negative/nonfinite and overflowing seconds; preserve zero.
+- Sum decimal chunk durations exactly and round cumulative offsets to nearest milliseconds,
+  ties to even, matching raw cue conversion without per-chunk rounding drift.
+- Hash local model artifacts through one inspected nonblocking, no-follow regular-file descriptor,
+  with independent 64 GiB and one-hour per-artifact budgets. Refuse model symlinks and special files
+  before inference; count growth and preserve prior caches on admission failure.
+- Stage replacement backend/model/language/prompt transcripts and all exports before changing a
+  completed generation. Failed replacement leaves the old generation current; successful promotion
+  retains a durable `.previous-transcripts` recovery copy and publishes new metadata last.
+  Interrupted promotion keeps that recovery copy and rebuilds without reusing mixed results.
+
 - Run MLX inference in an owned worker process bounded by `TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT`;
   kill and reap stalled workers, release the episode lock, keep previous transcripts, admit the
   result with the bounded native reader and keep prompts out of the process list.
