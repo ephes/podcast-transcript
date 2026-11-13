@@ -29,6 +29,8 @@ from .safe_io import (
 )
 
 FFPROBE_TIMEOUT_SECONDS = 60.0
+MODEL_MAX_BYTES = 64 * 1024**3
+MODEL_HASH_TIMEOUT_SECONDS = 3600.0
 GENERATED_CHUNK_RE = re.compile(r"chunk_\d{3,}\.(?:mp3|wav)")
 # Per-chunk transcript files written by the transcription step: the backend's
 # ``chunk_NNN.json``, whisper-cpp's intermediate ``chunk_NNN.whisper-cpp.json``
@@ -281,7 +283,8 @@ class Audio:
         different settings, the per-chunk transcripts and the combined outputs
         are deleted so they are transcribed again; the downloaded, resampled
         and chunked audio is kept. ``cache.json`` is written only after the
-        stale transcripts are gone.
+        stale transcripts are gone. The episode pipeline calls this on private
+        staging when replacing a completed generation; it promotes metadata last.
         """
         try:
             cached = json.loads(self.cache_metadata_path.read_text())
@@ -467,24 +470,47 @@ class Audio:
             shutil.rmtree(split_dir, ignore_errors=True)
 
     @staticmethod
-    def _read_local_source(path: Path, target: Path | None = None) -> str:
-        """Hash/copy one admitted descriptor with source byte and elapsed budgets."""
-        limit = settings.source_max_bytes
-        deadline = monotonic() + settings.source_total_timeout_seconds
+    def _read_local_source(
+        path: Path, target: Path | None = None, *, model: bool = False
+    ) -> str:
+        """Hash/copy one admitted descriptor with source or model budgets."""
+        limit = MODEL_MAX_BYTES if model else settings.source_max_bytes
+        deadline = monotonic() + (
+            MODEL_HASH_TIMEOUT_SECONDS
+            if model
+            else settings.source_total_timeout_seconds
+        )
+        label = "Local model" if model else "Local source"
+        byte_hint = (
+            "64 GiB model byte budget" if model else "TRANSCRIPT_SOURCE_MAX_BYTES"
+        )
+        time_hint = (
+            "model hashing elapsed budget"
+            if model
+            else "TRANSCRIPT_SOURCE_TOTAL_TIMEOUT"
+        )
 
         def check_deadline():
             if monotonic() >= deadline:
-                raise RuntimeError(
-                    "Local source exceeded TRANSCRIPT_SOURCE_TOTAL_TIMEOUT."
-                )
+                raise RuntimeError(f"{label} exceeded {time_hint}.")
 
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+        if model:
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path, flags)
+        except OSError:
+            if model:
+                raise RuntimeError(
+                    "Local model artifact could not be admitted."
+                ) from None
+            raise
         try:
             info = os.fstat(descriptor)
             if not stat.S_ISREG(info.st_mode):
-                raise RuntimeError("Local source audio must be a regular file.")
+                raise RuntimeError(f"{label} must be a regular file.")
             if info.st_size > limit:
-                raise RuntimeError("Local source exceeded TRANSCRIPT_SOURCE_MAX_BYTES.")
+                raise RuntimeError(f"{label} exceeded {byte_hint}.")
             digest = hashlib.sha256()
             received = 0
             # Optional destination is owned staging, never an existing cache file.
@@ -497,9 +523,7 @@ class Audio:
                         break
                     received += len(block)
                     if received > limit:
-                        raise RuntimeError(
-                            "Local source exceeded TRANSCRIPT_SOURCE_MAX_BYTES."
-                        )
+                        raise RuntimeError(f"{label} exceeded {byte_hint}.")
                     digest.update(block)
                     if output is not None:
                         output.write(block)
@@ -510,13 +534,7 @@ class Audio:
 
     @staticmethod
     def _content_fingerprint(path: Path, *, source_budget: bool = True) -> str:
-        if source_budget:
-            return Audio._read_local_source(path)
-        digest = hashlib.sha256()
-        with path.open("rb") as source:
-            for block in iter(lambda: source.read(1024 * 1024), b""):
-                digest.update(block)
-        return digest.hexdigest()
+        return Audio._read_local_source(path, model=not source_budget)
 
     @property
     def source_metadata_path(self) -> Path:

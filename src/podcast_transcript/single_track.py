@@ -2,9 +2,12 @@ import json
 import hashlib
 import re
 import shutil
+import stat
+import os
+import tempfile
 from collections.abc import Callable
 from contextlib import nullcontext
-from datetime import timedelta
+from fractions import Fraction
 from html import escape
 
 from pathlib import Path
@@ -12,31 +15,46 @@ from pathlib import Path
 from filelock import FileLock, Timeout
 from rich import print as rprint
 
-from .audio import Audio, get_audio_duration
+from .audio import (
+    Audio,
+    get_audio_duration,
+    GENERATED_TRANSCRIPT_RE,
+    TRANSCRIPT_OUTPUT_SUFFIXES,
+)
 from .backends import MLX, TranscriptionBackend, Voxhelm, WhisperCpp
 from .config import private_mkdir, settings
 from .transcript_validation import (
     validate_segments,
+    exact_seconds,
+    seconds_to_milliseconds,
     load_whisper_transcript,
     load_dote,
     parse_dote_timecode,
     format_dote_timecode,
 )
-from .safe_io import atomic_output, write_text_atomic
+from .safe_io import (
+    atomic_output,
+    durable_unlink,
+    sync_directory,
+    write_bytes_atomic,
+    write_text_atomic,
+)
 
 
 def local_model_identity(path: Path) -> str | None:
     """Hash local model bytes, including relative filenames for directory models."""
-    if path.is_file():
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None  # MLX also accepts non-local model identifiers.
+    if stat.S_ISREG(info.st_mode):
         return Audio._content_fingerprint(path, source_budget=False)
-    if path.is_dir():
+    if stat.S_ISDIR(info.st_mode):
         files = []
         for artifact in sorted(path.rglob("*")):
-            if artifact.is_symlink() and artifact.is_dir():
-                raise ValueError(
-                    "Local model directory must not contain directory symlinks."
-                )
-            if artifact.is_file():
+            if artifact.is_symlink():
+                raise RuntimeError("Local model directory must not contain symlinks.")
+            if not artifact.is_dir():
                 files.append(
                     (
                         artifact.relative_to(path).as_posix(),
@@ -44,14 +62,16 @@ def local_model_identity(path: Path) -> str | None:
                     )
                 )
         return hashlib.sha256(json.dumps(files).encode()).hexdigest()
-    return None
+    raise RuntimeError(
+        "Local model must be a regular file or directory without symlinks."
+    )
 
 
 def backend_cache_metadata(backend: TranscriptionBackend) -> dict:
     """
     Settings that change what a backend transcribes. They are stored in the
-    episode's ``cache.json``; cached transcripts made with different settings
-    are discarded. Secrets such as API keys are never included.
+    episode's ``cache.json``; different settings require a new transcript
+    generation. Secrets such as API keys are never included.
     """
     metadata = {
         "backend": type(backend).__name__,
@@ -126,20 +146,12 @@ def audio_chunks_to_text(
 def whisper_to_dote(input_data):
     """Convert the Whisper JSON to DOTe format."""
 
-    def format_time(seconds):
-        total_milliseconds = int(round(seconds * 1000))
-        hours = total_milliseconds // 3600000
-        minutes = (total_milliseconds % 3600000) // 60000
-        secs = (total_milliseconds % 60000) // 1000
-        millis = total_milliseconds % 1000
-        return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
-
     validate_segments(input_data)
     output_data = {"lines": []}
     for item in input_data:
         line = {
-            "startTime": format_time(item["start"]),
-            "endTime": format_time(item["end"]),
+            "startTime": format_dote_timecode(seconds_to_milliseconds(item["start"])),
+            "endTime": format_dote_timecode(seconds_to_milliseconds(item["end"])),
             "speakerDesignation": "",
             "text": item["text"].strip(),
         }
@@ -179,6 +191,14 @@ def combine_dote_chunks(
         raise ValueError(
             f"Got {len(dote_chunks)} DOTe chunks but {len(chunk_durations)} chunk durations"
         )
+    durations = []
+    for position, duration in enumerate(chunk_durations, 1):
+        try:
+            durations.append(exact_seconds(duration))
+        except ValueError:
+            raise ValueError(
+                f"Invalid chunk duration at position {position}."
+            ) from None
     if len(dote_chunks) == 1:
         # Copy and return early
         [source_dote_file] = dote_chunks
@@ -191,9 +211,10 @@ def combine_dote_chunks(
     rprint(f"Combining {len(dote_chunks)} DOTe chunks into {output_path}")
 
     combined_lines = []
-    offset = timedelta()
+    # Keep decimal durations exact; round only the cumulative boundary.
+    offset = Fraction(0)
 
-    for filename, chunk_duration in zip(dote_chunks, chunk_durations):
+    for filename, chunk_duration in zip(dote_chunks, durations):
         data = load_dote(filename)
 
         for line in data["lines"]:
@@ -203,15 +224,13 @@ def combine_dote_chunks(
 
             # Adjust times with offset
             new_line["startTime"] = format_dote_timecode(
-                start_time + offset // timedelta(milliseconds=1)
+                start_time + round(offset * 1000)
             )
-            new_line["endTime"] = format_dote_timecode(
-                end_time + offset // timedelta(milliseconds=1)
-            )
+            new_line["endTime"] = format_dote_timecode(end_time + round(offset * 1000))
             combined_lines.append(new_line)
 
         # The next chunk starts where this chunk's audio ends
-        offset += timedelta(seconds=chunk_duration)
+        offset += chunk_duration
 
     write_text_atomic(output_path, json.dumps({"lines": combined_lines}))
 
@@ -288,8 +307,35 @@ def transcribe(url: str, backend: TranscriptionBackend) -> dict[str, Path]:
         lock.release()
 
 
+STAGING_PREFIXES = (".replacement-", ".backup-")
+
+
+def _remove_abandoned_staging(audio: Audio) -> None:
+    """Drop staging left by a killed run; the episode lock rules out a live owner."""
+    if not audio.podcast_dir.is_dir():
+        return
+    for path in audio.podcast_dir.iterdir():
+        if (
+            path.name.startswith(STAGING_PREFIXES)
+            and path.is_dir()
+            and not path.is_symlink()
+        ):
+            shutil.rmtree(path)
+
+
+def _current_generation_readable(audio: Audio) -> bool:
+    """Whether the published generation can be kept until its replacement is ready."""
+    try:
+        load_dote(audio.output_path(".dote.json"))
+        for path in [*_transcript_files(audio), audio.cache_metadata_path]:
+            path.read_bytes()
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str, Path]:
-    transcript_paths = {}
+    _remove_abandoned_staging(audio)
     audio_chunks = audio.prepare_audio_for_transcription()
     # Probe before transcription or invalidating outputs, so malformed audio
     # cannot publish transcripts or discard the previous run's combined files.
@@ -299,6 +345,100 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
         else [0.0]
     )
     metadata = backend_cache_metadata(backend)
+    try:
+        cached = json.loads(audio.cache_metadata_path.read_text())
+    except (FileNotFoundError, ValueError):
+        cached = None
+    if (
+        isinstance(cached, dict)
+        and cached != metadata
+        and all(
+            audio.output_path(suffix).is_file() for suffix in TRANSCRIPT_OUTPUT_SUFFIXES
+        )
+        # An unreadable or corrupt generation is not worth retaining; replace it
+        # in place as before instead of failing every later run.
+        and _current_generation_readable(audio)
+    ):
+        # Do all inference and export work without touching the current generation.
+        with tempfile.TemporaryDirectory(
+            prefix=".replacement-", dir=audio.podcast_dir
+        ) as directory:
+            staged = Audio(base_dir=audio.base_dir, url=audio.url, title=audio.title)
+            staged.podcast_dir = Path(directory)
+            staged.episode_chunks_dir = staged.podcast_dir / "chunks"
+            private_mkdir(staged.episode_chunks_dir)
+            staged_chunks = []
+            for chunk in audio_chunks:
+                link = staged.episode_chunks_dir / chunk.name
+                link.symlink_to(chunk.resolve())
+                staged_chunks.append(link)
+            _transcribe_prepared(
+                staged, backend, staged_chunks, chunk_durations, metadata
+            )
+            _promote_transcripts(audio, staged)
+        return _transcript_paths(audio)
+    return _transcribe_prepared(audio, backend, audio_chunks, chunk_durations, metadata)
+
+
+def _transcript_paths(audio: Audio) -> dict[str, Path]:
+    return dict(
+        zip(
+            ("DOTe", "podlove", "WebVTT", "plain text"),
+            (audio.output_path(suffix) for suffix in TRANSCRIPT_OUTPUT_SUFFIXES),
+        )
+    )
+
+
+def _transcript_files(audio: Audio) -> list[Path]:
+    return [audio.output_path(suffix) for suffix in TRANSCRIPT_OUTPUT_SUFFIXES] + [
+        path
+        for path in sorted(audio.episode_chunks_dir.glob("chunk_*"))
+        if GENERATED_TRANSCRIPT_RE.fullmatch(path.name)
+    ]
+
+
+def _promote_transcripts(audio: Audio, staged: Audio) -> None:
+    # Keep a durable recovery copy before touching any currently published file.
+    recovery = audio.podcast_dir / ".previous-transcripts"
+    with tempfile.TemporaryDirectory(
+        prefix=".backup-", dir=audio.podcast_dir
+    ) as directory:
+        backup = Path(directory)
+        for path in [*_transcript_files(audio), audio.cache_metadata_path]:
+            target = backup / path.relative_to(audio.podcast_dir)
+            write_bytes_atomic(target, path.read_bytes())
+        sync_directory(backup)
+        if recovery.exists():
+            shutil.rmtree(recovery)
+        os.replace(backup, recovery)
+        sync_directory(audio.podcast_dir)
+
+    # Metadata is the completion claim: a partial multi-file promotion must never
+    # make either old or mixed bytes reusable as the replacement generation.
+    durable_unlink(audio.cache_metadata_path)
+    new_files = _transcript_files(staged)
+    targets = {
+        audio.podcast_dir / path.relative_to(staged.podcast_dir) for path in new_files
+    }
+    for path in new_files:
+        target = audio.podcast_dir / path.relative_to(staged.podcast_dir)
+        write_bytes_atomic(target, path.read_bytes())
+    for stale in _transcript_files(audio):
+        if stale not in targets:
+            durable_unlink(stale)
+    write_bytes_atomic(
+        audio.cache_metadata_path, staged.cache_metadata_path.read_bytes()
+    )
+
+
+def _transcribe_prepared(
+    audio: Audio,
+    backend: TranscriptionBackend,
+    audio_chunks: list[Path],
+    chunk_durations: list[float],
+    metadata: dict,
+) -> dict[str, Path]:
+    transcript_paths = {}
     audio.ensure_transcript_cache_matches(metadata)
     validate_model = None
     if "local_model_sha256" in metadata:

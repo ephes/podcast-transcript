@@ -144,6 +144,14 @@ def write_text_atomic(path: Path, text: str) -> None:
             file.write(text)
 
 
+def write_bytes_atomic(path: Path, data: bytes) -> None:
+    """Write ``data`` exactly to ``path`` so that a crash never leaves a partial file."""
+    with atomic_output(path) as tmp_path:
+        descriptor = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as file:
+            file.write(data)
+
+
 def _kill_owned_tree(process: subprocess.Popen) -> None:
     if os.name == "posix":
         try:

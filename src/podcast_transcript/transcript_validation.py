@@ -4,6 +4,25 @@ import json
 import math
 import re
 from pathlib import Path
+from fractions import Fraction
+
+
+def exact_seconds(value: object) -> Fraction:
+    """Admit millisecond-representable seconds as an exact decimal fraction."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Require finite nonnegative numeric seconds.")
+    try:
+        valid = value >= 0 and math.isfinite(value * 1000)
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise ValueError("Require finite nonnegative numeric seconds.")
+    return Fraction(str(value))
+
+
+def seconds_to_milliseconds(value: int | float) -> int:
+    """Nearest millisecond, ties to even, using the decimal seconds value."""
+    return round(exact_seconds(value) * 1000)
 
 
 def validate_segments(segments: object) -> None:
