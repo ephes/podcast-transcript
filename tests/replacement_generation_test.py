@@ -100,24 +100,70 @@ def test_interrupted_promotion_keeps_recovery_and_retry_does_not_mix(
     store, previous = episode
     replacement = RecordingBackend("new", "new transcript")
     # Fail after one root export is replaced, before the new cache marker.
-    write = single_track.write_text_atomic
+    write = single_track.write_bytes_atomic
     promoted = []
 
-    def fail(path, text):
+    def fail(path, data):
         if path.parent == store.podcast_dir and path.suffix != ".json":
             promoted.append(path)
             if len(promoted) == 2:
                 raise OSError("synthetic interrupted promotion")
-        return write(path, text)
+        return write(path, data)
 
-    monkeypatch.setattr(single_track, "write_text_atomic", fail)
+    monkeypatch.setattr(single_track, "write_bytes_atomic", fail)
     with pytest.raises(OSError):
         single_track.transcribe(store.url, replacement)
     assert not store.cache_metadata_path.exists()
     recovery = store.podcast_dir / ".previous-transcripts"
     assert all((recovery / p).read_bytes() == data for p, data in previous.items())
-    monkeypatch.setattr(single_track, "write_text_atomic", write)
+    monkeypatch.setattr(single_track, "write_bytes_atomic", write)
     paths = single_track.transcribe(store.url, replacement)
     assert paths["plain text"].read_text() == "new transcript\nnew transcript"
     assert all((recovery / p).read_bytes() == data for p, data in previous.items())
     assert json.loads(store.cache_metadata_path.read_text())["model"] == "new"
+
+
+def test_promotion_and_recovery_copy_exact_bytes(episode):
+    store, previous = episode
+    # Lone CR, CRLF and non-UTF-8 bytes must survive both copies unchanged.
+    odd = b"old\rline\r\nmore\xff\n"
+    text_path = store.output_path(".txt")
+    text_path.write_bytes(odd)
+    previous[text_path.relative_to(store.podcast_dir)] = odd
+    replacement = RecordingBackend("new", "new\r\ntranscript")
+    paths = single_track.transcribe(store.url, replacement)
+    recovery = store.podcast_dir / ".previous-transcripts"
+    assert all((recovery / p).read_bytes() == data for p, data in previous.items())
+    staged_text = b"new\r\ntranscript\nnew\r\ntranscript"
+    assert paths["plain text"].read_bytes() == staged_text
+
+
+@pytest.mark.parametrize("damage", ["invalid-json", "not-utf8", "bad-shape"])
+def test_unreadable_current_generation_is_replaced_in_place(episode, damage):
+    store, _ = episode
+    dote = store.output_path(".dote.json")
+    dote.write_bytes(
+        {"invalid-json": b"{", "not-utf8": b"\xff\xfe", "bad-shape": b'{"lines":1}'}[
+            damage
+        ]
+    )
+    replacement = RecordingBackend("new", "new transcript")
+    paths = single_track.transcribe(store.url, replacement)
+    assert paths["plain text"].read_text() == "new transcript\nnew transcript"
+    assert json.loads(store.cache_metadata_path.read_text())["model"] == "new"
+    assert not (store.podcast_dir / ".previous-transcripts").exists()
+
+
+def test_abandoned_staging_is_removed_under_the_episode_lock(episode):
+    store, _ = episode
+    for name in (".replacement-killed", ".backup-killed"):
+        (store.podcast_dir / name / "chunks").mkdir(parents=True)
+        (store.podcast_dir / name / "chunks" / "chunk_000.wav").write_bytes(b"x")
+    keep = store.podcast_dir / ".previous-transcripts"
+    keep.mkdir()
+    old = RecordingBackend("old", "unused")
+    single_track.transcribe(store.url, old)
+    assert old.calls == []
+    assert not list(store.podcast_dir.glob(".replacement-*"))
+    assert not list(store.podcast_dir.glob(".backup-*"))
+    assert keep.is_dir()

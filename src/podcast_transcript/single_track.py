@@ -32,7 +32,13 @@ from .transcript_validation import (
     parse_dote_timecode,
     format_dote_timecode,
 )
-from .safe_io import atomic_output, write_text_atomic, durable_unlink, sync_directory
+from .safe_io import (
+    atomic_output,
+    durable_unlink,
+    sync_directory,
+    write_bytes_atomic,
+    write_text_atomic,
+)
 
 
 def local_model_identity(path: Path) -> str | None:
@@ -301,7 +307,35 @@ def transcribe(url: str, backend: TranscriptionBackend) -> dict[str, Path]:
         lock.release()
 
 
+STAGING_PREFIXES = (".replacement-", ".backup-")
+
+
+def _remove_abandoned_staging(audio: Audio) -> None:
+    """Drop staging left by a killed run; the episode lock rules out a live owner."""
+    if not audio.podcast_dir.is_dir():
+        return
+    for path in audio.podcast_dir.iterdir():
+        if (
+            path.name.startswith(STAGING_PREFIXES)
+            and path.is_dir()
+            and not path.is_symlink()
+        ):
+            shutil.rmtree(path)
+
+
+def _current_generation_readable(audio: Audio) -> bool:
+    """Whether the published generation can be kept until its replacement is ready."""
+    try:
+        load_dote(audio.output_path(".dote.json"))
+        for path in [*_transcript_files(audio), audio.cache_metadata_path]:
+            path.read_bytes()
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str, Path]:
+    _remove_abandoned_staging(audio)
     audio_chunks = audio.prepare_audio_for_transcription()
     # Probe before transcription or invalidating outputs, so malformed audio
     # cannot publish transcripts or discard the previous run's combined files.
@@ -321,9 +355,11 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
         and all(
             audio.output_path(suffix).is_file() for suffix in TRANSCRIPT_OUTPUT_SUFFIXES
         )
+        # An unreadable or corrupt generation is not worth retaining; replace it
+        # in place as before instead of failing every later run.
+        and _current_generation_readable(audio)
     ):
         # Do all inference and export work without touching the current generation.
-        load_dote(audio.output_path(".dote.json"))
         with tempfile.TemporaryDirectory(
             prefix=".replacement-", dir=audio.podcast_dir
         ) as directory:
@@ -370,7 +406,7 @@ def _promote_transcripts(audio: Audio, staged: Audio) -> None:
         backup = Path(directory)
         for path in [*_transcript_files(audio), audio.cache_metadata_path]:
             target = backup / path.relative_to(audio.podcast_dir)
-            write_text_atomic(target, path.read_text())
+            write_bytes_atomic(target, path.read_bytes())
         sync_directory(backup)
         if recovery.exists():
             shutil.rmtree(recovery)
@@ -386,11 +422,13 @@ def _promote_transcripts(audio: Audio, staged: Audio) -> None:
     }
     for path in new_files:
         target = audio.podcast_dir / path.relative_to(staged.podcast_dir)
-        write_text_atomic(target, path.read_text())
+        write_bytes_atomic(target, path.read_bytes())
     for stale in _transcript_files(audio):
         if stale not in targets:
             durable_unlink(stale)
-    write_text_atomic(audio.cache_metadata_path, staged.cache_metadata_path.read_text())
+    write_bytes_atomic(
+        audio.cache_metadata_path, staged.cache_metadata_path.read_bytes()
+    )
 
 
 def _transcribe_prepared(

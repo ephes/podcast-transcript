@@ -283,7 +283,11 @@ used for the transcripts. If you re-run with different settings (for example `--
 `whisper-cpp`, or another `TRANSCRIPT_MODEL_NAME`), replacement chunk transcripts and all four exports are generated in private staging while the
 last complete generation remains available under its original `cache.json`. Failed inference,
 validation or export leaves those previous files unchanged. A retry creates the replacement again;
-returning to the old settings can still reuse the old complete generation. Prepared audio is reused. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
+returning to the old settings can still reuse the old complete generation. If the published
+generation is unreadable (for example a corrupt or hand-edited DOTe export), it is not retained:
+the new settings replace it in place, as for an incomplete generation. Staging directories
+(`.replacement-*`, `.backup-*`) left behind by a killed run are removed by the next run while it
+holds the episode lock. Prepared audio is reused. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
 run or transcription raises an error and is retried on the next run. Chunked transcripts are combined
 using each chunk's audio duration, so timestamps stay aligned for episodes longer than 2 hours.
 Every supplied duration (including the last or only chunk) must be a finite, nonnegative integer
@@ -358,10 +362,11 @@ hardware/filesystem guarantees still apply. Unsupported directory syncing fails 
 claiming durable completion. A sync failure after rename may leave a complete new file visible, but
 no later completion marker is published. Incomplete generations are rebuilt on retry. This does not
 make a multi-file replacement transactional. Before publishing a successful settings replacement,
-the previous transcript metadata, chunks and all exports are copied durably to
+the previous transcript metadata, chunks and all exports are copied byte-for-byte and durably to
 `<episode-directory>/.previous-transcripts/`. The current `cache.json` is retired before replacing
 files and published last, so interrupted promotion cannot advertise old/mixed bytes under new
-settings. Retry rebuilds an incomplete promotion; the recovery copy remains available. Each
+settings. Promoted exports are byte-identical to the staged ones. Retry rebuilds an incomplete
+promotion; the recovery copy remains available. Each
 successful settings replacement replaces this one recovery copy with its predecessor. It contains
 transcripts only, not audio, and is for manual recovery: copy needed exports out before removing it
 or the episode directory. Do not restore its metadata over a different audio generation. Source-audio

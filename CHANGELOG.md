@@ -18,6 +18,8 @@
   completed generation. Failed replacement leaves the old generation current; successful promotion
   retains a durable `.previous-transcripts` recovery copy and publishes new metadata last.
   Interrupted promotion keeps that recovery copy and rebuilds without reusing mixed results.
+  Recovery and promotion copy bytes exactly; an unreadable published generation is replaced in
+  place instead of blocking every run, and staging left by a killed run is removed under the lock.
 
 - Run MLX inference in an owned worker process bounded by `TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT`;
   kill and reap stalled workers, release the episode lock, keep previous transcripts, admit the
