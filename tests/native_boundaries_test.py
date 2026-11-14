@@ -33,6 +33,9 @@ def test_probe_capture_overflow_reaps_child(monkeypatch, tmp_path, stream):
     ]
     for path in paths:
         path.write_bytes(b"previous")
+    store.cache_metadata_path.write_text('{"backend":"previous"}')
+    store.chunks_manifest_path.write_text('["chunk_000.mp3","chunk_001.mp3"]')
+    before = {path: path.read_bytes() for path in paths}
     monkeypatch.setattr(store, "prepare_audio_for_transcription", lambda: chunks)
     backend = backends.WhisperCpp()
     monkeypatch.setattr(
@@ -44,7 +47,7 @@ def test_probe_capture_overflow_reaps_child(monkeypatch, tmp_path, stream):
         single_track._transcribe_locked(store, backend)
     assert len(str(error.value)) < 2500
     assert children and children[0].poll() is not None
-    assert all(path.read_bytes() == b"previous" for path in paths)
+    assert all(path.read_bytes() == before[path] for path in paths)
 
 
 def native(timestamp):
@@ -132,17 +135,24 @@ def test_probe_small_success_failure_and_timeout(monkeypatch, tmp_path):
     assert all(child.poll() is not None for child in children)
 
 
-def test_reaped_failure_does_not_signal_process_group(monkeypatch):
-    def unexpected_signal(process):
-        pytest.fail("reaped process group was signaled")
+def test_failure_signals_group_before_reaping_leader(monkeypatch):
+    cleanup = safe_io._kill_owned_tree
+    calls = []
 
-    monkeypatch.setattr(safe_io, "_kill_owned_tree", unexpected_signal)
+    def retire_unreaped(process):
+        assert process.returncode is None
+        calls.append(process)
+        cleanup(process)
+
+    monkeypatch.setattr(safe_io, "_kill_owned_tree", retire_unreaped)
     with pytest.raises(RuntimeError, match="exit code 7"):
         safe_io.capture_checked(
             [sys.executable, "-c", "import sys;sys.exit(7)"],
             description="synthetic",
             timeout=10,
         )
+    assert len(calls) == 1
+    assert calls[0].returncode == 7
 
 
 @pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])

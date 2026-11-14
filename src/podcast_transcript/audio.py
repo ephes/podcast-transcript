@@ -17,6 +17,7 @@ from urllib.parse import unquote, urlparse
 from rich import print as rprint
 
 from .config import private_mkdir, settings
+from .json_input import load_control_json
 from .safe_io import (
     atomic_output,
     capture_checked,
@@ -31,6 +32,28 @@ from .safe_io import (
 FFPROBE_TIMEOUT_SECONDS = 60.0
 MODEL_MAX_BYTES = 64 * 1024**3
 MODEL_HASH_TIMEOUT_SECONDS = 3600.0
+MODEL_MAX_ENTRIES = 100_000
+
+
+class ModelBudget:
+    """One budget for enumeration and all reads in a model identity pass."""
+
+    def __init__(self):
+        self.remaining = MODEL_MAX_BYTES
+        self.deadline = monotonic() + MODEL_HASH_TIMEOUT_SECONDS
+        self.entries = 0
+
+    def check(self):
+        if monotonic() >= self.deadline:
+            raise RuntimeError("Local model exceeded model hashing elapsed budget.")
+
+    def admit_entry(self):
+        self.check()
+        self.entries += 1
+        if self.entries > MODEL_MAX_ENTRIES:
+            raise RuntimeError("Local model exceeded directory entry budget.")
+
+
 GENERATED_CHUNK_RE = re.compile(r"chunk_\d{3,}\.(?:mp3|wav)")
 # Per-chunk transcript files written by the transcription step: the backend's
 # ``chunk_NNN.json``, whisper-cpp's intermediate ``chunk_NNN.whisper-cpp.json``
@@ -287,8 +310,8 @@ class Audio:
         staging when replacing a completed generation; it promotes metadata last.
         """
         try:
-            cached = json.loads(self.cache_metadata_path.read_text())
-        except (FileNotFoundError, json.JSONDecodeError):
+            cached = load_control_json(self.cache_metadata_path)
+        except FileNotFoundError:
             cached = None
         if cached == metadata:
             return
@@ -386,8 +409,8 @@ class Audio:
     def _load_chunk_manifest(self) -> list[Path] | None:
         """Return the cached chunk paths if a complete chunk set exists."""
         try:
-            chunk_names = json.loads(self.chunks_manifest_path.read_text())
-        except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+            chunk_names = load_control_json(self.chunks_manifest_path)
+        except FileNotFoundError:
             return None
         if not isinstance(chunk_names, list) or not chunk_names:
             return None
@@ -471,14 +494,19 @@ class Audio:
 
     @staticmethod
     def _read_local_source(
-        path: Path, target: Path | None = None, *, model: bool = False
+        path: Path,
+        target: Path | None = None,
+        *,
+        model: bool = False,
+        model_budget: ModelBudget | None = None,
     ) -> str:
         """Hash/copy one admitted descriptor with source or model budgets."""
-        limit = MODEL_MAX_BYTES if model else settings.source_max_bytes
-        deadline = monotonic() + (
-            MODEL_HASH_TIMEOUT_SECONDS
-            if model
-            else settings.source_total_timeout_seconds
+        budget = (model_budget or ModelBudget()) if model else None
+        limit = budget.remaining if budget is not None else settings.source_max_bytes
+        deadline = (
+            budget.deadline
+            if budget is not None
+            else monotonic() + settings.source_total_timeout_seconds
         )
         label = "Local model" if model else "Local source"
         byte_hint = (
@@ -525,6 +553,8 @@ class Audio:
                     if received > limit:
                         raise RuntimeError(f"{label} exceeded {byte_hint}.")
                     digest.update(block)
+                    if budget is not None:
+                        budget.remaining -= len(block)
                     if output is not None:
                         output.write(block)
             check_deadline()
@@ -550,8 +580,8 @@ class Audio:
                 "Restore the source file before reusing its cache."
             ) from exc
         try:
-            cached = json.loads(self.source_metadata_path.read_text())
-        except (FileNotFoundError, json.JSONDecodeError):
+            cached = load_control_json(self.source_metadata_path)
+        except FileNotFoundError:
             cached = None
         if cached == {"sha256": fingerprint}:
             return False
@@ -590,6 +620,18 @@ class Audio:
             )
             return [self.episode_chunks_dir / chunk.name for chunk in chunks]
 
+    def validate_control_files(self) -> None:
+        """Admit all present controls before preparation can retire a generation."""
+        for path in (
+            self.cache_metadata_path,
+            self.source_metadata_path,
+            self.chunks_manifest_path,
+        ):
+            try:
+                load_control_json(path)
+            except FileNotFoundError:
+                pass
+
     def prepare_audio_for_transcription(self) -> list[Path]:
         """
         Steps needed to prepare an audio file URL for transcription:
@@ -597,6 +639,7 @@ class Audio:
             - Resample the audio file to 16khz
             - Split the audio file into smaller chunks if needed
         """
+        self.validate_control_files()
         private_mkdir(self.podcast_dir)
         if not self._is_http_url and self._local_source_changed():
             return self._prepare_changed_local_source()

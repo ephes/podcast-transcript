@@ -122,3 +122,62 @@ def test_whisper_cli_uses_separate_transcription_budget(mocker, tmp_path):
     )
     assert run.call_args.kwargs["timeout"] == 100
     assert run.call_args.args[0][0] == "whisper-cli"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group ownership")
+@pytest.mark.parametrize("status", [0, 7])
+def test_completed_leader_retires_pipe_detached_descendants(
+    tmp_path, monkeypatch, status
+):
+    import os
+    import signal
+    from podcast_transcript import safe_io
+
+    ready = tmp_path / "ready"
+    survived = tmp_path / "survived"
+    child = (
+        "import sys,time; from pathlib import Path; "
+        "Path(sys.argv[1]).write_text('ready'); time.sleep(0.8); "
+        "Path(sys.argv[2]).write_text('survived')"
+    )
+    parent = (
+        "import subprocess,sys,time; from pathlib import Path; "
+        "subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2],sys.argv[3]], "
+        "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
+        "\nwhile not Path(sys.argv[2]).exists(): time.sleep(0.01)\n"
+        f"sys.exit({status})"
+    )
+    # An unrelated owned-by-test process must not receive the command's group signal.
+    unrelated = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(10)"], start_new_session=True
+    )
+    killpg = os.killpg
+    signaled = []
+
+    def signal_owned(group, sig):
+        signaled.append(group)
+        assert group != os.getpgrp()
+        assert group != unrelated.pid
+        return killpg(group, sig)
+
+    monkeypatch.setattr(os, "killpg", signal_owned)
+    try:
+        args = [sys.executable, "-c", parent, child, str(ready), str(survived)]
+        if status:
+            with pytest.raises(RuntimeError, match="exit code 7"):
+                safe_io.capture_checked(args, description="Synthetic tree", timeout=5)
+        else:
+            assert (
+                safe_io.capture_checked(args, description="Synthetic tree", timeout=5)
+                == b""
+            )
+        assert ready.exists()
+        time.sleep(1)
+        assert not survived.exists(), (
+            "pipe-detached descendant outlived completed leader"
+        )
+        assert signaled
+        assert unrelated.poll() is None
+    finally:
+        killpg(unrelated.pid, signal.SIGKILL)
+        unrelated.wait()

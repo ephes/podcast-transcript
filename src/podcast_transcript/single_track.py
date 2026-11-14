@@ -17,12 +17,14 @@ from rich import print as rprint
 
 from .audio import (
     Audio,
+    ModelBudget,
     get_audio_duration,
     GENERATED_TRANSCRIPT_RE,
     TRANSCRIPT_OUTPUT_SUFFIXES,
 )
 from .backends import MLX, TranscriptionBackend, Voxhelm, WhisperCpp
 from .config import private_mkdir, settings
+from .json_input import load_control_json
 from .transcript_validation import (
     validate_segments,
     exact_seconds,
@@ -50,18 +52,39 @@ def local_model_identity(path: Path) -> str | None:
     if stat.S_ISREG(info.st_mode):
         return Audio._content_fingerprint(path, source_budget=False)
     if stat.S_ISDIR(info.st_mode):
+        budget = ModelBudget()
+        artifacts = []
+        pending = [path]
+        while pending:
+            budget.check()
+            directory = pending.pop()
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    budget.admit_entry()
+                    artifact = Path(entry.path)
+                    if artifact.is_symlink():
+                        raise RuntimeError(
+                            "Local model directory must not contain symlinks."
+                        )
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(artifact)
+                    else:
+                        artifacts.append(artifact)
+            budget.check()
+        # Sorting is bounded by the shared entry budget and preserves cache IDs.
         files = []
-        for artifact in sorted(path.rglob("*")):
-            if artifact.is_symlink():
-                raise RuntimeError("Local model directory must not contain symlinks.")
-            if not artifact.is_dir():
-                files.append(
-                    (
-                        artifact.relative_to(path).as_posix(),
-                        Audio._content_fingerprint(artifact, source_budget=False),
-                    )
+        for artifact in sorted(artifacts):
+            budget.check()
+            files.append(
+                (
+                    artifact.relative_to(path).as_posix(),
+                    Audio._read_local_source(artifact, model=True, model_budget=budget),
                 )
-        return hashlib.sha256(json.dumps(files).encode()).hexdigest()
+            )
+        budget.check()
+        identity = hashlib.sha256(json.dumps(files).encode()).hexdigest()
+        budget.check()
+        return identity
     raise RuntimeError(
         "Local model must be a regular file or directory without symlinks."
     )
@@ -335,6 +358,7 @@ def _current_generation_readable(audio: Audio) -> bool:
 
 
 def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str, Path]:
+    audio.validate_control_files()
     _remove_abandoned_staging(audio)
     audio_chunks = audio.prepare_audio_for_transcription()
     # Probe before transcription or invalidating outputs, so malformed audio
@@ -346,8 +370,8 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
     )
     metadata = backend_cache_metadata(backend)
     try:
-        cached = json.loads(audio.cache_metadata_path.read_text())
-    except (FileNotFoundError, ValueError):
+        cached = load_control_json(audio.cache_metadata_path)
+    except FileNotFoundError:
         cached = None
     if (
         isinstance(cached, dict)

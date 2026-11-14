@@ -6,6 +6,25 @@ from pathlib import Path
 
 from rich.console import Console
 
+from .input_admission import read_regular_bounded
+
+DOTENV_MAX_BYTES = 64 * 1024
+CONFIGURATION_KEYS = frozenset(
+    {
+        "GROQ_API_KEY",
+        "VOXHELM_API_BASE",
+        "VOXHELM_API_KEY",
+        "TRANSCRIPT_PROMPT",
+        "TRANSCRIPT_MODEL_NAME",
+        "TRANSCRIPT_LANGUAGE",
+        "TRANSCRIPT_HTTP_READ_TIMEOUT",
+        "TRANSCRIPT_MEDIA_TIMEOUT",
+        "TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT",
+        "TRANSCRIPT_SOURCE_MAX_BYTES",
+        "TRANSCRIPT_SOURCE_TOTAL_TIMEOUT",
+    }
+)
+
 
 def private_mkdir(path: Path) -> None:
     """Create missing directory components owner-only without changing umask."""
@@ -90,8 +109,10 @@ class Settings:
 
         # Read the .env file
         env_file = self.transcript_home / ".env"
-        if env_file.exists():
+        try:
             self.read_env_file(env_file)
+        except FileNotFoundError:
+            pass
 
         # Read environment variables
         self.read_env_vars()
@@ -117,31 +138,27 @@ class Settings:
         """
         Read the variables from .env file and set the attributes accordingly.
         """
-        with env_file.open("r") as f:
-            for line in f:
-                parsed = parse_env_line(line)
-                if parsed is not None:
-                    key, value = parsed
-                    setattr(self, key.lower(), value)
+        raw = read_regular_bounded(
+            env_file, limit=DOTENV_MAX_BYTES, description="dotenv configuration"
+        )
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeError:
+            raise RuntimeError("Invalid UTF-8 dotenv configuration.") from None
+        admitted = {}
+        for line in text.splitlines():
+            parsed = parse_env_line(line)
+            if parsed is not None:
+                key, value = parsed
+                if key in CONFIGURATION_KEYS:
+                    admitted[key.lower()] = value
+        for key, value in admitted.items():
+            setattr(self, key, value)
 
     def read_env_vars(self):
-        """
-        Read the environment variables and set the attributes accordingly.
-        """
-        transcript_keys = {
-            "TRANSCRIPT_PROMPT",
-            "TRANSCRIPT_MODEL_NAME",
-            "TRANSCRIPT_LANGUAGE",
-            "VOXHELM_API_BASE",
-            "VOXHELM_API_KEY",
-            "TRANSCRIPT_HTTP_READ_TIMEOUT",
-            "TRANSCRIPT_MEDIA_TIMEOUT",
-            "TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT",
-            "TRANSCRIPT_SOURCE_MAX_BYTES",
-            "TRANSCRIPT_SOURCE_TOTAL_TIMEOUT",
-        }
-        for key, value in os.environ.items():
-            if key in transcript_keys:
+        """Apply supported environment variables after dotenv settings."""
+        for key in CONFIGURATION_KEYS:
+            if (value := os.getenv(key)) is not None:
                 setattr(self, key.lower(), value)
 
     @property

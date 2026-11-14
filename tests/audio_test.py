@@ -282,11 +282,12 @@ def test_source_download_total_budget_closes_and_cleans_up(mocker, audio, stage)
     assert list(audio.episode_chunks_dir.iterdir()) == [audio.episode_path]
 
 
-def test_non_utf8_chunk_manifest_is_rebuilt(mocker, audio):
+def test_non_utf8_chunk_manifest_preserves_generation(mocker, audio):
     mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
     audio.episode_chunks_dir.mkdir(parents=True)
     audio.resampled_episode_path.write_bytes(b"synthetic")
     audio.chunks_manifest_path.write_bytes(b"\xff\xfe")
-    chunks = audio.split_into_chunks()
-    assert chunks[0].read_bytes() == b"synthetic"
-    assert audio._load_chunk_manifest() == chunks
+    with pytest.raises(RuntimeError, match="control JSON"):
+        audio.split_into_chunks()
+    assert audio.resampled_episode_path.read_bytes() == b"synthetic"
+    assert audio.chunks_manifest_path.read_bytes() == b"\xff\xfe"
