@@ -107,6 +107,14 @@ contain `=`. Blank lines and lines starting with `#` are ignored, an optional `e
 allowed, and one pair of surrounding quotes is removed from the value. Comments after a value are not
 supported; a `#` there is part of the value.
 
+Only `GROQ_API_KEY`, `VOXHELM_API_BASE`, `VOXHELM_API_KEY` and the options listed under
+Other Configuration Options, Source admission and Local commands are admitted (uppercase names).
+Unknown names are ignored. `TRANSCRIPT_HOME` and `TRANSCRIPT_DIR` are environment-only so they
+select the configuration location before loading it. Environment values override `.env`, including
+API keys. The dotenv file must be a regular UTF-8 file, without symlinks, of at most 64 KiB total,
+counted during reads even if it grows. FIFO/device/directory, oversized and invalid UTF-8 inputs
+stop startup with a value-free error; no partial settings from that file are applied.
+
 ### Configuring the Voxhelm Backend
 
 Set these variables when using `--backend voxhelm`:
@@ -304,10 +312,12 @@ transcripts.
 Local whisper-cpp model files and existing local MLX model files/directories are fingerprinted by
 SHA-256 on each run. Each artifact is opened once with nonblocking/no-follow flags, checked as
 a regular file through that descriptor, and hashed through that same descriptor. File and directory
-symlinks, FIFOs, devices and sockets are refused. Each artifact has a 64 GiB byte limit and a
-one-hour monotonic elapsed budget, separate from audio-source limits; growth is counted and
-time is checked before/after each 1 MiB read and at EOF. Filesystem I/O must return for elapsed
+symlinks, FIFOs, devices and sockets are refused. Each model identity pass has a shared 64 GiB
+byte limit, a 100,000-entry limit (including directories) and a one-hour monotonic elapsed budget,
+separate from audio-source limits; growth is counted and time is checked before/after each 1 MiB
+read and at EOF. Filesystem I/O must return for elapsed
 checks to run. Admission failure starts no inference and preserves existing transcripts.
+Enumeration and all file reads share these limits, including each post-inference recheck.
 Directory identities include every regular file, including hidden files and
 VCS/tool metadata, and their relative filenames. Any change can cause retranscription; use a
 model-only directory to avoid incidental cache invalidation. Directory
@@ -342,7 +352,12 @@ lines), with `[stderr truncated]` when earlier diagnostics are dropped. No stder
 used. Errors and timeouts include the tail; cancellation and timeouts reap live owned process trees.
 The same deadline includes waiting for inherited output pipes to close: a descendant retaining a
 pipe keeps the command incomplete, even if its parent exited successfully. This preserves process
-identity until cleanup and prevents a background child from silently outliving the command.
+identity until cleanup. On POSIX, exit is observed without reaping the leader, then the owned
+process group is killed before accepting any exit status, including zero. Children in that group
+are retired even if they close or redirect both pipes; unrelated process groups are not signaled.
+Children that deliberately create a new session/group are outside this ownership contract.
+On Windows, timeout/error cleanup uses `taskkill /T`; successful pipe-detached descendants do not
+have the POSIX group-retirement guarantee.
 
 whisper-cpp reuses a WAV only after checking nonempty, complete mono 16kHz PCM16 samples through
 the standard WAV reader in bounded blocks. Corrupt, truncated or differently shaped WAV caches
@@ -377,6 +392,10 @@ changes retain their separate preparation semantics; keep external backups for o
 Native whisper-cpp timestamps require the same full `HH:MM:SS,mmm` grammar as DOTe below,
 including component ranges and multi-day hours. Malformed native schemas and JSON raise a
 controlled error without transcript text and never replace converted raw caches.
+
+Raw, DOTe, native/MLX output and cache-control JSON reject duplicate object keys at every depth,
+without echoing values. Ambiguous control markers stop reuse and preserve existing files; repair or
+remove the marker deliberately before retrying.
 
 All backend results must be Whisper objects containing a `segments` list. An empty list is a valid
 silent transcript. Each segment requires string `text` plus numeric `start` and `end` in seconds;
@@ -483,9 +502,14 @@ Fix a failing ffprobe installation before rerunning.
 `chunks/chunks.json` accepts only consecutive generated MP3 basenames starting at
 `chunk_000.mp3`, in order, without duplicates. Each must be a regular file; the single short-audio
 chunk may be a symlink to the episode's own resampled file. Absolute paths, traversal, other
-symlinks and malformed manifests are rejected. Rerun the same command to rebuild an invalid chunk
-set and its transcripts automatically; downloaded and resampled audio is reused. Invalid manifests
-remain in place until transcript cleanup finishes, so interrupted cleanup is retried.
+symlinks and malformed manifests are rejected. All `cache.json`, `source.json` and `chunks.json`
+control documents must be regular, non-symlink UTF-8 JSON files of at most 64 KiB, counted while
+reading. Invalid JSON, duplicate members, excessive nesting, unreadable/special files and overflow
+stop the run before generation retirement and preserve existing audio/transcripts and markers.
+Missing markers remain distinct and trigger the existing recovery/rebuild path. Repair malformed
+control JSON or remove its marker deliberately before retrying. Structurally valid JSON with invalid
+chunk names still rebuilds the chunk set and its transcripts automatically; downloaded and resampled
+audio is reused. Invalid manifests remain in place until transcript cleanup finishes, so interrupted cleanup is retried.
 
 ### Starting an episode over
 

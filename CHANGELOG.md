@@ -7,12 +7,28 @@
 
 ### Fixes
 
+- Admit cache/source/chunk controls through a shared nonblocking 64 KiB regular-file reader;
+  refuse malformed, deep, oversized or unreadable documents before generation retirement, keeping
+  missing-marker recovery distinct and errors free of control values.
+- Retire remaining POSIX command-group descendants before accepting any leader exit, including
+  successful leaders whose children redirected their pipes; keep the leader unreaped until cleanup.
+
+- Admit only documented options and API keys from dotenv, ignore unknown names and consistently
+  prefer environment values, including Groq credentials. Keep directory selection environment-only.
+- Read dotenv through a nonblocking regular-file descriptor with a 64 KiB budget and UTF-8 decoding
+  before applying settings; reject unsafe input without exposing credentials or partial assignment.
+
+- Share model-tree byte, elapsed and entry-count budgets across enumeration and every artifact read;
+  retain existing directory fingerprints for admitted models.
+- Reject duplicate JSON members in transcript and cache-control documents at every depth without
+  exposing transcript values; refuse ambiguous markers before retiring existing generations.
+
 - Validate every combined chunk duration before reading chunks or staging output, including
   single-chunk copies. Reject booleans, negative/nonfinite and overflowing seconds; preserve zero.
 - Sum decimal chunk durations exactly and round cumulative offsets to nearest milliseconds,
   ties to even, matching raw cue conversion without per-chunk rounding drift.
 - Hash local model artifacts through one inspected nonblocking, no-follow regular-file descriptor,
-  with independent 64 GiB and one-hour per-artifact budgets. Refuse model symlinks and special files
+  with shared 64 GiB and one-hour per-identity budgets. Refuse model symlinks and special files
   before inference; count growth and preserve prior caches on admission failure.
 - Stage replacement backend/model/language/prompt transcripts and all exports before changing a
   completed generation. Failed replacement leaves the old generation current; successful promotion

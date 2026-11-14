@@ -153,3 +153,81 @@ def test_source_download_budget_rejects_invalid_settings(
             settings.source_max_bytes
         else:
             settings.source_total_timeout_seconds
+
+
+def test_dotenv_only_assigns_supported_keys(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(tmp_path))
+    monkeypatch.setenv("TRANSCRIPT_DIR", str(tmp_path / "transcripts"))
+    monkeypatch.setenv("GROQ_API_KEY", "environment-token")
+    monkeypatch.setenv("VOXHELM_API_KEY", "environment-voxhelm")
+    monkeypatch.setenv("TRANSCRIPT_LANGUAGE", "de")
+    (tmp_path / ".env").write_text(
+        "READ_ENV_VARS=shadow\nCONSOLE=shadow\nUNRELATED_PROJECT=ignored\n"
+        "__DICT__=shadow\nTRANSCRIPT_HOME=wrong\nTRANSCRIPT_DIR=wrong\n"
+        "GROQ_API_KEY=file-token\nVOXHELM_API_KEY=file-voxhelm\n"
+        "TRANSCRIPT_LANGUAGE=en\nTRANSCRIPT_PROMPT=synthetic prompt\n"
+    )
+    settings = Settings()
+    assert callable(settings.read_env_vars)
+    assert callable(settings.console.print)
+    assert not hasattr(settings, "unrelated_project")
+    assert settings.transcript_home == tmp_path
+    assert settings.transcript_dir == tmp_path / "transcripts"
+    assert settings.groq_api_key == "environment-token"
+    assert settings.voxhelm_api_key == "environment-voxhelm"
+    assert settings.transcript_language == "de"
+    assert settings.transcript_prompt == "synthetic prompt"
+
+
+@pytest.mark.parametrize("kind", ["oversize", "invalid-utf8", "growth", "fifo", "link"])
+def test_dotenv_refuses_unsafe_input(tmp_path, monkeypatch, kind):
+    import os
+    from podcast_transcript import config
+
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(tmp_path))
+    monkeypatch.setenv("TRANSCRIPT_DIR", str(tmp_path / "transcripts"))
+    env_file = tmp_path / ".env"
+    secret = b"GROQ_API_KEY=synthetic-secret\n"
+    # Small budget exercises both huge physical lines and growth after fstat.
+    monkeypatch.setattr(config, "DOTENV_MAX_BYTES", 64, raising=False)
+    if kind == "fifo":
+        os.mkfifo(env_file)
+        # Keep the baseline test from blocking forever on its plain open.
+        real_open = type(env_file).open
+
+        def no_block(path, *args, **kwargs):
+            if path == env_file:
+                pytest.fail("dotenv used blocking Path.open on FIFO")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(type(env_file), "open", no_block)
+    elif kind == "link":
+        target = tmp_path / "secret"
+        target.write_bytes(secret)
+        env_file.symlink_to(target)
+    else:
+        env_file.write_bytes(
+            secret
+            + (
+                b"x" * 80
+                if kind == "oversize"
+                else b"\xff"
+                if kind == "invalid-utf8"
+                else b""
+            )
+        )
+        if kind == "growth":
+            read = os.read
+
+            def growing(fd, count):
+                with env_file.open("ab") as file:
+                    file.write(b"x" * 80)
+                return read(fd, count)
+
+            monkeypatch.setattr(os, "read", growing)
+    settings = Settings.__new__(Settings)
+    with pytest.raises(RuntimeError, match="dotenv") as error:
+        settings.read_env_file(env_file)
+    assert "synthetic-secret" not in str(error.value)
+    assert not hasattr(settings, "groq_api_key")
+    assert not (tmp_path / "transcripts").exists()

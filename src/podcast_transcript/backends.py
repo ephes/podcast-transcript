@@ -7,6 +7,8 @@ import importlib.util
 import io
 import re
 import json
+
+from .json_input import loads_unique
 import math
 import wave
 import sys
@@ -360,7 +362,7 @@ class MLX:
                 description="MLX transcript output",
             )
         try:
-            result = json.loads(raw)
+            result = loads_unique(raw)
         except (ValueError, UnicodeError, RecursionError):
             raise ValueError("Invalid MLX transcript JSON.") from None
         validate_whisper_transcript(result)
@@ -630,7 +632,7 @@ class WhisperCpp:
             description="Native transcript output",
         )
         try:
-            cpp_transcript = json.loads(raw)
+            cpp_transcript = loads_unique(raw)
         except (ValueError, UnicodeError, RecursionError):
             raise ValueError("Invalid native transcript JSON.") from None
         transformed_transcript = self.transform_transcription(cpp_transcript)

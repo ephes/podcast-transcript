@@ -9,6 +9,8 @@ into exceptions that carry the tool's stderr.
 """
 
 import math
+import errno
+import select
 import os
 import signal
 import stat
@@ -17,10 +19,11 @@ import tempfile
 import uuid
 
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 from .config import private_mkdir, settings
+from .input_admission import read_regular_bounded as read_regular_bounded
 
 STDERR_TAIL_LINES = 20
 STDERR_TAIL_CHARS = 2000
@@ -101,39 +104,6 @@ def durable_unlink(path: Path) -> None:
 
 
 LOCAL_TRANSCRIPT_MAX_BYTES = 64 * 1024 * 1024
-
-
-def read_regular_bounded(path: Path, *, limit: int, description: str) -> bytes:
-    """Read one regular, non-symlink file of at most ``limit`` bytes.
-
-    The file is admitted through a nonblocking descriptor: FIFOs, devices,
-    directories and symlinks are refused before any read, and the read stops
-    one byte past the limit even if the file grows after ``fstat``.
-    """
-    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except FileNotFoundError:
-        raise
-    except OSError:
-        raise RuntimeError(f"{description} must be a regular file.") from None
-    try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode):
-            raise RuntimeError(f"{description} must be a regular file.")
-        if info.st_size > limit:
-            raise RuntimeError(f"{description} exceeded byte limit ({limit} bytes).")
-        data = bytearray()
-        while len(data) <= limit:
-            block = os.read(descriptor, min(1024 * 1024, limit + 1 - len(data)))
-            if not block:
-                break
-            data.extend(block)
-        if len(data) > limit:
-            raise RuntimeError(f"{description} exceeded byte limit ({limit} bytes).")
-        return bytes(data)
-    finally:
-        os.close(descriptor)
 
 
 def write_text_atomic(path: Path, text: str) -> None:
@@ -289,7 +259,45 @@ def capture_checked(
                 raise RuntimeError(f"{description} output exceeded byte limit")
             if failures:
                 raise RuntimeError(f"{description} output could not be read")
-            process.wait(timeout=max(0, deadline - time.monotonic()))
+            if os.name == "posix":
+                # Observe exit without consuming the leader's identity. Even a
+                # successful leader can leave pipe-detached children in its group.
+                if hasattr(os, "waitid"):
+                    while (
+                        os.waitid(
+                            os.P_PID, process.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG
+                        )
+                        is None
+                    ):
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise subprocess.TimeoutExpired(cmd, timeout)
+                        time.sleep(min(0.01, remaining))
+                else:
+                    # macOS Python 3.10 lacks waitid. kqueue observes exit
+                    # without waitpid; ESRCH at registration means the owned,
+                    # still-unreaped child already exited before registration.
+                    with closing(select.kqueue()) as queue:
+                        event = select.kevent(
+                            process.pid,
+                            filter=select.KQ_FILTER_PROC,
+                            flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                            fflags=select.KQ_NOTE_EXIT,
+                        )
+                        events = queue.control(
+                            [event], 1, max(0, deadline - time.monotonic())
+                        )
+                        if not events:
+                            raise subprocess.TimeoutExpired(cmd, timeout)
+                        observed = events[0]
+                        if (
+                            observed.flags & select.KQ_EV_ERROR
+                            and observed.data != errno.ESRCH
+                        ):
+                            raise RuntimeError("Could not observe owned command exit.")
+                _kill_owned_tree(process)
+            else:
+                process.wait(timeout=max(0, deadline - time.monotonic()))
         except BaseException as exc:
             stop.set()
             if process.returncode is None:

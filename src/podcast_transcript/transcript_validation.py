@@ -1,10 +1,11 @@
 """Shared admission rules for backend transcripts and cached DOTe artifacts."""
 
-import json
 import math
 import re
 from pathlib import Path
 from fractions import Fraction
+
+from .json_input import loads_unique
 
 
 def exact_seconds(value: object) -> Fraction:
@@ -58,8 +59,8 @@ def validate_whisper_transcript(data: object) -> None:
 
 def load_whisper_transcript(path: Path) -> dict:
     try:
-        data = json.loads(path.read_text())
-    except (ValueError, UnicodeError):
+        data = loads_unique(path.read_text())
+    except (ValueError, UnicodeError, RecursionError):
         raise ValueError(
             f"Invalid transcript JSON in {path.name}; remove the cached raw chunk and retry."
         ) from None
@@ -98,8 +99,8 @@ def format_dote_timecode(milliseconds: int) -> str:
 
 def load_dote(path: Path) -> dict:
     try:
-        data = json.loads(path.read_text())
-    except (ValueError, UnicodeError):
+        data = loads_unique(path.read_text())
+    except (ValueError, UnicodeError, RecursionError):
         raise ValueError(f"Invalid DOTe JSON in {path.name}.") from None
     try:
         if not isinstance(data, dict) or not isinstance(data.get("lines"), list):
