@@ -507,7 +507,8 @@ control documents must be regular, non-symlink UTF-8 JSON files of at most 64 Ki
 reading. Invalid JSON, duplicate members, excessive nesting, unreadable/special files and overflow
 stop the run before generation retirement and preserve existing audio/transcripts and markers.
 Missing markers remain distinct and trigger the existing recovery/rebuild path. Repair malformed
-control JSON or remove its marker deliberately before retrying. Structurally valid JSON with invalid
+control JSON or remove its marker deliberately before retrying; the error names the marker
+(`cache.json`, `source.json` or `chunks/chunks.json`) but never its values. Structurally valid JSON with invalid
 chunk names still rebuilds the chunk set and its transcripts automatically; downloaded and resampled
 audio is reused. Invalid manifests remain in place until transcript cleanup finishes, so interrupted cleanup is retried.
 

@@ -67,3 +67,16 @@ def test_cache_control_duplicates_preserve_generation(audio, first, second):
         audio.ensure_transcript_cache_matches({"backend": "new"})
     assert output.read_bytes() == b"previous"
     assert audio.cache_metadata_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("marker", ["cache.json", "chunks/chunks.json"])
+def test_control_json_error_names_marker_without_values(tmp_path, marker):
+    from podcast_transcript.json_input import load_control_json
+
+    path = tmp_path / "episode" / marker
+    path.parent.mkdir(parents=True)
+    path.write_text('{"backend":"private-value","backend":"other"}')
+    with pytest.raises(RuntimeError, match="control JSON") as caught:
+        load_control_json(path)
+    assert f"in {marker};" in str(caught.value)
+    assert "private-value" not in str(caught.value)

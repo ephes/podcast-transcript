@@ -30,6 +30,13 @@ def load_control_json(path: Path):
     except FileNotFoundError:
         raise
     except (ValueError, UnicodeError, RecursionError, OSError, RuntimeError):
+        # The marker's location is not a control value; name it so the
+        # documented repair can target the right file.
+        marker = (
+            Path(path.parent.name) / path.name
+            if path.parent.name == "chunks"
+            else Path(path.name)
+        )
         raise RuntimeError(
-            "Invalid cache control JSON; repair or remove its marker and retry."
+            f"Invalid cache control JSON in {marker}; repair or remove this marker and retry."
         ) from None
