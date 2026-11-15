@@ -294,8 +294,14 @@ validation or export leaves those previous files unchanged. A retry creates the 
 returning to the old settings can still reuse the old complete generation. If the published
 generation is unreadable (for example a corrupt or hand-edited DOTe export), it is not retained:
 the new settings replace it in place, as for an incomplete generation. Staging directories
-(`.replacement-*`, `.backup-*`) left behind by a killed run are removed by the next run while it
-holds the episode lock. Prepared audio is reused. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
+(`.replacement-*`, `.backup-*`) created by new runs carry a small `.stage-owner.json` manifest
+binding the episode, directory name and filesystem identity. The next run reclaims only stages
+with a valid matching manifest while holding the episode lock. Cleanup opens and deletes relative
+to verified directory descriptors; symlinks cannot redirect it. Platforms without safe descriptor-based
+recursive deletion retain stages for inspection. Unmarked legacy stages, copied/restored stages with
+changed identities and unrelated matching-prefix directories are left untouched. Inspect these and
+remove them manually only when no invocation is active; the prefix alone does not prove ownership.
+Prepared audio is reused. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
 run or transcription raises an error and is retried on the next run. Chunked transcripts are combined
 using each chunk's audio duration, so timestamps stay aligned for episodes longer than 2 hours.
 Every supplied duration (including the last or only chunk) must be a finite, nonnegative integer
@@ -380,11 +386,30 @@ make a multi-file replacement transactional. Before publishing a successful sett
 the previous transcript metadata, chunks and all exports are copied byte-for-byte and durably to
 `<episode-directory>/.previous-transcripts/`. The current `cache.json` is retired before replacing
 files and published last, so interrupted promotion cannot advertise old/mixed bytes under new
-settings. Promoted exports are byte-identical to the staged ones. Retry rebuilds an incomplete
+settings. Promoted exports are byte-identical to the staged ones. Readability scans, backup and promotion
+copy regular files in blocks of at most 1 MiB, without retaining whole binary exports in memory.
+JSON parsing and export rendering keep their existing memory behavior. Retry rebuilds an incomplete
 promotion; the recovery copy remains available. Each
 successful settings replacement replaces this one recovery copy with its predecessor. It contains
-transcripts only, not audio, and is for manual recovery: copy needed exports out before removing it
-or the episode directory. Do not restore its metadata over a different audio generation. Source-audio
+transcripts only, not audio. To restore after an interrupted promotion without downloading,
+preparing audio, loading a model or contacting any transcription service, run:
+
+```shell
+transcribe --restore-last-success <same-audio-source>
+```
+
+Use the same source string and `TRANSCRIPT_DIR` as the interrupted run; the source file need not
+be available. Restore holds the episode lock, verifies the backup's exact inventory/byte digest,
+validates cached transcript schemas and checks the current source/chunk completion markers against
+the recorded audio generation. It restores all exports and chunk transcripts, removes stale
+transcript files, and publishes the original `cache.json` bytes last. It never swaps the recovery
+copy with a partial public generation. On failure that copy stays available for another restore;
+an interrupted data copy leaves the public cache marker absent. A sync error after the final
+metadata rename may leave a fully copied generation visible; the recovery copy still remains. Missing, edited or unmarked
+legacy backups are refused before publication. Such backups remain available for manual inspection
+and copying individual exports out. Keep prepared audio unchanged: markers identify the prepared
+generation, but do not detect manual audio edits that leave those markers unchanged. Do not restore
+metadata over different audio. Source-audio
 changes retain their separate preparation semantics; keep external backups for older audio/transcripts.
 
 ### Transcript and cached-artifact validation
@@ -401,7 +426,12 @@ All backend results must be Whisper objects containing a `segments` list. An emp
 silent transcript. Each segment requires string `text` plus numeric `start` and `end` in seconds;
 optional top-level `text` must also be a string. Times must be finite, nonnegative, representable
 in milliseconds, and ordered (`end >= start`); booleans and numeric strings are rejected.
-Zero-length cues are allowed. Valid fractional seconds use decimal nearest-millisecond rounding
+Segment starts must be nondecreasing in the supplied order. Equal starts, overlapping segments and
+zero-length cues are allowed; segments are never silently sorted, so text/speaker association stays
+unchanged. Out-of-order backend and cached raw/DOTe lists are refused before cache/export publication;
+combined chunk starts are checked again after offsets. Older out-of-order caches require deliberate
+correction or removal following the cache repair instructions below. Valid fractional seconds use
+decimal nearest-millisecond rounding
 with ties to even, matching cumulative chunk offsets.
 Invalid backend results never replace raw transcript caches, so a corrected response can be retried.
 

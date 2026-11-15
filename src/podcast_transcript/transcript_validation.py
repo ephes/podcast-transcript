@@ -29,6 +29,7 @@ def seconds_to_milliseconds(value: int | float) -> int:
 def validate_segments(segments: object) -> None:
     if not isinstance(segments, list):
         raise ValueError("Invalid transcript: segments must be a list.")
+    previous_start: int | float = -1
     for position, segment in enumerate(segments, 1):
         message = f"Invalid transcript segment {position}: require text and finite, nonnegative start/end with end >= start."
         if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
@@ -47,6 +48,11 @@ def validate_segments(segments: object) -> None:
             times.append(value)
         if times[1] < times[0]:
             raise ValueError(message)
+        if times[0] < previous_start:
+            raise ValueError(
+                f"Invalid transcript segment {position}: starts must be nondecreasing."
+            )
+        previous_start = times[0]
 
 
 def validate_whisper_transcript(data: object) -> None:
@@ -103,23 +109,31 @@ def load_dote(path: Path) -> dict:
     except (ValueError, UnicodeError, RecursionError):
         raise ValueError(f"Invalid DOTe JSON in {path.name}.") from None
     try:
-        if not isinstance(data, dict) or not isinstance(data.get("lines"), list):
-            raise ValueError("Invalid DOTe: lines must be a list.")
-        for position, line in enumerate(data["lines"], 1):
-            if not isinstance(line, dict) or not isinstance(line.get("text"), str):
-                raise ValueError(
-                    f"Invalid DOTe line {position}: require a text string."
-                )
-            if "speakerDesignation" in line and not isinstance(
-                line["speakerDesignation"], str
-            ):
-                raise ValueError(
-                    f"Invalid DOTe line {position}: speakerDesignation must be a string."
-                )
-            start = parse_dote_timecode(line.get("startTime"))
-            end = parse_dote_timecode(line.get("endTime"))
-            if end < start:
-                raise ValueError(f"Invalid DOTe line {position}: end precedes start.")
+        validate_dote(data)
         return data
     except ValueError as exc:
         raise ValueError(f"{path.name}: {exc}") from None
+
+
+def validate_dote(data: object) -> None:
+    if not isinstance(data, dict) or not isinstance(data.get("lines"), list):
+        raise ValueError("Invalid DOTe: lines must be a list.")
+    previous_start = -1
+    for position, line in enumerate(data["lines"], 1):
+        if not isinstance(line, dict) or not isinstance(line.get("text"), str):
+            raise ValueError(f"Invalid DOTe line {position}: require a text string.")
+        if "speakerDesignation" in line and not isinstance(
+            line["speakerDesignation"], str
+        ):
+            raise ValueError(
+                f"Invalid DOTe line {position}: speakerDesignation must be a string."
+            )
+        start = parse_dote_timecode(line.get("startTime"))
+        end = parse_dote_timecode(line.get("endTime"))
+        if end < start:
+            raise ValueError(f"Invalid DOTe line {position}: end precedes start.")
+        if start < previous_start:
+            raise ValueError(
+                f"Invalid DOTe line {position}: starts must be nondecreasing."
+            )
+        previous_start = start

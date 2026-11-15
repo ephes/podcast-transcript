@@ -21,10 +21,13 @@ def loads_unique(data: str | bytes):
     return json.loads(data, object_pairs_hook=_unique_object)
 
 
-def load_control_json(path: Path):
+def load_control_json(path: Path, *, dir_fd: int | None = None):
     try:
         raw = read_regular_bounded(
-            path, limit=CONTROL_MAX_BYTES, description="Cache control file"
+            path,
+            limit=CONTROL_MAX_BYTES,
+            description="Cache control file",
+            dir_fd=dir_fd,
         )
         return loads_unique(raw.decode("utf-8"))
     except FileNotFoundError:
