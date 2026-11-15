@@ -561,7 +561,7 @@ just test
 
 `just check` runs all three on the pinned `.python-version`. `just test-oldest-python` runs the
 test suite on Python 3.10, the oldest version allowed by `requires-python`, in an isolated
-environment. GitHub Actions runs both on every push and pull request
+environment. A manually started GitHub Actions run (`workflow_dispatch`) runs both
 (`.github/workflows/ci.yml`).
 
 ### Running Tests
