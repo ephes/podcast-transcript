@@ -8,31 +8,6 @@ from podcast_transcript import audio, single_track
 from single_track_test import RecordingBackend
 
 
-@pytest.fixture
-def episode(tmp_path, monkeypatch):
-    monkeypatch.setattr(single_track.settings, "transcript_dir", tmp_path)
-
-    def prepare(self):
-        self.episode_chunks_dir.mkdir(parents=True, exist_ok=True)
-        chunks = [self.episode_chunks_dir / f"chunk_{i:03}.mp3" for i in range(2)]
-        for chunk in chunks:
-            chunk.write_bytes(b"synthetic audio")
-        return chunks
-
-    monkeypatch.setattr(audio.Audio, "prepare_audio_for_transcription", prepare)
-    monkeypatch.setattr(single_track, "get_audio_duration", lambda _: 1.0006)
-    source = "https://example.test/audio.mp3"
-    store = audio.Audio(base_dir=tmp_path, url=source)
-    paths = single_track.transcribe(source, RecordingBackend("old", "old transcript"))
-    files = [
-        store.cache_metadata_path,
-        *paths.values(),
-        *store.episode_chunks_dir.glob("*.json"),
-    ]
-    previous = {p.relative_to(store.podcast_dir): p.read_bytes() for p in files}
-    return store, previous
-
-
 @pytest.mark.parametrize("change", ["prompt", "model", "backend"])
 @pytest.mark.parametrize("failure", ["inference", "invalid", "interrupt", "export"])
 def test_replacement_failure_leaves_previous_generation_current(
@@ -158,6 +133,7 @@ def test_abandoned_staging_is_removed_under_the_episode_lock(episode):
     store, _ = episode
     for name in (".replacement-killed", ".backup-killed"):
         (store.podcast_dir / name / "chunks").mkdir(parents=True)
+        single_track._mark_stage(store, store.podcast_dir / name)
         (store.podcast_dir / name / "chunks" / "chunk_000.wav").write_bytes(b"x")
     keep = store.podcast_dir / ".previous-transcripts"
     keep.mkdir()
@@ -273,6 +249,31 @@ single_track.transcribe(sys.argv[3], Replacement())
         != previous[store.output_path(".dote.json").relative_to(store.podcast_dir)]
     )
 
+    restart_script = """
+import sys
+from pathlib import Path
+import podcast_transcript
+from podcast_transcript import single_track
+single_track.settings.transcript_dir = Path(sys.argv[1])
+def unavailable(*args):
+    raise AssertionError("Backend and source preparation are unavailable")
+for name in ("whisper_cpp_from_settings_and_args", "mlx_from_settings", "groq_from_settings", "voxhelm_from_settings"):
+    setattr(podcast_transcript, name, unavailable)
+single_track.Audio.prepare_audio_for_transcription = unavailable
+sys.argv = ["transcribe", "--restore-last-success", sys.argv[2]]
+podcast_transcript.transcribe_cli()
+"""
+    restarted = subprocess.run(
+        [sys.executable, "-c", restart_script, str(store.base_dir), store.url],
+        capture_output=True,
+        timeout=20,
+    )
+    assert restarted.returncode == 0, restarted.stdout + restarted.stderr
+    assert all(
+        (store.podcast_dir / p).read_bytes() == data for p, data in previous.items()
+    )
+
+    # Repeating restore is safe and still does not construct a backend.
     def unavailable(*args):
         raise AssertionError("Restore must not construct a backend or prepare audio")
 

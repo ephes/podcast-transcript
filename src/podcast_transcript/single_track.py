@@ -27,6 +27,7 @@ from .config import private_mkdir, settings
 from .json_input import load_control_json
 from .transcript_validation import (
     validate_segments,
+    validate_dote,
     exact_seconds,
     seconds_to_milliseconds,
     load_whisper_transcript,
@@ -256,7 +257,9 @@ def combine_dote_chunks(
         # The next chunk starts where this chunk's audio ends
         offset += chunk_duration
 
-    write_text_atomic(output_path, json.dumps({"lines": combined_lines}))
+    combined = {"lines": combined_lines}
+    validate_dote(combined)
+    write_text_atomic(output_path, json.dumps(combined))
 
 
 def convert_dote_to_podlove(dote_path: Path, podlove_path: Path) -> None:
@@ -413,19 +416,83 @@ def restore_last_success(url: str) -> dict[str, Path]:
 
 
 STAGING_PREFIXES = (".replacement-", ".backup-")
+STAGE_MANIFEST = ".stage-owner.json"
+
+
+def _stage_manifest(audio: Audio, name: str, info: os.stat_result) -> dict:
+    return {
+        "version": 1,
+        "episode": audio.cache_key,
+        "name": name,
+        "device": info.st_dev,
+        "inode": info.st_ino,
+    }
+
+
+def _mark_stage(audio: Audio, path: Path) -> None:
+    write_text_atomic(
+        path / STAGE_MANIFEST,
+        json.dumps(_stage_manifest(audio, path.name, path.stat())),
+    )
 
 
 def _remove_abandoned_staging(audio: Audio) -> None:
-    """Drop staging left by a killed run; the episode lock rules out a live owner."""
-    if not audio.podcast_dir.is_dir():
+    """Reclaim only admitted stages, with all deletion anchored to their descriptor."""
+    if not shutil.rmtree.avoids_symlink_attacks:
+        return  # Keep ambiguous stages on platforms without fd-based deletion.
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        parent = os.open(audio.podcast_dir, flags)
+    except FileNotFoundError:
         return
-    for path in audio.podcast_dir.iterdir():
-        if (
-            path.name.startswith(STAGING_PREFIXES)
-            and path.is_dir()
-            and not path.is_symlink()
-        ):
-            shutil.rmtree(path)
+    try:
+        with os.scandir(parent) as entries:
+            names = [
+                entry.name
+                for entry in entries
+                if entry.name.startswith(STAGING_PREFIXES)
+            ]
+        for name in names:
+            try:
+                descriptor = os.open(name, flags, dir_fd=parent)
+            except OSError:
+                continue
+            try:
+                info = os.fstat(descriptor)
+                expected = _stage_manifest(audio, name, info)
+                try:
+                    manifest = load_control_json(
+                        Path(STAGE_MANIFEST), dir_fd=descriptor
+                    )
+                except (OSError, ValueError, RuntimeError):
+                    continue
+                if manifest != expected or any(
+                    type(manifest[key]) is not type(value)
+                    for key, value in expected.items()
+                ):
+                    continue
+                named = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                if not os.path.samestat(info, named):
+                    continue
+                # Even an exchange after this check cannot redirect traversal:
+                # child deletion uses the verified opened stage, never its path.
+                with os.scandir(descriptor) as entries:
+                    children = list(entries)
+                for child in children:
+                    if child.is_dir(follow_symlinks=False):
+                        shutil.rmtree(child.name, dir_fd=descriptor)
+                    else:
+                        os.unlink(child.name, dir_fd=descriptor)
+                named = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                if os.path.samestat(info, named):
+                    os.rmdir(name, dir_fd=parent)
+                    os.fsync(parent)
+            except FileNotFoundError:
+                continue  # An exchanged/missing name is never repaired.
+            finally:
+                os.close(descriptor)
+    finally:
+        os.close(parent)
 
 
 def _current_generation_readable(audio: Audio) -> bool:
@@ -470,6 +537,7 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
         with tempfile.TemporaryDirectory(
             prefix=".replacement-", dir=audio.podcast_dir
         ) as directory:
+            _mark_stage(audio, Path(directory))
             staged = Audio(base_dir=audio.base_dir, url=audio.url, title=audio.title)
             staged.podcast_dir = Path(directory)
             staged.episode_chunks_dir = staged.podcast_dir / "chunks"
@@ -511,6 +579,7 @@ def _promote_transcripts(audio: Audio, staged: Audio) -> None:
         prefix=".backup-", dir=audio.podcast_dir
     ) as directory:
         backup = Path(directory)
+        _mark_stage(audio, backup)
         for path in [*_transcript_files(audio), audio.cache_metadata_path]:
             target = backup / path.relative_to(audio.podcast_dir)
             copy_file_atomic(path, target)

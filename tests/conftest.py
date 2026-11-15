@@ -55,3 +55,31 @@ def fake_mlx(tmp_path, monkeypatch):
         return directory
 
     return install
+
+
+@pytest.fixture
+def episode(tmp_path, monkeypatch):
+    from podcast_transcript import audio, single_track
+    from single_track_test import RecordingBackend
+
+    monkeypatch.setattr(single_track.settings, "transcript_dir", tmp_path)
+
+    def prepare(self):
+        self.episode_chunks_dir.mkdir(parents=True, exist_ok=True)
+        chunks = [self.episode_chunks_dir / f"chunk_{i:03}.mp3" for i in range(2)]
+        for chunk in chunks:
+            chunk.write_bytes(b"synthetic audio")
+        return chunks
+
+    monkeypatch.setattr(audio.Audio, "prepare_audio_for_transcription", prepare)
+    monkeypatch.setattr(single_track, "get_audio_duration", lambda _: 1.0006)
+    source = "https://example.test/audio.mp3"
+    store = audio.Audio(base_dir=tmp_path, url=source)
+    paths = single_track.transcribe(source, RecordingBackend("old", "old transcript"))
+    files = [
+        store.cache_metadata_path,
+        *paths.values(),
+        *store.episode_chunks_dir.glob("*.json"),
+    ]
+    previous = {p.relative_to(store.podcast_dir): p.read_bytes() for p in files}
+    return store, previous

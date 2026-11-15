@@ -294,8 +294,14 @@ validation or export leaves those previous files unchanged. A retry creates the 
 returning to the old settings can still reuse the old complete generation. If the published
 generation is unreadable (for example a corrupt or hand-edited DOTe export), it is not retained:
 the new settings replace it in place, as for an incomplete generation. Staging directories
-(`.replacement-*`, `.backup-*`) left behind by a killed run are removed by the next run while it
-holds the episode lock. Prepared audio is reused. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
+(`.replacement-*`, `.backup-*`) created by new runs carry a small `.stage-owner.json` manifest
+binding the episode, directory name and filesystem identity. The next run reclaims only stages
+with a valid matching manifest while holding the episode lock. Cleanup opens and deletes relative
+to verified directory descriptors; symlinks cannot redirect it. Platforms without safe descriptor-based
+recursive deletion retain stages for inspection. Unmarked legacy stages, copied/restored stages with
+changed identities and unrelated matching-prefix directories are left untouched. Inspect these and
+remove them manually only when no invocation is active; the prefix alone does not prove ownership.
+Prepared audio is reused. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
 run or transcription raises an error and is retried on the next run. Chunked transcripts are combined
 using each chunk's audio duration, so timestamps stay aligned for episodes longer than 2 hours.
 Every supplied duration (including the last or only chunk) must be a finite, nonnegative integer
@@ -398,7 +404,8 @@ validates cached transcript schemas and checks the current source/chunk completi
 the recorded audio generation. It restores all exports and chunk transcripts, removes stale
 transcript files, and publishes the original `cache.json` bytes last. It never swaps the recovery
 copy with a partial public generation. On failure that copy stays available for another restore;
-if publication had started, the public cache marker remains absent. Missing, edited or unmarked
+an interrupted data copy leaves the public cache marker absent. A sync error after the final
+metadata rename may leave a fully copied generation visible; the recovery copy still remains. Missing, edited or unmarked
 legacy backups are refused before publication. Such backups remain available for manual inspection
 and copying individual exports out. Keep prepared audio unchanged: markers identify the prepared
 generation, but do not detect manual audio edits that leave those markers unchanged. Do not restore
@@ -419,7 +426,12 @@ All backend results must be Whisper objects containing a `segments` list. An emp
 silent transcript. Each segment requires string `text` plus numeric `start` and `end` in seconds;
 optional top-level `text` must also be a string. Times must be finite, nonnegative, representable
 in milliseconds, and ordered (`end >= start`); booleans and numeric strings are rejected.
-Zero-length cues are allowed. Valid fractional seconds use decimal nearest-millisecond rounding
+Segment starts must be nondecreasing in the supplied order. Equal starts, overlapping segments and
+zero-length cues are allowed; segments are never silently sorted, so text/speaker association stays
+unchanged. Out-of-order backend and cached raw/DOTe lists are refused before cache/export publication;
+combined chunk starts are checked again after offsets. Older out-of-order caches require deliberate
+correction or removal following the cache repair instructions below. Valid fractional seconds use
+decimal nearest-millisecond rounding
 with ties to even, matching cumulative chunk offsets.
 Invalid backend results never replace raw transcript caches, so a corrected response can be retried.
 

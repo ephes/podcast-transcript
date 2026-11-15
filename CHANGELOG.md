@@ -11,6 +11,11 @@
 
 ### Fixes
 
+- Reclaim only abandoned replacement/backup stages with admitted episode/name/inode ownership
+  manifests; bind cleanup to opened directory descriptors and retain ambiguous legacy directories.
+- Reject decreasing segment starts in backend/raw/DOTe caches and combined chunks before
+  publication, preserving equal starts, overlaps and original text/speaker order.
+
 - Stream generation readability scans, backup and promotion in bounded 1 MiB blocks, preserving
   exact bytes, destination permissions, durable ordering and previous files on copy failure.
 

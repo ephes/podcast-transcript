@@ -5,7 +5,9 @@ import stat
 from pathlib import Path
 
 
-def read_regular_bounded(path: Path, *, limit: int, description: str) -> bytes:
+def read_regular_bounded(
+    path: Path, *, limit: int, description: str, dir_fd: int | None = None
+) -> bytes:
     """Read one regular, non-symlink file of at most ``limit`` bytes.
 
     The file is admitted through a nonblocking descriptor: FIFOs, devices,
@@ -14,7 +16,7 @@ def read_regular_bounded(path: Path, *, limit: int, description: str) -> bytes:
     """
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        descriptor = os.open(path, flags)
+        descriptor = os.open(path, flags, dir_fd=dir_fd)
     except FileNotFoundError:
         raise
     except OSError:
