@@ -3,9 +3,16 @@
 
 ### Features
 
+- Add local `transcribe --restore-last-success <source>` recovery under the episode lock, with
+  backup integrity/schema and audio-marker checks, exact-byte publication and metadata last.
+  Recovery needs no available backend or source audio and keeps its backup on failure.
+
 - Add a `voxhelm` backend for remote transcription via Voxhelm's OpenAI-compatible API.
 
 ### Fixes
+
+- Stream generation readability scans, backup and promotion in bounded 1 MiB blocks, preserving
+  exact bytes, destination permissions, durable ordering and previous files on copy failure.
 
 - Admit cache/source/chunk controls through a shared nonblocking 64 KiB regular-file reader;
   refuse malformed, deep, oversized or unreadable documents before generation retirement, keeping

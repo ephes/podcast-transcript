@@ -2,7 +2,7 @@ import argparse
 import importlib.util
 from rich.console import Console
 
-from .single_track import transcribe
+from .single_track import transcribe, restore_last_success
 from .config import settings, Settings
 from . import backends
 from .audio import safe_display_source, safe_diagnostic
@@ -77,6 +77,11 @@ def transcribe_cli():
         help="Local file path or HTTP(S) URL of the audio to transcribe.",
     )
     parser.add_argument(
+        "--restore-last-success",
+        action="store_true",
+        help="Restore the previous complete transcripts locally without transcription.",
+    )
+    parser.add_argument(
         "--backend",
         choices=["groq", "mlx", "voxhelm", "whisper-cpp"],
         default="whisper-cpp",
@@ -109,6 +114,12 @@ def transcribe_cli():
 
     # Start transcription process
     try:
+        if args.restore_last_success:
+            transcript_paths = restore_last_success(mp3_url)
+            for name, path in transcript_paths.items():
+                console.print(f"Restored {name}: {path}", markup=False)
+            console.print("Last-success restore complete!", style="green")
+            exit(0)
         console.print(
             f"Starting transcription for: {safe_display_source(mp3_url)}",
             style="blue",

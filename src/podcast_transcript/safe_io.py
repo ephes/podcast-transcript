@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 import uuid
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Generator
 from contextlib import closing, contextmanager
 from pathlib import Path
 
@@ -120,6 +120,40 @@ def write_bytes_atomic(path: Path, data: bytes) -> None:
         descriptor = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "wb") as file:
             file.write(data)
+
+
+COPY_BUFFER_BYTES = 1024 * 1024
+
+
+def regular_file_blocks(path: Path) -> Generator[bytes, None, None]:
+    """Read regular files in bounded blocks without following a final symlink."""
+    descriptor = os.open(
+        path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError("Transcript copy requires a regular file.")
+        while block := os.read(descriptor, COPY_BUFFER_BYTES):
+            yield block
+    finally:
+        os.close(descriptor)
+
+
+def copy_file_atomic(source: Path, target: Path) -> None:
+    """Copy exact bytes with bounded memory into the owned durable writer."""
+    with atomic_output(target) as temporary:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with closing(regular_file_blocks(source)) as blocks:
+                for block in blocks:
+                    remaining = memoryview(block)
+                    while remaining:
+                        written = os.write(descriptor, remaining)
+                        if written <= 0:
+                            raise OSError("Transcript copy made no write progress.")
+                        remaining = remaining[written:]
+        finally:
+            os.close(descriptor)
 
 
 def _kill_owned_tree(process: subprocess.Popen) -> None:

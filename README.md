@@ -380,11 +380,29 @@ make a multi-file replacement transactional. Before publishing a successful sett
 the previous transcript metadata, chunks and all exports are copied byte-for-byte and durably to
 `<episode-directory>/.previous-transcripts/`. The current `cache.json` is retired before replacing
 files and published last, so interrupted promotion cannot advertise old/mixed bytes under new
-settings. Promoted exports are byte-identical to the staged ones. Retry rebuilds an incomplete
+settings. Promoted exports are byte-identical to the staged ones. Readability scans, backup and promotion
+copy regular files in blocks of at most 1 MiB, without retaining whole binary exports in memory.
+JSON parsing and export rendering keep their existing memory behavior. Retry rebuilds an incomplete
 promotion; the recovery copy remains available. Each
 successful settings replacement replaces this one recovery copy with its predecessor. It contains
-transcripts only, not audio, and is for manual recovery: copy needed exports out before removing it
-or the episode directory. Do not restore its metadata over a different audio generation. Source-audio
+transcripts only, not audio. To restore after an interrupted promotion without downloading,
+preparing audio, loading a model or contacting any transcription service, run:
+
+```shell
+transcribe --restore-last-success <same-audio-source>
+```
+
+Use the same source string and `TRANSCRIPT_DIR` as the interrupted run; the source file need not
+be available. Restore holds the episode lock, verifies the backup's exact inventory/byte digest,
+validates cached transcript schemas and checks the current source/chunk completion markers against
+the recorded audio generation. It restores all exports and chunk transcripts, removes stale
+transcript files, and publishes the original `cache.json` bytes last. It never swaps the recovery
+copy with a partial public generation. On failure that copy stays available for another restore;
+if publication had started, the public cache marker remains absent. Missing, edited or unmarked
+legacy backups are refused before publication. Such backups remain available for manual inspection
+and copying individual exports out. Keep prepared audio unchanged: markers identify the prepared
+generation, but do not detect manual audio edits that leave those markers unchanged. Do not restore
+metadata over different audio. Source-audio
 changes retain their separate preparation semantics; keep external backups for older audio/transcripts.
 
 ### Transcript and cached-artifact validation
