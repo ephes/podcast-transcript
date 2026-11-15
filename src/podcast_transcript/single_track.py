@@ -2,6 +2,7 @@ import json
 import hashlib
 import re
 import shutil
+import sys
 import stat
 import os
 import tempfile
@@ -480,7 +481,7 @@ def _remove_abandoned_staging(audio: Audio) -> None:
                     children = list(entries)
                 for child in children:
                     if child.is_dir(follow_symlinks=False):
-                        shutil.rmtree(child.name, dir_fd=descriptor)
+                        _remove_tree_at(child.name, descriptor)
                     else:
                         os.unlink(child.name, dir_fd=descriptor)
                 named = os.stat(name, dir_fd=parent, follow_symlinks=False)
@@ -493,6 +494,31 @@ def _remove_abandoned_staging(audio: Audio) -> None:
                 os.close(descriptor)
     finally:
         os.close(parent)
+
+
+def _remove_tree_at(name: str, dir_fd: int) -> None:
+    """Remove a directory below an opened parent without following symlinks.
+
+    ``shutil.rmtree`` only accepts ``dir_fd`` from Python 3.11; on 3.10 walk the
+    tree through descriptors opened with ``O_NOFOLLOW`` instead.
+    """
+    if sys.version_info >= (3, 11):
+        shutil.rmtree(name, dir_fd=dir_fd)
+        return
+    descriptor = os.open(
+        name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd
+    )
+    try:
+        with os.scandir(descriptor) as entries:
+            children = list(entries)
+        for child in children:
+            if child.is_dir(follow_symlinks=False):
+                _remove_tree_at(child.name, descriptor)
+            else:
+                os.unlink(child.name, dir_fd=descriptor)
+    finally:
+        os.close(descriptor)
+    os.rmdir(name, dir_fd=dir_fd)
 
 
 def _current_generation_readable(audio: Audio) -> bool:
