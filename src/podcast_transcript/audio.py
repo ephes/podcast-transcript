@@ -566,6 +566,7 @@ class Audio:
         *,
         model: bool = False,
         model_budget: ModelBudget | None = None,
+        dir_fd: int | None = None,
     ) -> str:
         """Hash/copy one admitted descriptor with source or model budgets."""
         budget = (model_budget or ModelBudget()) if model else None
@@ -593,7 +594,7 @@ class Audio:
         if model:
             flags |= getattr(os, "O_NOFOLLOW", 0)
         try:
-            descriptor = os.open(path, flags)
+            descriptor = os.open(path, flags, dir_fd=dir_fd)
         except OSError:
             if model:
                 raise RuntimeError(

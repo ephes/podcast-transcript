@@ -111,3 +111,84 @@ def test_control_preflight_precedes_changed_source_retirement(
     assert output.read_bytes() == b"old transcript"
     assert store.episode_path.read_bytes() == b"old audio"
     assert store.source_metadata_path.read_text() == '{"sha256":"previous"}'
+
+
+@pytest.mark.parametrize("change", ["rewrite", "truncate", "replace", "unlink"])
+@pytest.mark.parametrize("relative", [False, True])
+def test_control_read_rejects_changed_generation(
+    tmp_path, monkeypatch, change, relative
+):
+    from podcast_transcript.input_admission import read_regular_bounded
+
+    path = tmp_path / "control.json"
+    original = b'{"first":"old","last":"old"}'
+    path.write_bytes(original)
+    read = os.read
+    changed = False
+    inode = path.stat().st_ino
+
+    def read_then_change(fd, count):
+        nonlocal changed
+        block = read(fd, min(count, 8))
+        if os.fstat(fd).st_ino == inode and not changed:
+            changed = True
+            if change == "rewrite":
+                path.write_bytes(original.replace(b"old", b"new"))
+            elif change == "truncate":
+                path.write_bytes(b"{}")
+            elif change == "replace":
+                replacement = tmp_path / "new.json"
+                replacement.write_bytes(original)
+                replacement.replace(path)
+            else:
+                path.unlink()
+        return block
+
+    monkeypatch.setattr(os, "read", read_then_change)
+    parent = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY) if relative else None
+    try:
+        with pytest.raises(RuntimeError, match="control.*changed"):
+            read_regular_bounded(
+                type(path)(path.name) if relative else path,
+                limit=1024,
+                description="control",
+                dir_fd=parent,
+            )
+    finally:
+        if parent is not None:
+            os.close(parent)
+
+
+def test_control_rewrite_preserves_previous_cache_generation(audio, monkeypatch):
+    audio.episode_chunks_dir.mkdir(parents=True)
+    output = audio.output_path(".txt")
+    output.write_bytes(b"previous transcript")
+    audio.cache_metadata_path.write_bytes(b'{"backend":"old"}')
+    read = os.read
+    changed = False
+    inode = audio.cache_metadata_path.stat().st_ino
+
+    def rewrite(fd, count):
+        nonlocal changed
+        block = read(fd, min(count, 8))
+        if os.fstat(fd).st_ino == inode and not changed:
+            changed = True
+            audio.cache_metadata_path.write_bytes(b'{"backend":"new"}')
+        return block
+
+    monkeypatch.setattr(os, "read", rewrite)
+    with pytest.raises(RuntimeError, match="control"):
+        audio.ensure_transcript_cache_matches({"backend": "replacement"})
+    assert output.read_bytes() == b"previous transcript"
+    assert audio.cache_metadata_path.read_bytes() == b'{"backend":"new"}'
+
+
+def test_unchanged_control_chunked_read(tmp_path, monkeypatch):
+    from podcast_transcript.input_admission import read_regular_bounded
+
+    path = tmp_path / "control.json"
+    data = b'{"backend":"synthetic"}'
+    path.write_bytes(data)
+    read = os.read
+    monkeypatch.setattr(os, "read", lambda fd, count: read(fd, min(count, 3)))
+    assert read_regular_bounded(path, limit=len(data), description="control") == data

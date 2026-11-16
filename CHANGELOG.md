@@ -11,6 +11,17 @@
 
 ### Fixes
 
+- Anchor local model directory traversal and artifact opens to no-follow directory descriptors;
+  recheck root/component identities before accepting a fingerprint so queued-directory or root
+  exchanges cannot redirect hashing or publish a cache identity/inference result.
+
+- Bound transcript inventories before sorting and share directory-entry, aggregate byte and
+  elapsed budgets across backup, integrity hashing and promotion/restore copies. Refuse growing
+  streams without publishing partial files; preserve current/prior recovery on backup failure.
+
+- Reject control/dotenv files changed during a read using descriptor generation, consumed
+  length and named identity checks, preserving prior transcripts and recovery evidence.
+
 - Bound full resampled MP3s below 2 GiB using ffmpeg output limits, supervised file-growth
   checks and final byte enforcement; refuse successful-but-truncated output and preserve
   previous prepared/published generations on failure.

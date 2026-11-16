@@ -114,6 +114,10 @@ select the configuration location before loading it. Environment values override
 API keys. The dotenv file must be a regular UTF-8 file, without symlinks, of at most 64 KiB total,
 counted during reads even if it grows. FIFO/device/directory, oversized and invalid UTF-8 inputs
 stop startup with a value-free error; no partial settings from that file are applied.
+Control and dotenv reads also verify size, nanosecond modification/change times, consumed
+length and the named file identity after reading. Concurrent rewrites, truncations or
+replacements are refused; rerun with stable files. Prior transcripts and recovery metadata
+are preserved when control admission fails.
 
 ### Configuring the Voxhelm Backend
 
@@ -350,7 +354,14 @@ Enumeration and all file reads share these limits, including each post-inference
 Directory identities include every regular file, including hidden files and
 VCS/tool metadata, and their relative filenames. Any change can cause retranscription; use a
 model-only directory to avoid incidental cache invalidation. Directory
-symlinks inside a model are refused, including file symlinks (use their regular-file paths). Replacing a local model
+symlinks inside a model are refused, including file symlinks (use their regular-file paths).
+Traversal and leaf reads are anchored to an opened root and no-follow directory descriptors;
+queued components are reopened relative to that root and their admitted identities are checked.
+All directory identities and the named root are rechecked before returning a fingerprint.
+A rename/replacement during hashing is refused without reading a replacement symlink's target
+or starting inference. Directory models require OS support for no-follow directory descriptors;
+unsupported platforms refuse them explicitly. Keep model directories stable and retry after
+concurrent updates finish. Replacing a local model
 at the same path retranscribes while retaining prepared audio. Existing caches without this identity
 rebuild transcripts once. Remote model IDs and API keys are excluded from artifact hashing.
 For existing local models, each newly inferred chunk is staged privately and published only after
@@ -411,7 +422,16 @@ the previous transcript metadata, chunks and all exports are copied byte-for-byt
 files and published last, so interrupted promotion cannot advertise old/mixed bytes under new
 settings. Promoted exports are byte-identical to the staged ones. Readability scans, backup and promotion
 copy regular files in blocks of at most 1 MiB, without retaining whole binary exports in memory.
-JSON parsing and export rendering keep their existing memory behavior. Retry rebuilds an incomplete
+Each readability pass and each promotion/restore pass has a shared limit of 100,000
+visited directory entries (including unrelated entries and repeated scans), 64 GiB of
+aggregate transcript bytes read across hashing and copying, and one hour of elapsed time.
+Inventories are bounded before sorting; growing files count against the same byte limit.
+Time is checked around reads/writes and at EOF; filesystem operations must return for
+checks to run. Refusal while preparing a backup leaves current transcripts and the prior
+recovery copy unchanged. During publication the cache completion marker stays absent on
+failure, and a complete recovery copy remains available. Split unusually large episodes
+or narrow excessive generated inventories before retrying. Prepared-audio hashing retains
+its separate limits described below. JSON parsing and export rendering keep their existing memory behavior. Retry rebuilds an incomplete
 promotion; the recovery copy remains available. Each
 successful settings replacement replaces this one recovery copy with its predecessor. It contains
 transcripts only, not audio. To restore after an interrupted promotion without downloading,

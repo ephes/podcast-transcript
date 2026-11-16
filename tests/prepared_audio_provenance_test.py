@@ -58,8 +58,8 @@ def test_audio_hash_refusal_preserves_public_and_recovery(episode, monkeypatch, 
             blocks = single_track.regular_file_blocks
             grown = []
 
-            def grow(path):
-                for block in blocks(path):
+            def grow(path, **kwargs):
+                for block in blocks(path, **kwargs):
                     assert len(block) <= 1024 * 1024
                     if path == store.resampled_episode_path and not grown:
                         grown.append(path)
