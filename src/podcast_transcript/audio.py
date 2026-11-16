@@ -27,12 +27,14 @@ from .safe_io import (
     durable_unlink,
     sync_file,
     sync_directory,
+    ATOMIC_NAME_EXTRA_BYTES,
 )
 
 FFPROBE_TIMEOUT_SECONDS = 60.0
 MODEL_MAX_BYTES = 64 * 1024**3
 MODEL_HASH_TIMEOUT_SECONDS = 3600.0
 MODEL_MAX_ENTRIES = 100_000
+RESAMPLED_MAX_BYTES = 2 * 1024**3
 
 
 class ModelBudget:
@@ -63,6 +65,30 @@ GENERATED_TRANSCRIPT_RE = re.compile(
 )
 CACHE_KEY_HASH_LENGTH = 12
 TRANSCRIPT_OUTPUT_SUFFIXES = (".dote.json", ".podlove.json", ".webvtt", ".txt")
+FILESYSTEM_COMPONENT_MAX_BYTES = 255
+CACHE_FILENAME_MAX_BYTES = FILESYSTEM_COMPONENT_MAX_BYTES - ATOMIC_NAME_EXTRA_BYTES
+READABLE_PREFIX_MAX_BYTES = CACHE_FILENAME_MAX_BYTES - max(
+    len(suffix) for suffix in (*TRANSCRIPT_OUTPUT_SUFFIXES, "_16khz.mp3")
+)
+
+
+def _byte_prefix(value: str, maximum: int) -> str:
+    """Shorten at a UTF-8 boundary, retaining short existing cache names."""
+    return value.encode("utf-8")[:maximum].decode("utf-8", errors="ignore")
+
+
+def _source_filename(name: str) -> str:
+    if len(name.encode("utf-8")) <= CACHE_FILENAME_MAX_BYTES:
+        return name
+    suffix = Path(name).suffix
+    # Only keep a bounded extension; unusual long extensions are readable text.
+    if len(suffix.encode("utf-8")) > 32:
+        suffix = ""
+    stem = name[: -len(suffix)] if suffix else name
+    return (
+        _byte_prefix(stem, CACHE_FILENAME_MAX_BYTES - len(suffix.encode("utf-8")))
+        + suffix
+    )
 
 
 def is_url(url: str) -> bool:
@@ -123,7 +149,9 @@ def get_cache_key(url: str) -> str:
     before the first dot (``ep1.final.mp3`` and ``ep1.draft.mp3``) get
     different directories.
     """
-    stem = get_title_from_string(url) or "episode"
+    stem = _byte_prefix(
+        get_title_from_string(url) or "episode", READABLE_PREFIX_MAX_BYTES
+    )
     digest = hashlib.sha256(get_cache_source(url).encode("utf-8")).hexdigest()
     return f"{stem}-{digest[:CACHE_KEY_HASH_LENGTH]}"
 
@@ -252,10 +280,17 @@ def resample_audio(input_path: Path, output_path: Path) -> None:
                 "1",
                 "-map",
                 "0:a:",
+                "-fs",
+                str(RESAMPLED_MAX_BYTES),
                 str(tmp_path),
             ],
             description=f"Resampling {input_path}",
+            output_limit=(tmp_path, RESAMPLED_MAX_BYTES),
         )
+        # ffmpeg may exit successfully on -fs and can overshoot by a packet.
+        # Neither a limit-truncated result nor an oversized result is reusable.
+        if tmp_path.stat().st_size >= RESAMPLED_MAX_BYTES:
+            raise RuntimeError("Resampling reached output byte limit (2 GiB).")
 
 
 # 25MB max bytes are allowed
@@ -267,11 +302,12 @@ class Audio:
         self.base_dir = base_dir
         self.url = url
         self._is_http_url = is_url(url)
-        self.prefix = get_title_from_string(url) or "episode"
+        source_title = get_title_from_string(url) or "episode"
+        self.prefix = _byte_prefix(source_title, READABLE_PREFIX_MAX_BYTES)
         if title is not None:
             self.title = title
         else:
-            self.title = self.prefix
+            self.title = source_title
         self.cache_key = get_cache_key(url)
         self.podcast_dir = base_dir / self.cache_key
         self.episode_chunks_dir = self.podcast_dir / "chunks"
@@ -282,10 +318,34 @@ class Audio:
     @property
     def episode_path(self):
         name = get_url_filename(self.url) if self._is_http_url else Path(self.url).name
-        if GENERATED_CHUNK_RE.fullmatch(name):
-            # Keep the source audio from colliding with generated chunk files
-            name = f"episode_{name}"
-        return self.episode_chunks_dir / name
+        # Check the stored (byte-shortened) name: shortening can turn a long,
+        # distinct source name into a reserved one.
+        stored = _source_filename(name)
+        reserved = stored.casefold()
+        if (
+            reserved == "chunks.json"
+            or GENERATED_CHUNK_RE.fullmatch(reserved)
+            or GENERATED_TRANSCRIPT_RE.fullmatch(reserved)
+            or reserved == self.resampled_episode_path.name.casefold()
+        ):
+            # Source bytes must never be parsed, overwritten or retired as controls,
+            # generated chunk audio, native intermediates or raw/derived transcripts.
+            stored = _source_filename(f"episode_{name}")
+        return self.episode_chunks_dir / stored
+
+    def validate_storage_roles(self) -> None:
+        """Preflight source, prepared, control and transcript namespaces."""
+        paths = [
+            self.episode_path,
+            self.resampled_episode_path,
+            self.chunks_manifest_path,
+            self.cache_metadata_path,
+            self.source_metadata_path,
+            *(self.output_path(suffix) for suffix in TRANSCRIPT_OUTPUT_SUFFIXES),
+        ]
+        identities = [str(path.absolute()).casefold() for path in paths]
+        if len(identities) != len(set(identities)):
+            raise RuntimeError("Source and generated storage roles overlap.")
 
     @property
     def resampled_episode_path(self):
@@ -309,6 +369,7 @@ class Audio:
         stale transcripts are gone. The episode pipeline calls this on private
         staging when replacing a completed generation; it promotes metadata last.
         """
+        self.validate_storage_roles()
         try:
             cached = load_control_json(self.cache_metadata_path)
         except FileNotFoundError:
@@ -324,6 +385,8 @@ class Audio:
         )
 
     def _remove_cached_transcripts(self) -> None:
+        # Retire the byte-provenance claim before replacing a prepared generation.
+        durable_unlink(self.cache_metadata_path)
         keep = {self.episode_path, self.resampled_episode_path}
         if self.episode_chunks_dir.is_dir():
             for path in self.episode_chunks_dir.glob("chunk_*"):
@@ -349,9 +412,12 @@ class Audio:
         """
         Make sure the audio file is resampled to 16khz.
         """
+        self.validate_storage_roles()
         rprint("make sure audio file is resampled: ", self.resampled_episode_path)
         if not self.resampled_episode_path.exists():
             resample_audio(self.episode_path, self.resampled_episode_path)
+        if self.resampled_episode_path.stat().st_size >= RESAMPLED_MAX_BYTES:
+            raise RuntimeError("Resampled audio reached output byte limit (2 GiB).")
 
     @property
     def exceeds_size_limit(self) -> bool:
@@ -364,6 +430,7 @@ class Audio:
         If the audio file exceeds the size limit, split it into smaller chunks.
         If not, just create a link to the resampled audio file.
         """
+        self.validate_storage_roles()
         cached = self._load_chunk_manifest()
         if cached is not None:
             return cached
@@ -639,6 +706,7 @@ class Audio:
             - Resample the audio file to 16khz
             - Split the audio file into smaller chunks if needed
         """
+        self.validate_storage_roles()
         self.validate_control_files()
         private_mkdir(self.podcast_dir)
         if not self._is_http_url and self._local_source_changed():

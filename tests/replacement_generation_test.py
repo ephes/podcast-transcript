@@ -61,9 +61,9 @@ def test_replacement_failure_leaves_previous_generation_current(
     assert paths["plain text"].read_text() == "new transcript\nnew transcript"
     recovery = store.podcast_dir / ".previous-transcripts"
     assert all((recovery / p).read_bytes() == data for p, data in previous.items())
-    assert json.loads(
-        store.cache_metadata_path.read_text()
-    ) == single_track.backend_cache_metadata(replacement)
+    recorded = json.loads(store.cache_metadata_path.read_text())
+    assert recorded.pop("chunk_sha256")
+    assert recorded == single_track.backend_cache_metadata(replacement)
     replacement.calls.clear()
     single_track.transcribe(store.url, replacement)
     assert replacement.calls == []

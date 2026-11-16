@@ -265,14 +265,25 @@ The output files are saved in a directory within the transcript directory. The d
 episode's file name (up to the first `.`) plus a short hash of the full URL or absolute file path, for
 example `audio-3f2a9c41d0b7`. Episodes that share a file name, such as `.../123/audio.mp3` and
 `.../124/audio.mp3`, therefore get separate directories. The output files themselves keep the readable
-name (`audio.dote.json`, `audio.txt`, ...).
+name (`audio.dote.json`, `audio.txt`, ...). Readable stems are shortened only when needed,
+at UTF-8 byte boundaries; the hash still covers the complete original source identity.
+Cache filenames stay within 213 UTF-8 bytes, reserving 42 bytes for atomic temporary
+names under the 255-byte filesystem component limit. The shared stem also reserves
+space for the longest export/resample suffix and the cache lock. Bounded source copies
+keep ordinary audio extensions; very long extensions are shortened with the name.
+Short existing keys and paths stay unchanged, except for newly reserved storage roles.
+Previously unusable long names receive a new bounded cache key and rebuild once; older
+directories are left untouched for manual recovery.
 
 HTTP(S) downloads use only the URL path for their local filename. Percent escapes are decoded and
 characters outside letters, digits, dots, underscores and hyphens become underscores; empty or
 dot-only names use `episode.mp3`. Signed URL queries and fragments stay out of filenames, while the
 full URL still identifies the cache hash. URL names requiring sanitization now have a different
 readable cache-directory stem; their old directories are left untouched and a one-time download and
-transcription rebuild occurs. Copy any outputs you need before deleting those old directories. Generated chunk names are reserved and prefixed with `episode_`.
+transcription rebuild occurs. Copy any outputs you need before deleting those old directories. Source basenames matching `chunks.json`, generated MP3/WAV chunks, raw JSON,
+DOTe JSON, whisper-cpp intermediates or the resampled MP3 are reserved (case-insensitively,
+compared after byte shortening) and prefixed with `episode_`. Storage roles are checked before preparation or transcript invalidation;
+source bytes never double as a control document or generated transcript.
 
 Local files are fingerprinted by SHA-256 on each run. Editing or replacing audio at the same path
 prepares new copied, resampled and chunk audio in owned staging, even when the size stays the same.
@@ -301,6 +312,18 @@ to verified directory descriptors; symlinks cannot redirect it. Platforms withou
 recursive deletion retain stages for inspection. Unmarked legacy stages, copied/restored stages with
 changed identities and unrelated matching-prefix directories are left untouched. Inspect these and
 remove them manually only when no invocation is active; the prefix alone does not prove ownership.
+Ordinary transcript reuse also records each prepared MP3 chunk's SHA-256 in `cache.json`,
+binding raw chunks and all derived exports to their admitted MP3 bytes. whisper-cpp's cached
+`chunk_NNN.wav` conversions are not hashed and are reused while they pass the WAV format check;
+delete them if you edit them directly. Each invocation hashes
+these bytes before reuse, including the owned short-audio symlink target. Hashing streams
+1 MiB blocks with a shared 64 GiB and one-hour budget per pass. New inference is checked
+again before publishing its raw chunk and before exports. Same-name, same-size edits are
+refused before inference or transcript retirement, even if backend settings changed; the
+previous complete outputs remain available. Restore the original prepared bytes or move
+the episode directory aside and rerun to build a fresh cache. Older transcript metadata
+without chunk digests retranscribes once, keeping readable complete outputs until the
+replacement succeeds. The existing chunk-name manifest format remains compatible.
 Prepared audio is reused. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
 run or transcription raises an error and is retried on the next run. Chunked transcripts are combined
 using each chunk's audio duration, so timestamps stay aligned for episodes longer than 2 hours.
@@ -508,6 +531,14 @@ rm -r ~/.podcast-transcripts/transcripts/<old-episode-name>
 
 ### Chunk upload limits and local command deadlines
 
+The full resampled MP3 must stay below 2 GiB (2,147,483,648 bytes), before chunk
+splitting. ffmpeg receives an output-size limit, and the owned-command supervisor checks
+actual file growth during execution (including after pipe closure) and at completion.
+Reaching the ceiling fails even if ffmpeg exits successfully; a truncated file never
+becomes prepared audio. Partial staging is removed and previous prepared audio/outputs
+survive a failed replacement. Oversized existing resamples are refused. Split exceptionally
+long sources into separate inputs rather than raising the chunk upload limit.
+
 Chunks must be at most 25 MiB (26,214,400 bytes) and 7,200 seconds. Stream-copy splitting estimates
 segment duration from the resampled file's size and duration, with 10% headroom for frame/header
 and bitrate variation. Every new chunk is checked before any is published. If a variable-bitrate
@@ -628,7 +659,8 @@ Show coverage:
 coverage run -m pytest && coverage html && open htmlcov/index.html
 ```
 
-CLI tests exercise successful dispatch through all four real backend factories with synthetic
+Installed-entrypoint tests run `transcribe --help` and invalid-argument exits in isolated
+directories without starting inference. CLI tests exercise successful dispatch through all four real backend factories with synthetic
 settings, replacing only the transcription boundary; optional MLX native imports are isolated.
 They check default backend/model selection, explicit processor and settings forwarding, output paths,
 and failure exits. Tests set isolated transcript directories before importing package settings and

@@ -11,6 +11,20 @@
 
 ### Fixes
 
+- Bound full resampled MP3s below 2 GiB using ffmpeg output limits, supervised file-growth
+  checks and final byte enforcement; refuse successful-but-truncated output and preserve
+  previous prepared/published generations on failure.
+- Bound cache names by UTF-8 bytes with room for all generated suffixes, locks and atomic
+  temporary filenames, retaining short keys and full-source hash disambiguation.
+
+- Bind ordinary raw/derived transcript reuse to per-chunk SHA-256 byte provenance;
+  refuse altered prepared MP3s without retiring previous completed outputs, check newly
+  inferred chunks before publication, and safely rebuild legacy metadata once.
+- Reserve source names for chunk controls, MP3/WAV chunks, raw/DOTe JSON and native
+  intermediates case-insensitively, checked against the byte-shortened stored name so a
+  long source cannot collide with the resampled MP3; preflight distinct storage roles
+  before preparation or transcript invalidation.
+
 - Bind version 2 recovery provenance to streamed resampled/chunk MP3 and cached WAV byte digests,
   with shared byte/time limits and a final audio recheck. Refuse legacy backups lacking byte evidence;
   keep them for manual recovery and never perform inference during restore. Settings replacements
