@@ -48,6 +48,14 @@ from .safe_io import (
 )
 
 
+MODEL_DIRECTORY_DESCRIPTORS_SUPPORTED = (
+    hasattr(os, "O_DIRECTORY")
+    and hasattr(os, "O_NOFOLLOW")
+    and os.open in os.supports_dir_fd
+    and os.scandir in os.supports_fd
+)
+
+
 def local_model_identity(path: Path) -> str | None:
     """Hash local model bytes, including relative filenames for directory models."""
     try:
@@ -57,42 +65,105 @@ def local_model_identity(path: Path) -> str | None:
     if stat.S_ISREG(info.st_mode):
         return Audio._content_fingerprint(path, source_budget=False)
     if stat.S_ISDIR(info.st_mode):
-        budget = ModelBudget()
-        artifacts = []
-        pending = [path]
-        while pending:
+        try:
+            return _directory_model_identity(path, info)
+        except OSError:
+            raise RuntimeError(
+                "Local model directory changed or could not be admitted."
+            ) from None
+    raise RuntimeError(
+        "Local model must be a regular file or directory without symlinks."
+    )
+
+
+def _directory_generation(info: os.stat_result) -> tuple[int, ...]:
+    return (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns)
+
+
+@contextmanager
+def _model_directory_at(
+    root: int,
+    parts: tuple[str, ...],
+    admitted: dict[tuple[str, ...], os.stat_result],
+    budget: ModelBudget,
+):
+    """Reopen components from the pinned root, keeping only two traversal descriptors live."""
+    descriptor = os.dup(root)
+    try:
+        for depth in range(len(parts) + 1):
             budget.check()
-            directory = pending.pop()
-            with os.scandir(directory) as entries:
-                for entry in entries:
-                    budget.admit_entry()
-                    artifact = Path(entry.path)
-                    if artifact.is_symlink():
-                        raise RuntimeError(
-                            "Local model directory must not contain symlinks."
-                        )
-                    if entry.is_dir(follow_symlinks=False):
-                        pending.append(artifact)
-                    else:
-                        artifacts.append(artifact)
-            budget.check()
-        # Sorting is bounded by the shared entry budget and preserves cache IDs.
-        files = []
-        for artifact in sorted(artifacts):
-            budget.check()
-            files.append(
-                (
-                    artifact.relative_to(path).as_posix(),
-                    Audio._read_local_source(artifact, model=True, model_budget=budget),
+            if depth:
+                child = os.open(
+                    parts[depth - 1],
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=descriptor,
                 )
-            )
+                os.close(descriptor)
+                descriptor = child
+            if _directory_generation(os.fstat(descriptor)) != _directory_generation(
+                admitted[parts[:depth]]
+            ):
+                raise RuntimeError("Local model directory changed during hashing.")
+        yield descriptor
+        budget.check()
+        if _directory_generation(os.fstat(descriptor)) != _directory_generation(
+            admitted[parts]
+        ):
+            raise RuntimeError("Local model directory changed during hashing.")
+    finally:
+        os.close(descriptor)
+
+
+def _directory_model_identity(path: Path, info: os.stat_result) -> str:
+    if not MODEL_DIRECTORY_DESCRIPTORS_SUPPORTED:
+        raise RuntimeError(
+            "Local model directory requires no-follow directory descriptor support."
+        )
+    budget = ModelBudget()
+    root = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        admitted: dict[tuple[str, ...], os.stat_result] = {(): info}
+        artifacts = []
+        pending: list[tuple[str, ...]] = [()]
+        while pending:
+            parts = pending.pop()
+            with _model_directory_at(root, parts, admitted, budget) as directory:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        budget.admit_entry()
+                        child_parts = (*parts, entry.name)
+                        child_info = os.stat(
+                            entry.name, dir_fd=directory, follow_symlinks=False
+                        )
+                        if stat.S_ISDIR(child_info.st_mode):
+                            admitted[child_parts] = child_info
+                            pending.append(child_parts)
+                        elif stat.S_ISREG(child_info.st_mode):
+                            artifacts.append(child_parts)
+                        else:
+                            raise RuntimeError(
+                                "Local model directory must contain only regular files and directories without symlinks."
+                            )
+        # Sorting stays compatible and is bounded by the shared entry budget.
+        files = []
+        for parts in sorted(artifacts):
+            with _model_directory_at(root, parts[:-1], admitted, budget) as directory:
+                digest = Audio._read_local_source(
+                    Path(parts[-1]), model=True, model_budget=budget, dir_fd=directory
+                )
+                files.append(("/".join(parts), digest))
+        # Reopen every admitted component before accepting any cache identity.
+        for parts in admitted:
+            with _model_directory_at(root, parts, admitted, budget):
+                pass
+        if _directory_generation(path.lstat()) != _directory_generation(info):
+            raise RuntimeError("Local model directory changed during hashing.")
         budget.check()
         identity = hashlib.sha256(json.dumps(files).encode()).hexdigest()
         budget.check()
         return identity
-    raise RuntimeError(
-        "Local model must be a regular file or directory without symlinks."
-    )
+    finally:
+        os.close(root)
 
 
 def backend_cache_metadata(backend: TranscriptionBackend) -> dict:

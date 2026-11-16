@@ -180,12 +180,24 @@ def test_model_directory_link_policy_without_os_link_privileges(monkeypatch, tmp
     model.mkdir()
     weights = model / "weights.bin"
     weights.write_bytes(b"synthetic-v1")
-    # Model public Path link classification; no platform-specific link privilege.
-    monkeypatch.setattr(Path, "is_symlink", lambda path: path == weights)
+    # Model descriptor-relative no-follow stat, without OS link privileges.
+    import stat
+    from types import SimpleNamespace
+
+    named_stat = os.stat
+    link_name = weights.name
+
+    def link_stat(path, *args, **kwargs):
+        if kwargs.get("dir_fd") is not None and path == link_name:
+            assert kwargs["follow_symlinks"] is False
+            return SimpleNamespace(st_mode=stat.S_IFLNK)
+        return named_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", link_stat)
     with pytest.raises(RuntimeError, match="symlinks"):
         single_track.local_model_identity(model)
     directory_link = model / "linked-directory"
     directory_link.mkdir()
-    monkeypatch.setattr(Path, "is_symlink", lambda path: path == directory_link)
+    link_name = directory_link.name
     with pytest.raises(RuntimeError, match="symlinks"):
         single_track.local_model_identity(model)

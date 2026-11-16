@@ -354,7 +354,14 @@ Enumeration and all file reads share these limits, including each post-inference
 Directory identities include every regular file, including hidden files and
 VCS/tool metadata, and their relative filenames. Any change can cause retranscription; use a
 model-only directory to avoid incidental cache invalidation. Directory
-symlinks inside a model are refused, including file symlinks (use their regular-file paths). Replacing a local model
+symlinks inside a model are refused, including file symlinks (use their regular-file paths).
+Traversal and leaf reads are anchored to an opened root and no-follow directory descriptors;
+queued components are reopened relative to that root and their admitted identities are checked.
+All directory identities and the named root are rechecked before returning a fingerprint.
+A rename/replacement during hashing is refused without reading a replacement symlink's target
+or starting inference. Directory models require OS support for no-follow directory descriptors;
+unsupported platforms refuse them explicitly. Keep model directories stable and retry after
+concurrent updates finish. Replacing a local model
 at the same path retranscribes while retaining prepared audio. Existing caches without this identity
 rebuild transcripts once. Remote model IDs and API keys are excluded from artifact hashing.
 For existing local models, each newly inferred chunk is staged privately and published only after
