@@ -250,8 +250,11 @@ def combine_dote_chunks(
         rprint(f"Copying {source_dote_file} to {output_path}")
         with atomic_output(output_path) as tmp_path:
             size = 0
-            with tmp_path.open("wb") as target:
-                for block in regular_file_blocks(source_dote_file):
+            with (
+                tmp_path.open("wb") as target,
+                closing(regular_file_blocks(source_dote_file)) as blocks,
+            ):
+                for block in blocks:
                     size += len(block)
                     _check_combined_budget(len(data["lines"]), size)
                     target.write(block)
