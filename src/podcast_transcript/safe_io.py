@@ -21,6 +21,7 @@ import uuid
 from collections.abc import Iterator, Generator
 from contextlib import closing, contextmanager
 from pathlib import Path
+from time import monotonic
 
 from .config import private_mkdir, settings
 from .input_admission import read_regular_bounded as read_regular_bounded
@@ -127,7 +128,45 @@ def write_bytes_atomic(path: Path, data: bytes) -> None:
 COPY_BUFFER_BYTES = 1024 * 1024
 
 
-def regular_file_blocks(path: Path) -> Generator[bytes, None, None]:
+TRANSCRIPT_WORK_MAX_ENTRIES = 100_000
+TRANSCRIPT_WORK_MAX_BYTES = 64 * 1024**3
+TRANSCRIPT_WORK_TIMEOUT_SECONDS = 3600.0
+
+
+class TranscriptWorkBudget:
+    """Aggregate enumeration, hash and copy work for one promotion/restore pass."""
+
+    def __init__(self):
+        self.remaining = TRANSCRIPT_WORK_MAX_BYTES
+        self.entries = 0
+        self.deadline = monotonic() + TRANSCRIPT_WORK_TIMEOUT_SECONDS
+
+    def check(self) -> None:
+        if monotonic() >= self.deadline:
+            raise RuntimeError(
+                "Transcript work exceeded elapsed limit; split the episode."
+            )
+
+    def admit_entry(self) -> None:
+        self.check()
+        self.entries += 1
+        if self.entries > TRANSCRIPT_WORK_MAX_ENTRIES:
+            raise RuntimeError(
+                "Transcript work exceeded directory entry limit; narrow the inventory."
+            )
+
+    def charge(self, size: int) -> None:
+        self.check()
+        self.remaining -= size
+        if self.remaining < 0:
+            raise RuntimeError(
+                "Transcript work exceeded byte limit; split the episode."
+            )
+
+
+def regular_file_blocks(
+    path: Path, *, budget: TranscriptWorkBudget | None = None
+) -> Generator[bytes, None, None]:
     """Read regular files in bounded blocks without following a final symlink."""
     descriptor = os.open(
         path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -135,27 +174,47 @@ def regular_file_blocks(path: Path) -> Generator[bytes, None, None]:
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise OSError("Transcript copy requires a regular file.")
-        while block := os.read(descriptor, COPY_BUFFER_BYTES):
+        while True:
+            if budget is not None:
+                budget.check()
+            size = (
+                COPY_BUFFER_BYTES
+                if budget is None
+                else min(COPY_BUFFER_BYTES, budget.remaining + 1)
+            )
+            block = os.read(descriptor, size)
+            if budget is not None:
+                budget.charge(len(block))
+            if not block:
+                break
             yield block
     finally:
         os.close(descriptor)
 
 
-def copy_file_atomic(source: Path, target: Path) -> None:
+def copy_file_atomic(
+    source: Path, target: Path, *, budget: TranscriptWorkBudget | None = None
+) -> None:
     """Copy exact bytes with bounded memory into the owned durable writer."""
     with atomic_output(target) as temporary:
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
-            with closing(regular_file_blocks(source)) as blocks:
+            with closing(regular_file_blocks(source, budget=budget)) as blocks:
                 for block in blocks:
                     remaining = memoryview(block)
                     while remaining:
+                        if budget is not None:
+                            budget.check()
                         written = os.write(descriptor, remaining)
+                        if budget is not None:
+                            budget.check()
                         if written <= 0:
                             raise OSError("Transcript copy made no write progress.")
                         remaining = remaining[written:]
         finally:
             os.close(descriptor)
+        if budget is not None:
+            budget.check()
 
 
 def _kill_owned_tree(process: subprocess.Popen) -> None:

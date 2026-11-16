@@ -135,7 +135,7 @@ def test_new_pipeline_stages_have_ownership_manifests(episode, monkeypatch):
     copy = single_track.copy_file_atomic
     seen = set()
 
-    def verify(source, target):
+    def verify(source, target, **kwargs):
         for path in (source, target):
             for parent in path.parents:
                 if parent.name.startswith(single_track.STAGING_PREFIXES):
@@ -143,7 +143,7 @@ def test_new_pipeline_stages_have_ownership_manifests(episode, monkeypatch):
                     assert marker == stage_manifest(parent, store)
                     seen.add(parent.name.split("-", 1)[0])
                     break
-        copy(source, target)
+        copy(source, target, **kwargs)
 
     monkeypatch.setattr(single_track, "copy_file_atomic", verify)
     single_track.transcribe(store.url, RecordingBackend("new", "new"))

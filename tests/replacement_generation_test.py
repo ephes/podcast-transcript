@@ -78,12 +78,12 @@ def test_interrupted_promotion_keeps_recovery_and_retry_does_not_mix(
     write = single_track.copy_file_atomic
     promoted = []
 
-    def fail(source, path):
+    def fail(source, path, **kwargs):
         if path.parent == store.podcast_dir and path.suffix != ".json":
             promoted.append(path)
             if len(promoted) == 2:
                 raise OSError("synthetic interrupted promotion")
-        return write(source, path)
+        return write(source, path, **kwargs)
 
     monkeypatch.setattr(single_track, "copy_file_atomic", fail)
     with pytest.raises(OSError):
@@ -223,8 +223,8 @@ class Replacement(TranscriptionBackend):
     def transcribe(self, chunk, target):
         target.write_text(json.dumps({"segments": [{"start": 0, "end": 1, "text": "new"}]}))
 copy = single_track.copy_file_atomic
-def kill(source, target):
-    copy(source, target)
+def kill(source, target, **kwargs):
+    copy(source, target, **kwargs)
     if target.parent.name == sys.argv[2] and target.name.endswith(".dote.json"):
         os.kill(os.getpid(), signal.SIGKILL)
 single_track.copy_file_atomic = kill
@@ -331,12 +331,12 @@ def test_failed_restore_keeps_backup_and_retires_marker(episode, monkeypatch):
     copy = single_track.copy_file_atomic
     calls = []
 
-    def fail(source, target):
+    def fail(source, target, **kwargs):
         if not any(part.startswith(".replacement-") for part in target.parts):
             calls.append(target)
             if len(calls) == 2:
                 raise OSError("synthetic restore failure")
-        copy(source, target)
+        copy(source, target, **kwargs)
 
     monkeypatch.setattr(single_track, "copy_file_atomic", fail)
     with pytest.raises(OSError, match="synthetic restore failure"):
@@ -356,10 +356,10 @@ def test_failed_new_backup_preserves_previous_recovery(episode, monkeypatch):
     single_track.transcribe(store.url, RecordingBackend("new", "new"))
     copy = single_track.copy_file_atomic
 
-    def fail(source, target):
+    def fail(source, target, **kwargs):
         if any(part.startswith(".backup-") for part in target.parts):
             raise OSError("synthetic backup failure")
-        copy(source, target)
+        copy(source, target, **kwargs)
 
     monkeypatch.setattr(single_track, "copy_file_atomic", fail)
     with pytest.raises(OSError, match="synthetic backup failure"):
@@ -381,11 +381,11 @@ def test_restore_shares_episode_lock_and_publishes_metadata_last(episode, monkey
     copy = single_track.copy_file_atomic
     copies = []
 
-    def record(source, target):
+    def record(source, target, **kwargs):
         if not any(part.startswith(".replacement-") for part in target.parts):
             assert not store.cache_metadata_path.exists()
             copies.append(target)
-        copy(source, target)
+        copy(source, target, **kwargs)
 
     monkeypatch.setattr(single_track, "copy_file_atomic", record)
     single_track.restore_last_success(store.url)
@@ -406,8 +406,8 @@ def test_restore_pins_verified_bytes_before_publication(episode, monkeypatch, ar
     digest = single_track._generation_digest
     replaced = []
 
-    def replace_after_admission(generation):
-        result = digest(generation)
+    def replace_after_admission(generation, **kwargs):
+        result = digest(generation, **kwargs)
         if generation.podcast_dir == recovery and not replaced:
             # Atomic pathname replacement after admission, before restore reopens.
             replacement = path.with_name("replacement")

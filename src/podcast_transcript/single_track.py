@@ -38,6 +38,7 @@ from .transcript_validation import (
     format_dote_timecode,
 )
 from .safe_io import (
+    TranscriptWorkBudget,
     atomic_output,
     durable_unlink,
     sync_directory,
@@ -384,9 +385,10 @@ def _generation_at(audio: Audio, directory: Path) -> Audio:
     return generation
 
 
-def _file_digest(path: Path) -> str:
+def _file_digest(path: Path, *, budget: TranscriptWorkBudget | None = None) -> str:
+    budget = budget or TranscriptWorkBudget()
     digest = hashlib.sha256()
-    for block in regular_file_blocks(path):
+    for block in regular_file_blocks(path, budget=budget):
         digest.update(block)
     return digest.hexdigest()
 
@@ -485,12 +487,18 @@ def _audio_generation(audio: Audio) -> dict[str, str | None]:
     return result
 
 
-def _generation_digest(audio: Audio) -> str:
+def _generation_digest(
+    audio: Audio, *, budget: TranscriptWorkBudget | None = None
+) -> str:
     # Hash the derived allowlisted inventory as well as its bytes: missing chunks
     # or exports cannot silently disappear from a restored generation.
-    files = [*_transcript_files(audio), audio.cache_metadata_path]
+    budget = budget or TranscriptWorkBudget()
+    files = [*_transcript_files(audio, budget=budget), audio.cache_metadata_path]
     inventory = [
-        (path.relative_to(audio.podcast_dir).as_posix(), _file_digest(path))
+        (
+            path.relative_to(audio.podcast_dir).as_posix(),
+            _file_digest(path, budget=budget),
+        )
         for path in files
     ]
     return hashlib.sha256(json.dumps(inventory).encode()).hexdigest()
@@ -500,6 +508,7 @@ def restore_last_success(url: str) -> dict[str, Path]:
     """Restore an admitted backup locally, with no source preparation or backend."""
     audio = Audio(base_dir=settings.transcript_dir, url=url)
     with _episode_lock(audio):
+        budget = TranscriptWorkBudget()
         recovery = _generation_at(audio, audio.podcast_dir / ".previous-transcripts")
         if recovery.podcast_dir.is_symlink() or not recovery.podcast_dir.is_dir():
             raise RuntimeError("No admitted last-success recovery generation.")
@@ -512,7 +521,8 @@ def restore_last_success(url: str) -> dict[str, Path]:
             or type(manifest["version"]) is not int
             or manifest["version"] != 2
             or manifest["audio"] != _audio_generation(audio)
-            or manifest["inventory_sha256"] != _generation_digest(recovery)
+            or manifest["inventory_sha256"]
+            != _generation_digest(recovery, budget=budget)
         ):
             raise RuntimeError(
                 "Incomplete recovery generation or changed prepared audio."
@@ -524,11 +534,19 @@ def restore_last_success(url: str) -> dict[str, Path]:
         ) as directory:
             snapshot = _generation_at(audio, Path(directory))
             _mark_stage(audio, snapshot.podcast_dir)
-            for path in [*_transcript_files(recovery), recovery.cache_metadata_path]:
+            for path in [
+                *_transcript_files(recovery, budget=budget),
+                recovery.cache_metadata_path,
+            ]:
                 copy_file_atomic(
-                    path, snapshot.podcast_dir / path.relative_to(recovery.podcast_dir)
+                    path,
+                    snapshot.podcast_dir / path.relative_to(recovery.podcast_dir),
+                    budget=budget,
                 )
-            if _generation_digest(snapshot) != manifest["inventory_sha256"]:
+            if (
+                _generation_digest(snapshot, budget=budget)
+                != manifest["inventory_sha256"]
+            ):
                 raise RuntimeError("Recovery generation changed while copying.")
             metadata = load_control_json(snapshot.cache_metadata_path)
             if not isinstance(metadata, dict) or not isinstance(
@@ -536,7 +554,7 @@ def restore_last_success(url: str) -> dict[str, Path]:
             ):
                 raise RuntimeError("Invalid recovery cache metadata.")
             load_dote(snapshot.output_path(".dote.json"))
-            for path in _transcript_files(snapshot):
+            for path in _transcript_files(snapshot, budget=budget):
                 if path.parent == snapshot.episode_chunks_dir:
                     if path.name.endswith(".dote.json"):
                         load_dote(path)
@@ -545,7 +563,7 @@ def restore_last_success(url: str) -> dict[str, Path]:
             if manifest["audio"] != _audio_generation(audio):
                 raise RuntimeError("Changed prepared audio during recovery.")
             # Keep recovery untouched, even if a later copy/fsync fails.
-            _publish_transcripts(audio, snapshot)
+            _publish_transcripts(audio, snapshot, budget=budget)
         return _transcript_paths(audio)
 
 
@@ -656,10 +674,14 @@ def _remove_tree_at(name: str, dir_fd: int) -> None:
 
 def _current_generation_readable(audio: Audio) -> bool:
     """Whether the published generation can be kept until its replacement is ready."""
+    budget = TranscriptWorkBudget()
     try:
         load_dote(audio.output_path(".dote.json"))
-        for path in [*_transcript_files(audio), audio.cache_metadata_path]:
-            for _ in regular_file_blocks(path):
+        for path in [
+            *_transcript_files(audio, budget=budget),
+            audio.cache_metadata_path,
+        ]:
+            for _ in regular_file_blocks(path, budget=budget):
                 pass
     except (OSError, ValueError):
         return False
@@ -758,12 +780,23 @@ def _transcript_paths(audio: Audio) -> dict[str, Path]:
     )
 
 
-def _transcript_files(audio: Audio) -> list[Path]:
-    return [audio.output_path(suffix) for suffix in TRANSCRIPT_OUTPUT_SUFFIXES] + [
-        path
-        for path in sorted(audio.episode_chunks_dir.glob("chunk_*"))
-        if GENERATED_TRANSCRIPT_RE.fullmatch(path.name)
-    ]
+def _transcript_files(
+    audio: Audio, *, budget: TranscriptWorkBudget | None = None
+) -> list[Path]:
+    budget = budget or TranscriptWorkBudget()
+    chunks = []
+    try:
+        with os.scandir(audio.episode_chunks_dir) as entries:
+            for entry in entries:
+                budget.admit_entry()  # Even irrelevant entries cost directory work.
+                if GENERATED_TRANSCRIPT_RE.fullmatch(entry.name):
+                    chunks.append(audio.episode_chunks_dir / entry.name)
+    except FileNotFoundError:
+        pass
+    budget.check()
+    return [
+        audio.output_path(suffix) for suffix in TRANSCRIPT_OUTPUT_SUFFIXES
+    ] + sorted(chunks)
 
 
 def _promote_transcripts(
@@ -771,6 +804,10 @@ def _promote_transcripts(
 ) -> None:
     if _audio_generation(audio) != audio_generation:
         raise RuntimeError("Prepared audio changed during transcription; retry.")
+    # Admit both inventories before replacing either recovery or public metadata.
+    budget = TranscriptWorkBudget()
+    old_files = _transcript_files(audio, budget=budget)
+    _transcript_files(staged, budget=budget)
     # Keep a durable recovery copy before touching any currently published file.
     recovery = audio.podcast_dir / ".previous-transcripts"
     with tempfile.TemporaryDirectory(
@@ -778,9 +815,9 @@ def _promote_transcripts(
     ) as directory:
         backup = Path(directory)
         _mark_stage(audio, backup)
-        for path in [*_transcript_files(audio), audio.cache_metadata_path]:
+        for path in [*old_files, audio.cache_metadata_path]:
             target = backup / path.relative_to(audio.podcast_dir)
-            copy_file_atomic(path, target)
+            copy_file_atomic(path, target, budget=budget)
         backup_audio = _generation_at(audio, backup)
         write_text_atomic(
             backup / "recovery.json",
@@ -788,34 +825,43 @@ def _promote_transcripts(
                 {
                     "version": 2,
                     "audio": audio_generation,
-                    "inventory_sha256": _generation_digest(backup_audio),
+                    "inventory_sha256": _generation_digest(backup_audio, budget=budget),
                 }
             ),
         )
         sync_directory(backup)
+        budget.check()
         if recovery.exists():
             shutil.rmtree(recovery)
         os.replace(backup, recovery)
         sync_directory(audio.podcast_dir)
 
-    _publish_transcripts(audio, staged)
+    _publish_transcripts(audio, staged, budget=budget)
 
 
-def _publish_transcripts(audio: Audio, staged: Audio) -> None:
+def _publish_transcripts(
+    audio: Audio, staged: Audio, *, budget: TranscriptWorkBudget | None = None
+) -> None:
     # Metadata is the completion claim: a partial multi-file promotion must never
     # make either old or mixed bytes reusable as the replacement generation.
+    budget = budget or TranscriptWorkBudget()
+    new_files = _transcript_files(staged, budget=budget)
+    old_files = _transcript_files(audio, budget=budget)
+    budget.check()
     durable_unlink(audio.cache_metadata_path)
-    new_files = _transcript_files(staged)
     targets = {
         audio.podcast_dir / path.relative_to(staged.podcast_dir) for path in new_files
     }
     for path in new_files:
         target = audio.podcast_dir / path.relative_to(staged.podcast_dir)
-        copy_file_atomic(path, target)
-    for stale in _transcript_files(audio):
+        copy_file_atomic(path, target, budget=budget)
+    for stale in old_files:
+        budget.check()
         if stale not in targets:
             durable_unlink(stale)
-    copy_file_atomic(staged.cache_metadata_path, audio.cache_metadata_path)
+    copy_file_atomic(
+        staged.cache_metadata_path, audio.cache_metadata_path, budget=budget
+    )
 
 
 def _transcribe_prepared(

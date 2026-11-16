@@ -415,7 +415,16 @@ the previous transcript metadata, chunks and all exports are copied byte-for-byt
 files and published last, so interrupted promotion cannot advertise old/mixed bytes under new
 settings. Promoted exports are byte-identical to the staged ones. Readability scans, backup and promotion
 copy regular files in blocks of at most 1 MiB, without retaining whole binary exports in memory.
-JSON parsing and export rendering keep their existing memory behavior. Retry rebuilds an incomplete
+Each readability pass and each promotion/restore pass has a shared limit of 100,000
+visited directory entries (including unrelated entries and repeated scans), 64 GiB of
+aggregate transcript bytes read across hashing and copying, and one hour of elapsed time.
+Inventories are bounded before sorting; growing files count against the same byte limit.
+Time is checked around reads/writes and at EOF; filesystem operations must return for
+checks to run. Refusal while preparing a backup leaves current transcripts and the prior
+recovery copy unchanged. During publication the cache completion marker stays absent on
+failure, and a complete recovery copy remains available. Split unusually large episodes
+or narrow excessive generated inventories before retrying. Prepared-audio hashing retains
+its separate limits described below. JSON parsing and export rendering keep their existing memory behavior. Retry rebuilds an incomplete
 promotion; the recovery copy remains available. Each
 successful settings replacement replaces this one recovery copy with its predecessor. It contains
 transcripts only, not audio. To restore after an interrupted promotion without downloading,

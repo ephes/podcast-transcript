@@ -11,6 +11,10 @@
 
 ### Fixes
 
+- Bound transcript inventories before sorting and share directory-entry, aggregate byte and
+  elapsed budgets across backup, integrity hashing and promotion/restore copies. Refuse growing
+  streams without publishing partial files; preserve current/prior recovery on backup failure.
+
 - Reject control/dotenv files changed during a read using descriptor generation, consumed
   length and named identity checks, preserving prior transcripts and recovery evidence.
 
