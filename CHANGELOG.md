@@ -11,6 +11,12 @@
 
 ### Fixes
 
+- Bound full resampled MP3s below 2 GiB using ffmpeg output limits, supervised file-growth
+  checks and final byte enforcement; refuse successful-but-truncated output and preserve
+  previous prepared/published generations on failure.
+- Bound cache names by UTF-8 bytes with room for all generated suffixes, locks and atomic
+  temporary filenames, retaining short keys and full-source hash disambiguation.
+
 - Bind ordinary raw/derived transcript reuse to per-chunk SHA-256 byte provenance;
   refuse altered prepared MP3s without retiring previous completed outputs, check newly
   inferred chunks before publication, and safely rebuild legacy metadata once.

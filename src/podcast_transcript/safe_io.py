@@ -27,6 +27,8 @@ from .input_admission import read_regular_bounded as read_regular_bounded
 
 STDERR_TAIL_LINES = 20
 STDERR_TAIL_CHARS = 2000
+# Extra UTF-8 bytes added by partial_path_for, excluding the original filename.
+ATOMIC_NAME_EXTRA_BYTES = 42
 
 
 def partial_path_for(path: Path) -> Path:
@@ -185,7 +187,11 @@ def _kill_owned_tree(process: subprocess.Popen) -> None:
 
 
 def run_checked(
-    cmd: list[str], *, description: str, timeout: float | None = None
+    cmd: list[str],
+    *,
+    description: str,
+    timeout: float | None = None,
+    output_limit: tuple[Path, int] | None = None,
 ) -> None:
     """Run an owned process group with a finite budget and bounded diagnostics."""
     if timeout is None:
@@ -200,6 +206,7 @@ def run_checked(
         stdout_limit=None,
         stderr_limit=STDERR_TAIL_CHARS,
         stderr_tail=True,
+        output_limit=output_limit,
     )
 
 
@@ -211,6 +218,7 @@ def capture_checked(
     stdout_limit: int | None = 64 * 1024,
     stderr_limit: int = 64 * 1024,
     stderr_tail: bool = False,
+    output_limit: tuple[Path, int] | None = None,
 ) -> bytes:
     """Capture small tool results, killing/reaping the owned tree on overflow."""
     import threading
@@ -218,6 +226,24 @@ def capture_checked(
 
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("Command timeout must be positive finite seconds")
+    if output_limit is not None and (
+        type(output_limit[1]) is not int or output_limit[1] <= 0
+    ):
+        raise ValueError("Command output limit must be positive integer bytes")
+
+    def check_output_limit():
+        if output_limit is None:
+            return
+        path, maximum = output_limit
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return
+        if not stat.S_ISREG(info.st_mode):
+            raise RuntimeError(f"{description} output must be a regular file")
+        if info.st_size >= maximum:
+            raise RuntimeError(f"{description} reached output byte limit")
+
     buffers = [bytearray(), bytearray()]
     overflow = threading.Event()
     stop = threading.Event()
@@ -280,6 +306,7 @@ def capture_checked(
             # Keep the leader unreaped until pipe EOF. Its PID cannot be reused
             # while cleanup may still need to signal descendants holding a pipe.
             while True:
+                check_output_limit()
                 if overflow.is_set():
                     raise RuntimeError(f"{description} output exceeded byte limit")
                 active = [thread for thread in threads if thread.is_alive()]
@@ -303,6 +330,7 @@ def capture_checked(
                         )
                         is None
                     ):
+                        check_output_limit()
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
                             raise subprocess.TimeoutExpired(cmd, timeout)
@@ -318,11 +346,16 @@ def capture_checked(
                             flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
                             fflags=select.KQ_NOTE_EXIT,
                         )
-                        events = queue.control(
-                            [event], 1, max(0, deadline - time.monotonic())
-                        )
-                        if not events:
-                            raise subprocess.TimeoutExpired(cmd, timeout)
+                        changes = [event]
+                        while True:
+                            check_output_limit()
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise subprocess.TimeoutExpired(cmd, timeout)
+                            events = queue.control(changes, 1, min(0.05, remaining))
+                            changes = []
+                            if events:
+                                break
                         observed = events[0]
                         if (
                             observed.flags & select.KQ_EV_ERROR
@@ -331,7 +364,17 @@ def capture_checked(
                             raise RuntimeError("Could not observe owned command exit.")
                 _kill_owned_tree(process)
             else:
-                process.wait(timeout=max(0, deadline - time.monotonic()))
+                while True:
+                    check_output_limit()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(cmd, timeout)
+                    try:
+                        process.wait(timeout=min(0.05, remaining))
+                        break
+                    except subprocess.TimeoutExpired:
+                        pass
+            check_output_limit()
         except BaseException as exc:
             stop.set()
             if process.returncode is None:

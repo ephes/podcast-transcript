@@ -51,6 +51,8 @@ def test_resample_audio(mocker, audio):
         "1",
         "-map",
         "0:a:",
+        "-fs",
+        str(2 * 1024**3),
     ]
     # ffmpeg writes to a hidden temp file with the same suffix ...
     assert Path(cmd[-1]).name.startswith(".")

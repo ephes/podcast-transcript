@@ -265,7 +265,15 @@ The output files are saved in a directory within the transcript directory. The d
 episode's file name (up to the first `.`) plus a short hash of the full URL or absolute file path, for
 example `audio-3f2a9c41d0b7`. Episodes that share a file name, such as `.../123/audio.mp3` and
 `.../124/audio.mp3`, therefore get separate directories. The output files themselves keep the readable
-name (`audio.dote.json`, `audio.txt`, ...).
+name (`audio.dote.json`, `audio.txt`, ...). Readable stems are shortened only when needed,
+at UTF-8 byte boundaries; the hash still covers the complete original source identity.
+Cache filenames stay within 213 UTF-8 bytes, reserving 42 bytes for atomic temporary
+names under the 255-byte filesystem component limit. The shared stem also reserves
+space for the longest export/resample suffix and the cache lock. Bounded source copies
+keep ordinary audio extensions; very long extensions are shortened with the name.
+Short existing keys and paths stay unchanged, except for newly reserved storage roles.
+Previously unusable long names receive a new bounded cache key and rebuild once; older
+directories are left untouched for manual recovery.
 
 HTTP(S) downloads use only the URL path for their local filename. Percent escapes are decoded and
 characters outside letters, digits, dots, underscores and hyphens become underscores; empty or
@@ -521,6 +529,14 @@ rm -r ~/.podcast-transcripts/transcripts/<old-episode-name>
 
 ### Chunk upload limits and local command deadlines
 
+The full resampled MP3 must stay below 2 GiB (2,147,483,648 bytes), before chunk
+splitting. ffmpeg receives an output-size limit, and the owned-command supervisor checks
+actual file growth during execution (including after pipe closure) and at completion.
+Reaching the ceiling fails even if ffmpeg exits successfully; a truncated file never
+becomes prepared audio. Partial staging is removed and previous prepared audio/outputs
+survive a failed replacement. Oversized existing resamples are refused. Split exceptionally
+long sources into separate inputs rather than raising the chunk upload limit.
+
 Chunks must be at most 25 MiB (26,214,400 bytes) and 7,200 seconds. Stream-copy splitting estimates
 segment duration from the resampled file's size and duration, with 10% headroom for frame/header
 and bitrate variation. Every new chunk is checked before any is published. If a variable-bitrate
@@ -641,7 +657,8 @@ Show coverage:
 coverage run -m pytest && coverage html && open htmlcov/index.html
 ```
 
-CLI tests exercise successful dispatch through all four real backend factories with synthetic
+Installed-entrypoint tests run `transcribe --help` and invalid-argument exits in isolated
+directories without starting inference. CLI tests exercise successful dispatch through all four real backend factories with synthetic
 settings, replacing only the transcription boundary; optional MLX native imports are isolated.
 They check default backend/model selection, explicit processor and settings forwarding, output paths,
 and failure exits. Tests set isolated transcript directories before importing package settings and

@@ -27,12 +27,14 @@ from .safe_io import (
     durable_unlink,
     sync_file,
     sync_directory,
+    ATOMIC_NAME_EXTRA_BYTES,
 )
 
 FFPROBE_TIMEOUT_SECONDS = 60.0
 MODEL_MAX_BYTES = 64 * 1024**3
 MODEL_HASH_TIMEOUT_SECONDS = 3600.0
 MODEL_MAX_ENTRIES = 100_000
+RESAMPLED_MAX_BYTES = 2 * 1024**3
 
 
 class ModelBudget:
@@ -63,6 +65,30 @@ GENERATED_TRANSCRIPT_RE = re.compile(
 )
 CACHE_KEY_HASH_LENGTH = 12
 TRANSCRIPT_OUTPUT_SUFFIXES = (".dote.json", ".podlove.json", ".webvtt", ".txt")
+FILESYSTEM_COMPONENT_MAX_BYTES = 255
+CACHE_FILENAME_MAX_BYTES = FILESYSTEM_COMPONENT_MAX_BYTES - ATOMIC_NAME_EXTRA_BYTES
+READABLE_PREFIX_MAX_BYTES = CACHE_FILENAME_MAX_BYTES - max(
+    len(suffix) for suffix in (*TRANSCRIPT_OUTPUT_SUFFIXES, "_16khz.mp3")
+)
+
+
+def _byte_prefix(value: str, maximum: int) -> str:
+    """Shorten at a UTF-8 boundary, retaining short existing cache names."""
+    return value.encode("utf-8")[:maximum].decode("utf-8", errors="ignore")
+
+
+def _source_filename(name: str) -> str:
+    if len(name.encode("utf-8")) <= CACHE_FILENAME_MAX_BYTES:
+        return name
+    suffix = Path(name).suffix
+    # Only keep a bounded extension; unusual long extensions are readable text.
+    if len(suffix.encode("utf-8")) > 32:
+        suffix = ""
+    stem = name[: -len(suffix)] if suffix else name
+    return (
+        _byte_prefix(stem, CACHE_FILENAME_MAX_BYTES - len(suffix.encode("utf-8")))
+        + suffix
+    )
 
 
 def is_url(url: str) -> bool:
@@ -123,7 +149,9 @@ def get_cache_key(url: str) -> str:
     before the first dot (``ep1.final.mp3`` and ``ep1.draft.mp3``) get
     different directories.
     """
-    stem = get_title_from_string(url) or "episode"
+    stem = _byte_prefix(
+        get_title_from_string(url) or "episode", READABLE_PREFIX_MAX_BYTES
+    )
     digest = hashlib.sha256(get_cache_source(url).encode("utf-8")).hexdigest()
     return f"{stem}-{digest[:CACHE_KEY_HASH_LENGTH]}"
 
@@ -252,10 +280,17 @@ def resample_audio(input_path: Path, output_path: Path) -> None:
                 "1",
                 "-map",
                 "0:a:",
+                "-fs",
+                str(RESAMPLED_MAX_BYTES),
                 str(tmp_path),
             ],
             description=f"Resampling {input_path}",
+            output_limit=(tmp_path, RESAMPLED_MAX_BYTES),
         )
+        # ffmpeg may exit successfully on -fs and can overshoot by a packet.
+        # Neither a limit-truncated result nor an oversized result is reusable.
+        if tmp_path.stat().st_size >= RESAMPLED_MAX_BYTES:
+            raise RuntimeError("Resampling reached output byte limit (2 GiB).")
 
 
 # 25MB max bytes are allowed
@@ -267,11 +302,12 @@ class Audio:
         self.base_dir = base_dir
         self.url = url
         self._is_http_url = is_url(url)
-        self.prefix = get_title_from_string(url) or "episode"
+        source_title = get_title_from_string(url) or "episode"
+        self.prefix = _byte_prefix(source_title, READABLE_PREFIX_MAX_BYTES)
         if title is not None:
             self.title = title
         else:
-            self.title = self.prefix
+            self.title = source_title
         self.cache_key = get_cache_key(url)
         self.podcast_dir = base_dir / self.cache_key
         self.episode_chunks_dir = self.podcast_dir / "chunks"
@@ -292,7 +328,7 @@ class Audio:
             # Source bytes must never be parsed, overwritten or retired as controls,
             # generated chunk audio, native intermediates or raw/derived transcripts.
             name = f"episode_{name}"
-        return self.episode_chunks_dir / name
+        return self.episode_chunks_dir / _source_filename(name)
 
     def validate_storage_roles(self) -> None:
         """Preflight source, prepared, control and transcript namespaces."""
@@ -377,6 +413,8 @@ class Audio:
         rprint("make sure audio file is resampled: ", self.resampled_episode_path)
         if not self.resampled_episode_path.exists():
             resample_audio(self.episode_path, self.resampled_episode_path)
+        if self.resampled_episode_path.stat().st_size >= RESAMPLED_MAX_BYTES:
+            raise RuntimeError("Resampled audio reached output byte limit (2 GiB).")
 
     @property
     def exceeds_size_limit(self) -> bool:
