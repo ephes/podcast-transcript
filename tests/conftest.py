@@ -69,6 +69,8 @@ def episode(tmp_path, monkeypatch):
         chunks = [self.episode_chunks_dir / f"chunk_{i:03}.mp3" for i in range(2)]
         for chunk in chunks:
             chunk.write_bytes(b"synthetic audio")
+        self.resampled_episode_path.write_bytes(b"synthetic resampled audio")
+        self.chunks_manifest_path.write_text('["chunk_000.mp3", "chunk_001.mp3"]')
         return chunks
 
     monkeypatch.setattr(audio.Audio, "prepare_audio_for_transcription", prepare)
@@ -79,7 +81,11 @@ def episode(tmp_path, monkeypatch):
     files = [
         store.cache_metadata_path,
         *paths.values(),
-        *store.episode_chunks_dir.glob("*.json"),
+        *(
+            p
+            for p in store.episode_chunks_dir.glob("*.json")
+            if p.name != "chunks.json"
+        ),
     ]
     previous = {p.relative_to(store.podcast_dir): p.read_bytes() for p in files}
     return store, previous

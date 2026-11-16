@@ -319,3 +319,34 @@ def test_sync_backend_still_works_inside_running_event_loop(
 
     asyncio.run(caller())
     assert json.loads(output.read_text()) == {"segments": []}
+
+
+@pytest.mark.parametrize("name", ["groq", "voxhelm"])
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"segments":[],"segments":[],"text":"synthetic-private"}',
+        b'{"segments":[],"text":"synthetic-private","text":"other"}',
+        b'{"segments":[{"text":"synthetic-private","start":0,"start":1,"end":2}]}',
+        b'{"segments":[{"text":"synthetic-private","start":0,"st\\u0061rt":1,"end":2}]}',
+        b'{"segments":[],"extra":{"nested":{"key":"synthetic-private","key":0}}}',
+        b'{"segments":',
+        b'{"segments":[],"text":"\xff"}',
+    ],
+)
+def test_remote_json_refusal_preserves_generation(
+    episode, monkeypatch, name, body, capsys
+):
+    from podcast_transcript import single_track
+
+    store, previous = episode
+    stream = Blocks([body])
+    transport(monkeypatch, lambda request: httpx.Response(200, stream=stream))
+    with pytest.raises(RuntimeError, match="transcription.*JSON") as error:
+        single_track.transcribe(store.url, remote(name))
+    assert name.lower() in str(error.value).lower()
+    assert "synthetic-private" not in str(error.value) + capsys.readouterr().out
+    assert all(
+        (store.podcast_dir / p).read_bytes() == data for p, data in previous.items()
+    )
+    assert stream.closed

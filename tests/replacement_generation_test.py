@@ -216,7 +216,7 @@ from pathlib import Path
 from podcast_transcript import single_track
 from podcast_transcript.backends import TranscriptionBackend
 single_track.settings.transcript_dir = Path(sys.argv[1])
-single_track.Audio.prepare_audio_for_transcription = lambda self: sorted(self.episode_chunks_dir.glob("*.mp3"))
+single_track.Audio.prepare_audio_for_transcription = lambda self: sorted(self.episode_chunks_dir.glob("chunk_*.mp3"))
 single_track.get_audio_duration = lambda _: 1.0006
 class Replacement(TranscriptionBackend):
     model_name = "new"
@@ -332,9 +332,10 @@ def test_failed_restore_keeps_backup_and_retires_marker(episode, monkeypatch):
     calls = []
 
     def fail(source, target):
-        calls.append(target)
-        if len(calls) == 2:
-            raise OSError("synthetic restore failure")
+        if not any(part.startswith(".replacement-") for part in target.parts):
+            calls.append(target)
+            if len(calls) == 2:
+                raise OSError("synthetic restore failure")
         copy(source, target)
 
     monkeypatch.setattr(single_track, "copy_file_atomic", fail)
@@ -381,10 +382,102 @@ def test_restore_shares_episode_lock_and_publishes_metadata_last(episode, monkey
     copies = []
 
     def record(source, target):
-        assert not store.cache_metadata_path.exists()
-        copies.append(target)
+        if not any(part.startswith(".replacement-") for part in target.parts):
+            assert not store.cache_metadata_path.exists()
+            copies.append(target)
         copy(source, target)
 
     monkeypatch.setattr(single_track, "copy_file_atomic", record)
     single_track.restore_last_success(store.url)
     assert copies[-1] == store.cache_metadata_path
+
+
+@pytest.mark.parametrize("artifact", ["export", "raw", "metadata"])
+def test_restore_pins_verified_bytes_before_publication(episode, monkeypatch, artifact):
+    store, previous = episode
+    single_track.transcribe(store.url, RecordingBackend("new", "new"))
+    recovery = store.podcast_dir / ".previous-transcripts"
+    path = {
+        "export": recovery / store.output_path(".txt").name,
+        "raw": recovery / "chunks/chunk_000.json",
+        "metadata": recovery / "cache.json",
+    }[artifact]
+    original = path.read_bytes()
+    digest = single_track._generation_digest
+    replaced = []
+
+    def replace_after_admission(generation):
+        result = digest(generation)
+        if generation.podcast_dir == recovery and not replaced:
+            # Atomic pathname replacement after admission, before restore reopens.
+            replacement = path.with_name("replacement")
+            replacement.write_bytes(original + b" ")
+            replacement.replace(path)
+            replaced.append(path)
+        return result
+
+    monkeypatch.setattr(single_track, "_generation_digest", replace_after_admission)
+    before = {
+        p: p.read_bytes()
+        for p in [store.cache_metadata_path, *single_track._transcript_files(store)]
+    }
+    with pytest.raises(RuntimeError, match="(?i)recovery.*changed|changed.*recovery"):
+        single_track.restore_last_success(store.url)
+    assert all(p.read_bytes() == value for p, value in before.items())
+    assert path.read_bytes() == original + b" "  # Restore never edits its backup.
+    path.write_bytes(original)
+    monkeypatch.setattr(single_track, "_generation_digest", digest)
+    single_track.restore_last_success(store.url)
+    assert all(
+        (store.podcast_dir / p).read_bytes() == data for p, data in previous.items()
+    )
+
+
+@pytest.mark.parametrize(
+    "change", ["edit-chunk", "replace-chunk", "resampled", "wav", "legacy"]
+)
+def test_restore_requires_prepared_audio_byte_provenance(episode, monkeypatch, change):
+    store, previous = episode
+    # Retained WAVs can be the bytes actually submitted to whisper-cpp.
+    wav = store.episode_chunks_dir / "chunk_000.wav"
+    wav.write_bytes(b"synthetic prepared wav")
+    single_track.transcribe(store.url, RecordingBackend("new", "new"))
+    recovery = store.podcast_dir / ".previous-transcripts"
+    backup = {
+        p.relative_to(recovery): p.read_bytes()
+        for p in recovery.rglob("*")
+        if p.is_file()
+    }
+    manifest = recovery / "recovery.json"
+    if change == "legacy":
+        data = json.loads(manifest.read_text())
+        data["version"] = 1
+        data["audio"] = {
+            k: v
+            for k, v in data["audio"].items()
+            if k in {"source.json", "chunks/chunks.json"}
+        }
+        manifest.write_text(json.dumps(data))
+        backup[manifest.relative_to(recovery)] = manifest.read_bytes()
+    else:
+        target = (
+            store.resampled_episode_path
+            if change == "resampled"
+            else wav
+            if change == "wav"
+            else store.episode_chunks_dir / "chunk_000.mp3"
+        )
+        if change == "replace-chunk":
+            replacement = target.with_suffix(".replacement")
+            replacement.write_bytes(b"different audio")
+            replacement.replace(target)
+        else:
+            target.write_bytes(b"different audio")
+    before = {
+        p: p.read_bytes()
+        for p in [store.cache_metadata_path, *single_track._transcript_files(store)]
+    }
+    with pytest.raises(RuntimeError, match="recovery|prepared audio"):
+        single_track.restore_last_success(store.url)
+    assert all(p.read_bytes() == value for p, value in before.items())
+    assert all((recovery / p).read_bytes() == value for p, value in backup.items())

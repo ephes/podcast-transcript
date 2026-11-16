@@ -11,6 +11,20 @@
 
 ### Fixes
 
+- Bind version 2 recovery provenance to streamed resampled/chunk MP3 and cached WAV byte digests,
+  with shared byte/time limits and a final audio recheck. Refuse legacy backups lacking byte evidence;
+  keep them for manual recovery and never perform inference during restore. Settings replacements
+  hash prepared audio before inference and refuse promotion if it changed during transcription.
+
+- Snapshot admitted recovery files into owned staging and verify the copied bytes against the
+  recovery digest before schemas/publication, refusing exchanged files without retiring current metadata.
+
+- Bound combined episodes to 250,000 lines and 64 MiB serialized DOTe JSON during assembly,
+  retaining previous outputs on refusal and avoiding a second episode-sized serialization string.
+
+- Reject duplicate members at every depth in successful Groq/Voxhelm JSON before schema
+  validation or publication, with backend-specific errors that omit response bodies.
+
 - Reclaim only abandoned replacement/backup stages with admitted episode/name/inode ownership
   manifests; bind cleanup to opened directory descriptors and retain ambiguous legacy directories.
 - Reject decreasing segment starts in backend/raw/DOTe caches and combined chunks before

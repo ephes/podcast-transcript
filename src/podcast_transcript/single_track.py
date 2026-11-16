@@ -7,11 +7,12 @@ import stat
 import os
 import tempfile
 from collections.abc import Callable
-from contextlib import nullcontext, contextmanager
+from contextlib import nullcontext, contextmanager, closing
 from fractions import Fraction
 from html import escape
 
 from pathlib import Path
+from time import monotonic
 
 from filelock import FileLock, Timeout
 from rich import print as rprint
@@ -202,6 +203,22 @@ def whisper_text_chunks_to_dote(raw_text_chunks: list[Path]) -> list[Path]:
     return dote_paths
 
 
+# Bound both object overhead and all serialized content (including unknown fields).
+COMBINED_MAX_LINES = 250_000
+COMBINED_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _json_size(data: object) -> int:
+    return sum(
+        len(part.encode("utf-8")) for part in json.JSONEncoder().iterencode(data)
+    )
+
+
+def _check_combined_budget(lines: int, size: int) -> None:
+    if lines > COMBINED_MAX_LINES or size > COMBINED_MAX_BYTES:
+        raise ValueError("Combined transcript exceeds episode line/byte limit.")
+
+
 def combine_dote_chunks(
     dote_chunks: list[Path], output_path: Path, chunk_durations: list[float]
 ) -> None:
@@ -228,15 +245,26 @@ def combine_dote_chunks(
     if len(dote_chunks) == 1:
         # Copy and return early
         [source_dote_file] = dote_chunks
-        load_dote(source_dote_file)
+        data = load_dote(source_dote_file)
+        _check_combined_budget(len(data["lines"]), 0)
         rprint(f"Copying {source_dote_file} to {output_path}")
         with atomic_output(output_path) as tmp_path:
-            shutil.copy(source_dote_file, tmp_path)
+            size = 0
+            with (
+                tmp_path.open("wb") as target,
+                closing(regular_file_blocks(source_dote_file)) as blocks,
+            ):
+                for block in blocks:
+                    size += len(block)
+                    _check_combined_budget(len(data["lines"]), size)
+                    target.write(block)
         return None
 
     rprint(f"Combining {len(dote_chunks)} DOTe chunks into {output_path}")
 
-    combined_lines = []
+    combined_lines: list[dict] = []
+    size = _json_size({"lines": []})
+    _check_combined_budget(0, size)
     # Keep decimal durations exact; round only the cumulative boundary.
     offset = Fraction(0)
 
@@ -253,6 +281,8 @@ def combine_dote_chunks(
                 start_time + round(offset * 1000)
             )
             new_line["endTime"] = format_dote_timecode(end_time + round(offset * 1000))
+            size += _json_size(new_line) + (2 if combined_lines else 0)
+            _check_combined_budget(len(combined_lines) + 1, size)
             combined_lines.append(new_line)
 
         # The next chunk starts where this chunk's audio ends
@@ -260,7 +290,10 @@ def combine_dote_chunks(
 
     combined = {"lines": combined_lines}
     validate_dote(combined)
-    write_text_atomic(output_path, json.dumps(combined))
+    # Avoid a second episode-sized joined string after admission.
+    with atomic_output(output_path) as temporary:
+        with temporary.open("w", encoding="utf-8") as target:
+            json.dump(combined, target)
 
 
 def convert_dote_to_podlove(dote_path: Path, podlove_path: Path) -> None:
@@ -354,6 +387,56 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+PREPARED_AUDIO_MAX_BYTES = 64 * 1024**3
+PREPARED_AUDIO_HASH_TIMEOUT_SECONDS = 3600.0
+
+
+def _prepared_audio_digest(audio: Audio) -> str:
+    """Bind recovery to the admitted MP3 inventory and any inference WAV caches."""
+    deadline = monotonic() + PREPARED_AUDIO_HASH_TIMEOUT_SECONDS
+
+    def check_time():
+        if monotonic() >= deadline:
+            raise RuntimeError("Prepared audio hashing exceeded elapsed limit.")
+
+    chunks = audio._load_chunk_manifest()
+    if chunks is None:
+        raise RuntimeError("Recovery requires a valid prepared audio inventory.")
+    chunk_set = set(chunks)
+    paths = [audio.resampled_episode_path, *chunks]
+    for chunk in chunks:
+        wav = chunk.with_suffix(".wav")
+        if wav.exists() or wav.is_symlink():
+            paths.append(wav)
+    remaining = PREPARED_AUDIO_MAX_BYTES
+    inventory = hashlib.sha256()
+    for path in paths:
+        check_time()
+        # Only the single-chunk link already admitted by the chunk manifest may
+        # reference our regular resampled file. All actual reads refuse symlinks.
+        source = (
+            audio.resampled_episode_path
+            if path in chunk_set and path.is_symlink()
+            else path
+        )
+        digest = hashlib.sha256()
+        with closing(regular_file_blocks(source)) as blocks:
+            for block in blocks:
+                check_time()
+                remaining -= len(block)
+                if remaining < 0:
+                    raise RuntimeError("Prepared audio hashing exceeded byte limit.")
+                digest.update(block)
+        check_time()
+        inventory.update(
+            json.dumps(
+                (path.relative_to(audio.podcast_dir).as_posix(), digest.hexdigest())
+            ).encode()
+        )
+        inventory.update(b"\n")
+    return inventory.hexdigest()
+
+
 def _audio_generation(audio: Audio) -> dict[str, str | None]:
     result: dict[str, str | None] = {}
     for name in ("source.json", "chunks/chunks.json"):
@@ -364,6 +447,7 @@ def _audio_generation(audio: Audio) -> dict[str, str | None]:
             result[name] = None
         else:
             result[name] = _file_digest(path)
+    result["prepared_audio_sha256"] = _prepared_audio_digest(audio)
     return result
 
 
@@ -392,27 +476,42 @@ def restore_last_success(url: str) -> dict[str, Path]:
             not isinstance(manifest, dict)
             or set(manifest) != {"version", "audio", "inventory_sha256"}
             or type(manifest["version"]) is not int
-            or manifest["version"] != 1
+            or manifest["version"] != 2
             or manifest["audio"] != _audio_generation(audio)
             or manifest["inventory_sha256"] != _generation_digest(recovery)
         ):
             raise RuntimeError(
                 "Incomplete recovery generation or changed prepared audio."
             )
-        metadata = load_control_json(recovery.cache_metadata_path)
-        if not isinstance(metadata, dict) or not isinstance(
-            metadata.get("backend"), str
-        ):
-            raise RuntimeError("Invalid recovery cache metadata.")
-        load_dote(recovery.output_path(".dote.json"))
-        for path in _transcript_files(recovery):
-            if path.parent == recovery.episode_chunks_dir:
-                if path.name.endswith(".dote.json"):
-                    load_dote(path)
-                elif not path.name.endswith(".whisper-cpp.json"):
-                    load_whisper_transcript(path)
-        # Keep the recovery directory untouched, even if a later copy/fsync fails.
-        _publish_transcripts(audio, recovery)
+        # Own the copied bytes before schema validation/publication. Reopening the
+        # recovery paths after their digest check can otherwise read a new generation.
+        with tempfile.TemporaryDirectory(
+            prefix=".replacement-", dir=audio.podcast_dir
+        ) as directory:
+            snapshot = _generation_at(audio, Path(directory))
+            _mark_stage(audio, snapshot.podcast_dir)
+            for path in [*_transcript_files(recovery), recovery.cache_metadata_path]:
+                copy_file_atomic(
+                    path, snapshot.podcast_dir / path.relative_to(recovery.podcast_dir)
+                )
+            if _generation_digest(snapshot) != manifest["inventory_sha256"]:
+                raise RuntimeError("Recovery generation changed while copying.")
+            metadata = load_control_json(snapshot.cache_metadata_path)
+            if not isinstance(metadata, dict) or not isinstance(
+                metadata.get("backend"), str
+            ):
+                raise RuntimeError("Invalid recovery cache metadata.")
+            load_dote(snapshot.output_path(".dote.json"))
+            for path in _transcript_files(snapshot):
+                if path.parent == snapshot.episode_chunks_dir:
+                    if path.name.endswith(".dote.json"):
+                        load_dote(path)
+                    elif not path.name.endswith(".whisper-cpp.json"):
+                        load_whisper_transcript(path)
+            if manifest["audio"] != _audio_generation(audio):
+                raise RuntimeError("Changed prepared audio during recovery.")
+            # Keep recovery untouched, even if a later copy/fsync fails.
+            _publish_transcripts(audio, snapshot)
         return _transcript_paths(audio)
 
 
@@ -559,6 +658,9 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
         # in place as before instead of failing every later run.
         and _current_generation_readable(audio)
     ):
+        # Bind the recovery copy to the prepared audio before inference, so an
+        # unhashable inventory fails fast instead of after every replacement.
+        audio_generation = _audio_generation(audio)
         # Do all inference and export work without touching the current generation.
         with tempfile.TemporaryDirectory(
             prefix=".replacement-", dir=audio.podcast_dir
@@ -576,7 +678,7 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
             _transcribe_prepared(
                 staged, backend, staged_chunks, chunk_durations, metadata
             )
-            _promote_transcripts(audio, staged)
+            _promote_transcripts(audio, staged, audio_generation)
         return _transcript_paths(audio)
     return _transcribe_prepared(audio, backend, audio_chunks, chunk_durations, metadata)
 
@@ -598,7 +700,11 @@ def _transcript_files(audio: Audio) -> list[Path]:
     ]
 
 
-def _promote_transcripts(audio: Audio, staged: Audio) -> None:
+def _promote_transcripts(
+    audio: Audio, staged: Audio, audio_generation: dict[str, str | None]
+) -> None:
+    if _audio_generation(audio) != audio_generation:
+        raise RuntimeError("Prepared audio changed during transcription; retry.")
     # Keep a durable recovery copy before touching any currently published file.
     recovery = audio.podcast_dir / ".previous-transcripts"
     with tempfile.TemporaryDirectory(
@@ -614,8 +720,8 @@ def _promote_transcripts(audio: Audio, staged: Audio) -> None:
             backup / "recovery.json",
             json.dumps(
                 {
-                    "version": 1,
-                    "audio": _audio_generation(audio),
+                    "version": 2,
+                    "audio": audio_generation,
                     "inventory_sha256": _generation_digest(backup_audio),
                 }
             ),
