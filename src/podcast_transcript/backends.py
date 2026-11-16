@@ -100,6 +100,16 @@ def remote_response(backend: str, url: str, **kwargs) -> httpx.Response:
         return executor.submit(lambda: asyncio.run(bounded_receive())).result()
 
 
+def remote_json(response: httpx.Response, backend: str):
+    """Decode bounded remote bytes without losing duplicate-member evidence."""
+    try:
+        return loads_unique(response.content)
+    except (ValueError, UnicodeError, RecursionError):
+        raise RuntimeError(
+            f"{backend} transcription returned invalid or ambiguous JSON."
+        ) from None
+
+
 def http_timeout() -> httpx.Timeout:
     """
     Timeout for remote transcription uploads.
@@ -278,7 +288,7 @@ class Groq:
                 raise self.http_error(response) from None
             else:
                 # Success
-                json_transcript = response.json()
+                json_transcript = remote_json(response, "Groq")
                 break  # Exit the loop
 
         validate_whisper_transcript(json_transcript)
@@ -459,7 +469,7 @@ class Voxhelm:
                     f"Voxhelm transcription failed with status {response.status_code}."
                 ) from None
 
-        result = response.json()
+        result = remote_json(response, "Voxhelm")
         validate_whisper_transcript(result)
         write_text_atomic(transcript_path, json.dumps(result))
 

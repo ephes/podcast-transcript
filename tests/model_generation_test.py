@@ -32,6 +32,8 @@ def test_model_generation_never_certifies_unchecked_chunks(
         chunks = [self.episode_chunks_dir / f"chunk_{i:03}.mp3" for i in range(2)]
         for chunk in chunks:
             chunk.write_bytes(b"synthetic audio")
+        self.resampled_episode_path.write_bytes(b"resampled")
+        self.chunks_manifest_path.write_text(json.dumps([p.name for p in chunks]))
         return chunks
 
     monkeypatch.setattr(audio.Audio, "prepare_audio_for_transcription", prepare)
@@ -64,7 +66,7 @@ def test_model_generation_never_certifies_unchecked_chunks(
     # The marker keeps the first identity; only chunks checked against it exist.
     recorded = json.loads(store.cache_metadata_path.read_text())
     assert recorded["local_model_sha256"] == first_identity
-    assert len(list(store.episode_chunks_dir.glob("*.json"))) == changed_chunk
+    assert len(list(store.episode_chunks_dir.glob("chunk_*.json"))) == changed_chunk
     assert not store.output_path(".dote.json").exists()
 
     # The changed model starts fresh; so does restoring the first identity later.
@@ -92,6 +94,8 @@ def test_interrupted_run_with_unchanged_model_resumes_completed_chunks(
         chunks = [self.episode_chunks_dir / f"chunk_{i:03}.mp3" for i in range(3)]
         for chunk in chunks:
             chunk.write_bytes(b"synthetic audio")
+        self.resampled_episode_path.write_bytes(b"resampled")
+        self.chunks_manifest_path.write_text(json.dumps([p.name for p in chunks]))
         return chunks
 
     monkeypatch.setattr(audio.Audio, "prepare_audio_for_transcription", prepare)

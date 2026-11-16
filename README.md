@@ -400,17 +400,36 @@ transcribe --restore-last-success <same-audio-source>
 
 Use the same source string and `TRANSCRIPT_DIR` as the interrupted run; the source file need not
 be available. Restore holds the episode lock, verifies the backup's exact inventory/byte digest,
-validates cached transcript schemas and checks the current source/chunk completion markers against
+copies it to private owned staging, rechecks the copied inventory digest, validates the staged
+transcript schemas and checks the current source/chunk completion markers against
 the recorded audio generation. It restores all exports and chunk transcripts, removes stale
 transcript files, and publishes the original `cache.json` bytes last. It never swaps the recovery
-copy with a partial public generation. On failure that copy stays available for another restore;
+copy with a partial public generation. On failure that copy stays available for another restore.
+Snapshot/admission failures preserve current exports and metadata. Once publication starts,
 an interrupted data copy leaves the public cache marker absent. A sync error after the final
 metadata rename may leave a fully copied generation visible; the recovery copy still remains. Missing, edited or unmarked
 legacy backups are refused before publication. Such backups remain available for manual inspection
-and copying individual exports out. Keep prepared audio unchanged: markers identify the prepared
-generation, but do not detect manual audio edits that leave those markers unchanged. Do not restore
-metadata over different audio. Source-audio
+and copying individual exports out. Version 2 recovery manifests also bind the resampled MP3,
+every admitted MP3 chunk (including the short-audio link's owned target), and any cached chunk WAVs
+to streamed SHA-256 byte evidence. Names, additions and removals affect that identity. Hashing uses
+at most 1 MiB reads, a shared 64 GiB byte ceiling and a one-hour elapsed budget per pass; growth is
+counted and filesystem I/O must return for time checks. Restore rechecks audio after snapshot
+validation, immediately before publication. The episode lock excludes cooperating invocations;
+external editors must leave prepared audio and private staging alone during restore. This is no
+atomic fence against noncooperating writes after the final check.
+Legacy version 1 manifests without prepared-byte evidence are refused, without changing their
+backups or current exports. Inspect/copy those exports manually, or rerun ordinary transcription
+with stable prepared audio to rebuild a completed generation; a subsequent successful settings
+replacement writes a version 2 backup. Restore never invokes inference to upgrade a backup. Source-audio
 changes retain their separate preparation semantics; keep external backups for older audio/transcripts.
+
+Combined episodes admit at most 250,000 DOTe lines and 64 MiB of serialized UTF-8 DOTe
+JSON, including escaped text, speaker labels, unknown line fields, separators and timestamps.
+Both budgets are charged while assembling chunks, before retaining another line or publishing
+any combined export. Single-chunk copies use the same line limit and count their original bytes
+(including whitespace). Exceeding either limit fails explicitly; split unusually large episodes
+into separate inputs. A refused settings replacement preserves all previous completed exports.
+Admitted multi-chunk output is serialized directly to staging without another episode-sized join.
 
 ### Transcript and cached-artifact validation
 
@@ -418,8 +437,8 @@ Native whisper-cpp timestamps require the same full `HH:MM:SS,mmm` grammar as DO
 including component ranges and multi-day hours. Malformed native schemas and JSON raise a
 controlled error without transcript text and never replace converted raw caches.
 
-Raw, DOTe, native/MLX output and cache-control JSON reject duplicate object keys at every depth,
-without echoing values. Ambiguous control markers stop reuse and preserve existing files; repair or
+Successful Groq/Voxhelm responses, raw, DOTe, native/MLX output and cache-control JSON reject
+duplicate object keys at every depth, without echoing values. Ambiguous control markers stop reuse and preserve existing files; repair or
 remove the marker deliberately before retrying.
 
 All backend results must be Whisper objects containing a `segments` list. An empty list is a valid
