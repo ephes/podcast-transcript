@@ -26,7 +26,9 @@ settings.transcript_dir = Path(sys.argv[1])
 def prepare(self):
     self.episode_chunks_dir.mkdir(parents=True, exist_ok=True)
     chunk = self.episode_chunks_dir / "chunk_000.mp3"
-    chunk.write_bytes(b"synthetic")
+    chunk.write_bytes(b"audio")
+    self.resampled_episode_path.write_bytes(b"resampled")
+    self.chunks_manifest_path.write_text('["chunk_000.mp3"]')
     return [chunk]
 Audio.prepare_audio_for_transcription = prepare
 class SyntheticBackend:

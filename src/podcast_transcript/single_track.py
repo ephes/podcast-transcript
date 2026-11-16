@@ -127,6 +127,7 @@ def audio_chunks_to_text(
     audio_chunks: list[Path],
     *,
     validate_model: Callable[[], None] | None = None,
+    validate_chunk: Callable[[Path], None] | None = None,
 ) -> list[Path]:
     """Convert the audio chunks to text. Only convert if the transcript does not exist yet."""
     file_names = " ".join([chunk.name for chunk in audio_chunks])
@@ -144,13 +145,16 @@ def audio_chunks_to_text(
             # produced by a replaced model never becomes reusable under it.
             staging = (
                 atomic_output(transcript_path)
-                if validate_model is not None
+                if validate_model is not None or validate_chunk is not None
                 else nullcontext(transcript_path)
             )
             with staging as target:
                 service.transcribe(chunk, target)
-                if validate_model is not None:
-                    validate_model()
+                if validate_model is not None or validate_chunk is not None:
+                    if validate_model is not None:
+                        validate_model()
+                    if validate_chunk is not None:
+                        validate_chunk(chunk)
                     if not target.exists():
                         raise RuntimeError(
                             f"Transcription backend did not produce {transcript_path}"
@@ -389,6 +393,36 @@ def _file_digest(path: Path) -> str:
 
 PREPARED_AUDIO_MAX_BYTES = 64 * 1024**3
 PREPARED_AUDIO_HASH_TIMEOUT_SECONDS = 3600.0
+
+
+def _chunk_byte_provenance(audio: Audio, chunks: list[Path]) -> dict[str, str]:
+    """Bind cached raw and derived transcripts to each admitted MP3's bytes."""
+    deadline = monotonic() + PREPARED_AUDIO_HASH_TIMEOUT_SECONDS
+    remaining = PREPARED_AUDIO_MAX_BYTES
+    result = {}
+    for chunk in chunks:
+        source = chunk
+        if chunk.is_symlink():
+            if (
+                len(chunks) != 1
+                or audio.resampled_episode_path.is_symlink()
+                or chunk.resolve() != audio.resampled_episode_path.resolve()
+            ):
+                raise RuntimeError("Prepared chunk link is not owned resampled audio.")
+            source = audio.resampled_episode_path
+        digest = hashlib.sha256()
+        with closing(regular_file_blocks(source)) as blocks:
+            for block in blocks:
+                if monotonic() >= deadline:
+                    raise RuntimeError("Prepared audio hashing exceeded elapsed limit.")
+                remaining -= len(block)
+                if remaining < 0:
+                    raise RuntimeError("Prepared audio hashing exceeded byte limit.")
+                digest.update(block)
+        if monotonic() >= deadline:
+            raise RuntimeError("Prepared audio hashing exceeded elapsed limit.")
+        result[chunk.name] = digest.hexdigest()
+    return result
 
 
 def _prepared_audio_digest(audio: Audio) -> str:
@@ -648,6 +682,26 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
         cached = load_control_json(audio.cache_metadata_path)
     except FileNotFoundError:
         cached = None
+    provenance = _chunk_byte_provenance(audio, audio_chunks)
+    if (
+        isinstance(cached, dict)
+        and "chunk_sha256" in cached
+        and cached["chunk_sha256"] != provenance
+    ):
+        raise RuntimeError(
+            "Prepared chunk bytes changed; previous transcripts were preserved. "
+            "Restore the prepared audio or move the episode cache aside and retry."
+        )
+    metadata["chunk_sha256"] = provenance
+
+    def validate_audio(name: str | None) -> None:
+        chunks = [chunk for chunk in audio_chunks if name is None or chunk.name == name]
+        expected = {chunk.name: provenance[chunk.name] for chunk in chunks}
+        if _chunk_byte_provenance(audio, chunks) != expected:
+            raise RuntimeError(
+                "Prepared chunk bytes changed during transcription; retry."
+            )
+
     if (
         isinstance(cached, dict)
         and cached != metadata
@@ -676,11 +730,23 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
                 link.symlink_to(chunk.resolve())
                 staged_chunks.append(link)
             _transcribe_prepared(
-                staged, backend, staged_chunks, chunk_durations, metadata
+                staged,
+                backend,
+                staged_chunks,
+                chunk_durations,
+                metadata,
+                validate_audio=validate_audio,
             )
             _promote_transcripts(audio, staged, audio_generation)
         return _transcript_paths(audio)
-    return _transcribe_prepared(audio, backend, audio_chunks, chunk_durations, metadata)
+    return _transcribe_prepared(
+        audio,
+        backend,
+        audio_chunks,
+        chunk_durations,
+        metadata,
+        validate_audio=validate_audio,
+    )
 
 
 def _transcript_paths(audio: Audio) -> dict[str, Path]:
@@ -758,21 +824,25 @@ def _transcribe_prepared(
     audio_chunks: list[Path],
     chunk_durations: list[float],
     metadata: dict,
+    *,
+    validate_audio: Callable[[str | None], None],
 ) -> dict[str, Path]:
     transcript_paths = {}
     audio.ensure_transcript_cache_matches(metadata)
-    validate_model = None
-    if "local_model_sha256" in metadata:
 
-        def validate_model() -> None:
-            if backend_cache_metadata(backend) != metadata:
-                raise RuntimeError(
-                    "Local model changed during transcription; retry with a stable model."
-                )
+    def validate_inputs(chunk: Path) -> None:
+        validate_audio(chunk.name)
+        if "local_model_sha256" in metadata and backend_cache_metadata(backend) != {
+            key: value for key, value in metadata.items() if key != "chunk_sha256"
+        }:
+            raise RuntimeError(
+                "Local model changed during transcription; retry with a stable model."
+            )
 
     text_chunks = audio_chunks_to_text(
-        backend, audio_chunks, validate_model=validate_model
+        backend, audio_chunks, validate_chunk=validate_inputs
     )
+    validate_audio(None)
     dote_chunks = whisper_text_chunks_to_dote(text_chunks)
     dote_path = audio.output_path(".dote.json")
     if not dote_path.exists():

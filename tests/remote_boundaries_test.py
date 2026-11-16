@@ -289,9 +289,10 @@ def test_remote_trickle_deadline_preserves_outputs_and_releases_lock(
     url = "https://example.test/episode.mp3"
     audio = Audio(base_dir=tmp_path, url=url)
     audio.podcast_dir.mkdir(parents=True)
-    audio.cache_metadata_path.write_text(
-        json.dumps(single_track.backend_cache_metadata(backend))
-    )
+    chunks = _fake_prepare(audio)
+    metadata = single_track.backend_cache_metadata(backend)
+    metadata["chunk_sha256"] = single_track._chunk_byte_provenance(audio, chunks)
+    audio.cache_metadata_path.write_text(json.dumps(metadata))
     previous = audio.output_path(".txt")
     previous.write_text("previous completed transcript")
     with pytest.raises(RuntimeError, match="timed out.*ReadTimeout"):

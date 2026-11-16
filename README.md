@@ -272,7 +272,10 @@ characters outside letters, digits, dots, underscores and hyphens become undersc
 dot-only names use `episode.mp3`. Signed URL queries and fragments stay out of filenames, while the
 full URL still identifies the cache hash. URL names requiring sanitization now have a different
 readable cache-directory stem; their old directories are left untouched and a one-time download and
-transcription rebuild occurs. Copy any outputs you need before deleting those old directories. Generated chunk names are reserved and prefixed with `episode_`.
+transcription rebuild occurs. Copy any outputs you need before deleting those old directories. Source basenames matching `chunks.json`, generated MP3/WAV chunks, raw JSON,
+DOTe JSON or whisper-cpp intermediates are reserved (case-insensitively) and prefixed
+with `episode_`. Storage roles are checked before preparation or transcript invalidation;
+source bytes never double as a control document or generated transcript.
 
 Local files are fingerprinted by SHA-256 on each run. Editing or replacing audio at the same path
 prepares new copied, resampled and chunk audio in owned staging, even when the size stays the same.
@@ -301,6 +304,16 @@ to verified directory descriptors; symlinks cannot redirect it. Platforms withou
 recursive deletion retain stages for inspection. Unmarked legacy stages, copied/restored stages with
 changed identities and unrelated matching-prefix directories are left untouched. Inspect these and
 remove them manually only when no invocation is active; the prefix alone does not prove ownership.
+Ordinary transcript reuse also records each prepared MP3 chunk's SHA-256 in `cache.json`,
+binding raw chunks and all derived exports to their admitted bytes. Each invocation hashes
+these bytes before reuse, including the owned short-audio symlink target. Hashing streams
+1 MiB blocks with a shared 64 GiB and one-hour budget per pass. New inference is checked
+again before publishing its raw chunk and before exports. Same-name, same-size edits are
+refused before inference or transcript retirement, even if backend settings changed; the
+previous complete outputs remain available. Restore the original prepared bytes or move
+the episode directory aside and rerun to build a fresh cache. Older transcript metadata
+without chunk digests retranscribes once, keeping readable complete outputs until the
+replacement succeeds. The existing chunk-name manifest format remains compatible.
 Prepared audio is reused. Steps only move their output into place after they succeeded, so a failed download, ffmpeg
 run or transcription raises an error and is retried on the next run. Chunked transcripts are combined
 using each chunk's audio duration, so timestamps stay aligned for episodes longer than 2 hours.

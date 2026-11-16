@@ -282,10 +282,31 @@ class Audio:
     @property
     def episode_path(self):
         name = get_url_filename(self.url) if self._is_http_url else Path(self.url).name
-        if GENERATED_CHUNK_RE.fullmatch(name):
-            # Keep the source audio from colliding with generated chunk files
+        reserved = name.casefold()
+        if (
+            reserved == "chunks.json"
+            or GENERATED_CHUNK_RE.fullmatch(reserved)
+            or GENERATED_TRANSCRIPT_RE.fullmatch(reserved)
+            or reserved == self.resampled_episode_path.name.casefold()
+        ):
+            # Source bytes must never be parsed, overwritten or retired as controls,
+            # generated chunk audio, native intermediates or raw/derived transcripts.
             name = f"episode_{name}"
         return self.episode_chunks_dir / name
+
+    def validate_storage_roles(self) -> None:
+        """Preflight source, prepared, control and transcript namespaces."""
+        paths = [
+            self.episode_path,
+            self.resampled_episode_path,
+            self.chunks_manifest_path,
+            self.cache_metadata_path,
+            self.source_metadata_path,
+            *(self.output_path(suffix) for suffix in TRANSCRIPT_OUTPUT_SUFFIXES),
+        ]
+        identities = [str(path.absolute()).casefold() for path in paths]
+        if len(identities) != len(set(identities)):
+            raise RuntimeError("Source and generated storage roles overlap.")
 
     @property
     def resampled_episode_path(self):
@@ -309,6 +330,7 @@ class Audio:
         stale transcripts are gone. The episode pipeline calls this on private
         staging when replacing a completed generation; it promotes metadata last.
         """
+        self.validate_storage_roles()
         try:
             cached = load_control_json(self.cache_metadata_path)
         except FileNotFoundError:
@@ -324,6 +346,8 @@ class Audio:
         )
 
     def _remove_cached_transcripts(self) -> None:
+        # Retire the byte-provenance claim before replacing a prepared generation.
+        durable_unlink(self.cache_metadata_path)
         keep = {self.episode_path, self.resampled_episode_path}
         if self.episode_chunks_dir.is_dir():
             for path in self.episode_chunks_dir.glob("chunk_*"):
@@ -349,6 +373,7 @@ class Audio:
         """
         Make sure the audio file is resampled to 16khz.
         """
+        self.validate_storage_roles()
         rprint("make sure audio file is resampled: ", self.resampled_episode_path)
         if not self.resampled_episode_path.exists():
             resample_audio(self.episode_path, self.resampled_episode_path)
@@ -364,6 +389,7 @@ class Audio:
         If the audio file exceeds the size limit, split it into smaller chunks.
         If not, just create a link to the resampled audio file.
         """
+        self.validate_storage_roles()
         cached = self._load_chunk_manifest()
         if cached is not None:
             return cached
@@ -639,6 +665,7 @@ class Audio:
             - Resample the audio file to 16khz
             - Split the audio file into smaller chunks if needed
         """
+        self.validate_storage_roles()
         self.validate_control_files()
         private_mkdir(self.podcast_dir)
         if not self._is_http_url and self._local_source_changed():

@@ -258,6 +258,8 @@ def test_transcribe_uses_ffprobe_chunk_durations(mocker, tmp_path):
     chunks_dir = tmp_path / "test" / "chunks"
     chunks_dir.mkdir(parents=True)
     chunks = [chunks_dir / "chunk_000.mp3", chunks_dir / "chunk_001.mp3"]
+    for chunk in chunks:
+        chunk.write_bytes(b"synthetic audio")
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
     mocker.patch(
         "podcast_transcript.single_track.Audio.prepare_audio_for_transcription",
@@ -285,6 +287,7 @@ def test_transcribe_uses_ffprobe_chunk_durations(mocker, tmp_path):
 def test_transcribe_fails_when_backend_writes_nothing(mocker, tmp_path):
     chunks_dir = tmp_path / "test" / "chunks"
     chunks_dir.mkdir(parents=True)
+    (chunks_dir / "chunk_000.mp3").write_bytes(b"synthetic audio")
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
     mocker.patch(
         "podcast_transcript.single_track.Audio.prepare_audio_for_transcription",
