@@ -655,6 +655,9 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
         # in place as before instead of failing every later run.
         and _current_generation_readable(audio)
     ):
+        # Bind the recovery copy to the prepared audio before inference, so an
+        # unhashable inventory fails fast instead of after every replacement.
+        audio_generation = _audio_generation(audio)
         # Do all inference and export work without touching the current generation.
         with tempfile.TemporaryDirectory(
             prefix=".replacement-", dir=audio.podcast_dir
@@ -672,7 +675,7 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
             _transcribe_prepared(
                 staged, backend, staged_chunks, chunk_durations, metadata
             )
-            _promote_transcripts(audio, staged)
+            _promote_transcripts(audio, staged, audio_generation)
         return _transcript_paths(audio)
     return _transcribe_prepared(audio, backend, audio_chunks, chunk_durations, metadata)
 
@@ -694,7 +697,11 @@ def _transcript_files(audio: Audio) -> list[Path]:
     ]
 
 
-def _promote_transcripts(audio: Audio, staged: Audio) -> None:
+def _promote_transcripts(
+    audio: Audio, staged: Audio, audio_generation: dict[str, str | None]
+) -> None:
+    if _audio_generation(audio) != audio_generation:
+        raise RuntimeError("Prepared audio changed during transcription; retry.")
     # Keep a durable recovery copy before touching any currently published file.
     recovery = audio.podcast_dir / ".previous-transcripts"
     with tempfile.TemporaryDirectory(
@@ -711,7 +718,7 @@ def _promote_transcripts(audio: Audio, staged: Audio) -> None:
             json.dumps(
                 {
                     "version": 2,
-                    "audio": _audio_generation(audio),
+                    "audio": audio_generation,
                     "inventory_sha256": _generation_digest(backup_audio),
                 }
             ),

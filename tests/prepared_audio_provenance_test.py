@@ -72,3 +72,41 @@ def test_audio_hash_refusal_preserves_public_and_recovery(episode, monkeypatch, 
     with pytest.raises(RuntimeError, match="hashing exceeded"):
         single_track.restore_last_success(store.url)
     assert all(p.read_bytes() == value for p, value in before.items())
+
+
+def _published(store):
+    return {
+        p: p.read_bytes()
+        for p in [store.cache_metadata_path, *single_track._transcript_files(store)]
+    }
+
+
+def test_unhashable_prepared_audio_refuses_replacement_before_inference(
+    episode, monkeypatch
+):
+    store, _ = episode
+    before = _published(store)
+    monkeypatch.setattr(single_track, "PREPARED_AUDIO_MAX_BYTES", 1)
+    backend = RecordingBackend("new", "new")
+    with pytest.raises(RuntimeError, match="hashing exceeded"):
+        single_track.transcribe(store.url, backend)
+    assert backend.calls == []
+    assert _published(store) == before
+    assert not (store.podcast_dir / ".previous-transcripts").exists()
+
+
+def test_prepared_audio_changed_during_replacement_is_not_promoted(episode):
+    store, _ = episode
+    before = _published(store)
+
+    class Mutating(RecordingBackend):
+        def transcribe(self, audio_file, transcript_path):
+            store.resampled_episode_path.write_bytes(b"edited during inference")
+            super().transcribe(audio_file, transcript_path)
+
+    backend = Mutating("new", "new")
+    with pytest.raises(RuntimeError, match="changed during transcription"):
+        single_track.transcribe(store.url, backend)
+    assert backend.calls
+    assert _published(store) == before
+    assert not (store.podcast_dir / ".previous-transcripts").exists()

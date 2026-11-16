@@ -13,7 +13,8 @@
 
 - Bind version 2 recovery provenance to streamed resampled/chunk MP3 and cached WAV byte digests,
   with shared byte/time limits and a final audio recheck. Refuse legacy backups lacking byte evidence;
-  keep them for manual recovery and never perform inference during restore.
+  keep them for manual recovery and never perform inference during restore. Settings replacements
+  hash prepared audio before inference and refuse promotion if it changed during transcription.
 
 - Snapshot admitted recovery files into owned staging and verify the copied bytes against the
   recovery digest before schemas/publication, refusing exchanged files without retiring current metadata.

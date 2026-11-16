@@ -413,7 +413,9 @@ and copying individual exports out. Version 2 recovery manifests also bind the r
 every admitted MP3 chunk (including the short-audio link's owned target), and any cached chunk WAVs
 to streamed SHA-256 byte evidence. Names, additions and removals affect that identity. Hashing uses
 at most 1 MiB reads, a shared 64 GiB byte ceiling and a one-hour elapsed budget per pass; growth is
-counted and filesystem I/O must return for time checks. Restore rechecks audio after snapshot
+counted and filesystem I/O must return for time checks. A settings replacement hashes prepared
+audio before any inference, so an unhashable inventory fails without spending inference work, and
+refuses promotion when the prepared audio changed during transcription. Restore rechecks audio after snapshot
 validation, immediately before publication. The episode lock excludes cooperating invocations;
 external editors must leave prepared audio and private staging alone during restore. This is no
 atomic fence against noncooperating writes after the final check.
