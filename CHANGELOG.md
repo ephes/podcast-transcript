@@ -21,8 +21,9 @@
   refuse altered prepared MP3s without retiring previous completed outputs, check newly
   inferred chunks before publication, and safely rebuild legacy metadata once.
 - Reserve source names for chunk controls, MP3/WAV chunks, raw/DOTe JSON and native
-  intermediates case-insensitively; preflight distinct storage roles before preparation
-  or transcript invalidation.
+  intermediates case-insensitively, checked against the byte-shortened stored name so a
+  long source cannot collide with the resampled MP3; preflight distinct storage roles
+  before preparation or transcript invalidation.
 
 - Bind version 2 recovery provenance to streamed resampled/chunk MP3 and cached WAV byte digests,
   with shared byte/time limits and a final audio recheck. Refuse legacy backups lacking byte evidence;

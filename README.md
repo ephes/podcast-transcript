@@ -281,8 +281,8 @@ dot-only names use `episode.mp3`. Signed URL queries and fragments stay out of f
 full URL still identifies the cache hash. URL names requiring sanitization now have a different
 readable cache-directory stem; their old directories are left untouched and a one-time download and
 transcription rebuild occurs. Copy any outputs you need before deleting those old directories. Source basenames matching `chunks.json`, generated MP3/WAV chunks, raw JSON,
-DOTe JSON or whisper-cpp intermediates are reserved (case-insensitively) and prefixed
-with `episode_`. Storage roles are checked before preparation or transcript invalidation;
+DOTe JSON, whisper-cpp intermediates or the resampled MP3 are reserved (case-insensitively,
+compared after byte shortening) and prefixed with `episode_`. Storage roles are checked before preparation or transcript invalidation;
 source bytes never double as a control document or generated transcript.
 
 Local files are fingerprinted by SHA-256 on each run. Editing or replacing audio at the same path

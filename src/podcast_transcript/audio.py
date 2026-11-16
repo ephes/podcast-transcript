@@ -318,7 +318,10 @@ class Audio:
     @property
     def episode_path(self):
         name = get_url_filename(self.url) if self._is_http_url else Path(self.url).name
-        reserved = name.casefold()
+        # Check the stored (byte-shortened) name: shortening can turn a long,
+        # distinct source name into a reserved one.
+        stored = _source_filename(name)
+        reserved = stored.casefold()
         if (
             reserved == "chunks.json"
             or GENERATED_CHUNK_RE.fullmatch(reserved)
@@ -327,8 +330,8 @@ class Audio:
         ):
             # Source bytes must never be parsed, overwritten or retired as controls,
             # generated chunk audio, native intermediates or raw/derived transcripts.
-            name = f"episode_{name}"
-        return self.episode_chunks_dir / _source_filename(name)
+            stored = _source_filename(f"episode_{name}")
+        return self.episode_chunks_dir / stored
 
     def validate_storage_roles(self) -> None:
         """Preflight source, prepared, control and transcript namespaces."""

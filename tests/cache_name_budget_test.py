@@ -12,7 +12,16 @@ from single_track_test import RecordingBackend
 
 
 @pytest.mark.parametrize(
-    "stem", ["a" * 248, "ä" * 124, "語" * 82, "a" * 200 + "_16khz"]
+    "stem",
+    [
+        "a" * 248,
+        "ä" * 124,
+        "語" * 82,
+        "a" * 200 + "_16khz",
+        # Shortening drops the 4-byte characters, so the cut source name would
+        # equal the resampled name unless the reserved check sees the cut name.
+        "a" * 200 + "_16khz" + "\N{GRINNING FACE}" * 3,
+    ],
 )
 @pytest.mark.parametrize("remote", [False, True])
 def test_long_source_completes_with_byte_bounded_distinct_paths(
