@@ -11,6 +11,9 @@
 
 ### Fixes
 
+- Reject control/dotenv files changed during a read using descriptor generation, consumed
+  length and named identity checks, preserving prior transcripts and recovery evidence.
+
 - Bound full resampled MP3s below 2 GiB using ffmpeg output limits, supervised file-growth
   checks and final byte enforcement; refuse successful-but-truncated output and preserve
   previous prepared/published generations on failure.

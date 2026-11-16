@@ -114,6 +114,10 @@ select the configuration location before loading it. Environment values override
 API keys. The dotenv file must be a regular UTF-8 file, without symlinks, of at most 64 KiB total,
 counted during reads even if it grows. FIFO/device/directory, oversized and invalid UTF-8 inputs
 stop startup with a value-free error; no partial settings from that file are applied.
+Control and dotenv reads also verify size, nanosecond modification/change times, consumed
+length and the named file identity after reading. Concurrent rewrites, truncations or
+replacements are refused; rerun with stable files. Prior transcripts and recovery metadata
+are preserved when control admission fails.
 
 ### Configuring the Voxhelm Backend
 
