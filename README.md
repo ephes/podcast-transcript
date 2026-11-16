@@ -313,7 +313,9 @@ recursive deletion retain stages for inspection. Unmarked legacy stages, copied/
 changed identities and unrelated matching-prefix directories are left untouched. Inspect these and
 remove them manually only when no invocation is active; the prefix alone does not prove ownership.
 Ordinary transcript reuse also records each prepared MP3 chunk's SHA-256 in `cache.json`,
-binding raw chunks and all derived exports to their admitted bytes. Each invocation hashes
+binding raw chunks and all derived exports to their admitted MP3 bytes. whisper-cpp's cached
+`chunk_NNN.wav` conversions are not hashed and are reused while they pass the WAV format check;
+delete them if you edit them directly. Each invocation hashes
 these bytes before reuse, including the owned short-audio symlink target. Hashing streams
 1 MiB blocks with a shared 64 GiB and one-hour budget per pass. New inference is checked
 again before publishing its raw chunk and before exports. Same-name, same-size edits are
