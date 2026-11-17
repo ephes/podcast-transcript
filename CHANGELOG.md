@@ -1,13 +1,15 @@
-0.1.7 - Unreleased
+0.2.0 - 2026-11-17
 ==================
+
+0.1.7 was published to PyPI on 2026-04-30 from commit `0ee3cf6` (the Voxhelm backend) without a
+git tag; everything below landed after it. This release raises the minor version because cache
+directories change (see the upgrade note under Fixes) and several steps now fail closed.
 
 ### Features
 
 - Add local `transcribe --restore-last-success <source>` recovery under the episode lock, with
   backup integrity/schema and audio-marker checks, exact-byte publication and metadata last.
   Recovery needs no available backend or source audio and keeps its backup on failure.
-
-- Add a `voxhelm` backend for remote transcription via Voxhelm's OpenAI-compatible API.
 
 ### Fixes
 
@@ -263,9 +265,19 @@
 
 ### Documentation
 
-- Document `VOXHELM_API_BASE` / `VOXHELM_API_KEY` configuration and `--backend voxhelm` usage.
 - Add a README troubleshooting note for cache directories left behind by older versions.
 - Document the hashed cache directory names, `cache.json` invalidation and `.env` syntax in the README.
+
+0.1.7 - 2026-04-30
+==================
+
+### Features
+
+- Add a `voxhelm` backend for remote transcription via Voxhelm's OpenAI-compatible API.
+
+### Documentation
+
+- Document `VOXHELM_API_BASE` / `VOXHELM_API_KEY` configuration and `--backend voxhelm` usage.
 
 0.1.6 - 2026-02-26
 ==================

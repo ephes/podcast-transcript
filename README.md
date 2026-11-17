@@ -539,16 +539,16 @@ rendering to an existing export,
 delete just that file in the episode cache directory and rerun the same transcription command with
 the same backend settings. The cached transcript is reused to generate the corrected WebVTT file.
 
-### Cache directories from versions before 0.1.7
+### Cache directories from versions before 0.2.0
 
-Before 0.1.7 the cache directory was named after the episode's file name only, so episodes with the
+Before 0.2.0 the cache directory was named after the episode's file name only, so episodes with the
 same file name shared one directory and a later run could return an earlier episode's transcript.
 Those versions could also cache a failed step as if it had succeeded (for example a saved redirect or
 error page instead of the episode audio, or a partial ffmpeg output), and multi-chunk transcripts
 (episodes longer than 2 hours or larger than 25 MB after resampling) could have timestamps that drift
 early.
 
-0.1.7 does not migrate these directories, because the URL that produced a directory is unknown. They
+0.2.0 does not migrate these directories, because the URL that produced a directory is unknown. They
 are named without a hash suffix (for example `audio`) and are no longer read or modified: the first
 run per episode after upgrading downloads and transcribes the episode again into a new, hashed
 directory, so none of the problems above carry over. Copy any transcripts you still need out of the
