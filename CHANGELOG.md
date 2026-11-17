@@ -11,6 +11,12 @@
 
 ### Fixes
 
+- Render nonblank WebVTT cues with at least a one-millisecond span when timestamp rounding
+  collapses their duration; omit blank cues while preserving raw and DOTe timing evidence.
+
+- Require nonempty HTTP 200 source downloads without Content-Range before caching or audio
+  preparation; refuse unsolicited partial/no-content responses and preserve prior source bytes.
+
 - Anchor local model directory traversal and artifact opens to no-follow directory descriptors;
   recheck root/component identities before accepting a fingerprint so queued-directory or root
   exchanges cannot redirect hashing or publish a cache identity/inference result.

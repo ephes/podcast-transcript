@@ -204,7 +204,12 @@ Source admission has separate budgets (environment or `.env`):
 
 Raise these limits for exceptionally large episodes or slow connections, for example
 `TRANSCRIPT_SOURCE_MAX_BYTES=4294967296 TRANSCRIPT_SOURCE_TOTAL_TIMEOUT=7200 transcribe <url>`.
-Rejected downloads close their response and remove partial files; an existing target is preserved.
+After redirects, source downloads require HTTP 200 without a `Content-Range` header and a
+nonempty body. Partial responses (including 206), no-content responses (204/205) and empty bodies
+are refused before source publication or subsequent audio preparation, even when their declared
+length is consistent. Rejected downloads close their response and remove partial files; an existing
+target is preserved. Previously cached sources are reused without a new HTTP request; if an older
+run cached a fragment, move that episode directory aside and rerun to download it again.
 These limits also bound each local-source hash/copy pass, excluding backend uploads and model hashing.
 Local admission opens one nonblocking descriptor and accepts only regular files; FIFOs, devices and
 sockets are refused before reading. Actual bytes, including file growth, are counted. Elapsed time
@@ -519,13 +524,18 @@ the invalid DOTe cache and regenerate its combined exports before retrying.
   Cue text treats `&`, `<` and `>` as literal text, escaping them as entities. CRLF and CR
   become LF; consecutive blank or whitespace-only lines collapse to one line break, and leading
   and trailing newlines are removed so each segment remains one cue. Other line breaks are kept.
+  Blank or whitespace-only cues are omitted. Nonblank cues whose start and end coincide after
+  nearest-millisecond rounding (including equal source endpoints) render with an end one millisecond
+  after the start. Other timings, overlaps and cue order are preserved. This display policy changes
+  only WebVTT: raw source times and DOTe's existing rounded timestamps remain unchanged.
 - **Plaintext**: Just the plain text of the transcription.
 
 ## Troubleshooting
 
 ### Regenerating cached WebVTT exports
 
-Existing `.webvtt` files remain cached. To apply the literal-text escaping fix to an existing export,
+Existing `.webvtt` files remain cached. To apply current literal-text escaping and minimum-duration
+rendering to an existing export,
 delete just that file in the episode cache directory and rerun the same transcription command with
 the same backend settings. The cached transcript is reused to generate the corrected WebVTT file.
 

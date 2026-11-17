@@ -291,3 +291,70 @@ def test_non_utf8_chunk_manifest_preserves_generation(mocker, audio):
         audio.split_into_chunks()
     assert audio.resampled_episode_path.read_bytes() == b"synthetic"
     assert audio.chunks_manifest_path.read_bytes() == b"\xff\xfe"
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize(
+    "status, headers, body",
+    [
+        (206, {"Content-Range": "bytes 0-2/100", "Content-Length": "3"}, b"abc"),
+        (206, {}, b"abc"),
+        (200, {"Content-Range": "bytes 0-2/100"}, b"abc"),
+        (200, {"Content-Range": ""}, b"abc"),
+        (204, {}, b""),
+        (205, {}, b""),
+        (200, {}, b""),
+        (200, {"Content-Length": "0"}, b""),
+    ],
+)
+def test_source_download_refuses_incomplete_audio(
+    mock_http, audio, existing, status, headers, body
+):
+    class Stream(httpx.SyncByteStream):
+        read = False
+        closed = False
+
+        def __iter__(self):
+            self.read = True
+            yield body
+
+        def close(self):
+            self.closed = True
+
+    stream = Stream()
+    routes, _ = mock_http
+    routes[audio.url] = httpx.Response(status, headers=headers, stream=stream)
+    audio.episode_chunks_dir.mkdir(parents=True)
+    if existing:
+        audio.episode_path.write_bytes(b"previous complete episode")
+
+    with pytest.raises(RuntimeError, match="Source download requires"):
+        download(audio.url, audio.episode_path)
+
+    assert stream.closed
+    if status != 200 or "Content-Range" in headers:
+        assert not stream.read
+    if existing:
+        assert audio.episode_path.read_bytes() == b"previous complete episode"
+    else:
+        assert not audio.episode_path.exists()
+    assert list(audio.episode_chunks_dir.iterdir()) == (
+        [audio.episode_path] if existing else []
+    )
+
+
+@pytest.mark.parametrize("status, body", [(206, b"abc"), (204, b""), (200, b"")])
+def test_refused_source_never_reaches_preparation(
+    mock_http, mocker, audio, status, body
+):
+    routes, _ = mock_http
+    routes[audio.url] = httpx.Response(status, content=body)
+    resample = mocker.patch.object(audio, "make_sure_audio_file_is_resampled")
+    split = mocker.patch.object(audio, "split_into_chunks")
+
+    with pytest.raises(RuntimeError, match="Source download requires"):
+        audio.prepare_audio_for_transcription()
+
+    resample.assert_not_called()
+    split.assert_not_called()
+    assert list(audio.episode_chunks_dir.iterdir()) == []

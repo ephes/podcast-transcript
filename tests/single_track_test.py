@@ -1037,3 +1037,72 @@ def test_oversized_zero_duration_audio_fails_without_chunk_manifest(mocker, audi
         audio.split_into_chunks()
     run.assert_not_called()
     assert not audio.chunks_manifest_path.exists()
+
+
+@pytest.mark.parametrize(
+    "start, end, dote_start, dote_end, vtt_end",
+    [
+        (1.0001, 1.0002, "00:00:01,000", "00:00:01,000", "00:00:01.001"),
+        (1.0, 1.0, "00:00:01,000", "00:00:01,000", "00:00:01.001"),
+        (0.0, 0.0, "00:00:00,000", "00:00:00,000", "00:00:00.001"),
+        (59.9991, 59.9992, "00:00:59,999", "00:00:59,999", "00:01:00.000"),
+        (
+            359999.9991,
+            359999.9992,
+            "99:59:59,999",
+            "99:59:59,999",
+            "100:00:00.000",
+        ),
+        (1.125, 2.875, "00:00:01,125", "00:00:02,875", "00:00:02.875"),
+        (
+            360000.125,
+            360001.875,
+            "100:00:00,125",
+            "100:00:01,875",
+            "100:00:01.875",
+        ),
+    ],
+)
+def test_whisper_to_webvtt_keeps_visible_cue_spans(
+    tmp_path, start, end, dote_start, dote_end, vtt_end
+):
+    from podcast_transcript.single_track import (
+        convert_to_webvtt,
+        whisper_text_chunks_to_dote,
+    )
+
+    raw = tmp_path / "chunk_000.json"
+    raw_bytes = json.dumps(
+        {"segments": [{"start": start, "end": end, "text": "synthetic subtitle"}]}
+    ).encode()
+    raw.write_bytes(raw_bytes)
+    [dote_path] = whisper_text_chunks_to_dote([raw])
+    dote_bytes = dote_path.read_bytes()
+    [line] = json.loads(dote_bytes)["lines"]
+    assert (line["startTime"], line["endTime"]) == (dote_start, dote_end)
+
+    output = tmp_path / "output.webvtt"
+    convert_to_webvtt(dote_path, output)
+
+    assert output.read_text() == (
+        f"WEBVTT\n\n{dote_start.replace(',', '.')} --> {vtt_end}\nsynthetic subtitle\n"
+    )
+    assert raw.read_bytes() == raw_bytes
+    assert dote_path.read_bytes() == dote_bytes
+
+
+@pytest.mark.parametrize("text", ["", " ", "\r\n \t\n"])
+def test_webvtt_omits_blank_cues_only_from_rendered_output(tmp_path, text):
+    from podcast_transcript.single_track import convert_to_webvtt
+
+    source = _write_dote(
+        tmp_path / "input.dote.json",
+        [("00:00:00,000", "00:00:00,000", text)],
+    )
+    original = source.read_bytes()
+    output = tmp_path / "output.webvtt"
+
+    convert_to_webvtt(source, output)
+
+    assert output.read_text() == "WEBVTT\n"
+    assert source.read_bytes() == original
