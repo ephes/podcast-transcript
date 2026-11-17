@@ -199,6 +199,14 @@ def download(url: str, target_path: Path) -> None:
                 with client.stream("GET", url) as response:
                     response.raise_for_status()
                     check_deadline()
+                    if (
+                        response.status_code != 200
+                        or "Content-Range" in response.headers
+                    ):
+                        raise RuntimeError(
+                            "Source download requires a complete HTTP 200 response "
+                            "without Content-Range."
+                        )
                     length = response.headers.get("Content-Length")
                     if length is not None:
                         try:
@@ -222,6 +230,8 @@ def download(url: str, target_path: Path) -> None:
                                 )
                             file.write(data)
                     check_deadline()
+                    if received == 0:
+                        raise RuntimeError("Source download requires nonempty audio.")
     except httpx.HTTPError as exc:
         detail = (
             f"status {exc.response.status_code}"
