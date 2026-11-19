@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from podcast_transcript import single_track
+from podcast_transcript import single_track, transcript_validation
 from single_track_test import RecordingBackend
 
 
@@ -80,6 +80,42 @@ def test_single_chunk_budget_preserves_original_bytes(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="Combined transcript.*limit"):
         single_track.combine_dote_chunks([source], output, [0])
     assert output.read_bytes() == source.read_bytes()
+
+
+def test_single_chunk_publishes_admitted_bytes_after_replacement(tmp_path, monkeypatch):
+    source = tmp_path / "chunk.json"
+    payload = (
+        '{\r\n  "lines": [{"startTime": "00:00:00,000", "endTime": "00:00:00,001",'
+        ' "text": "é"}],\r\n  "extra": true\r\n}\r\n'
+    ).encode("utf-8")
+    source.write_bytes(payload)
+    output = tmp_path / "combined.json"
+    output.write_bytes(b"previous")
+    replacement = tmp_path / "replacement.json"
+    invalid = b'{"lines":[null]}'
+    replacement.write_bytes(invalid)
+    validate = transcript_validation.validate_dote
+
+    def validate_then_replace(data):
+        validate(data)
+        replacement.replace(source)
+
+    monkeypatch.setattr(transcript_validation, "validate_dote", validate_then_replace)
+    single_track.combine_dote_chunks([source], output, [0])
+    assert source.read_bytes() == invalid
+    assert output.read_bytes() == payload
+
+
+def test_single_chunk_checks_byte_limit_before_parsing(tmp_path, monkeypatch):
+    source = tmp_path / "chunk.json"
+    source.write_bytes(b"invalid JSON")
+    output = tmp_path / "combined.json"
+    output.write_bytes(b"previous")
+    monkeypatch.setattr(single_track, "COMBINED_MAX_BYTES", 4)
+
+    with pytest.raises(ValueError, match="Combined transcript.*limit"):
+        single_track.combine_dote_chunks([source], output, [0])
+    assert output.read_bytes() == b"previous"
 
 
 @pytest.mark.parametrize("limit", ["lines", "bytes"])

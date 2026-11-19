@@ -478,9 +478,11 @@ changes retain their separate preparation semantics; keep external backups for o
 Combined episodes admit at most 250,000 DOTe lines and 64 MiB of serialized UTF-8 DOTe
 JSON, including escaped text, speaker labels, unknown line fields, separators and timestamps.
 Both budgets are charged while assembling chunks, before retaining another line or publishing
-any combined export. Single-chunk copies use the same line limit and count their original bytes
-(including whitespace). Exceeding either limit fails explicitly; split unusually large episodes
-into separate inputs. A refused settings replacement preserves all previous completed exports.
+any combined export. Single-chunk assembly reads one byte-limited snapshot of a regular DOTe file,
+validates its JSON and line count, and publishes those exact bytes, including whitespace.
+A source that changes during the read is refused. Exceeding either limit fails explicitly. Split
+unusually large episodes into separate inputs. A refused settings replacement preserves all previous
+completed exports.
 Admitted multi-chunk output is serialized directly to staging without another episode-sized join.
 
 ### Transcript and cached-artifact validation

@@ -103,9 +103,12 @@ def format_dote_timecode(milliseconds: int) -> str:
     return f"{hours:02}:{minutes:02}:{seconds:02},{millis:03}"
 
 
-def load_dote(path: Path) -> dict:
+def load_dote(path: Path, *, snapshot: bytes | None = None) -> dict:
+    """Validate DOTe JSON, using the path for diagnostics with a supplied snapshot."""
     try:
-        data = loads_unique(path.read_text())
+        data = loads_unique(
+            path.read_text() if snapshot is None else snapshot.decode("utf-8")
+        )
     except (ValueError, UnicodeError, RecursionError):
         raise ValueError(f"Invalid DOTe JSON in {path.name}.") from None
     try:
