@@ -63,9 +63,9 @@ def test_audio_hash_refusal_preserves_public_and_recovery(episode, monkeypatch, 
                     assert len(block) <= 1024 * 1024
                     if path == store.resampled_episode_path and not grown:
                         grown.append(path)
-                        # Grow an admitted file after its first bounded read.
+                        # Cross the aggregate limit before the source's EOF check.
                         with path.open("ab") as out:
-                            out.write(b"x")
+                            out.write(b"x" * (size - path.stat().st_size + 1))
                     yield block
 
             monkeypatch.setattr(single_track, "regular_file_blocks", grow)

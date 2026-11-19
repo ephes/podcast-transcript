@@ -43,7 +43,9 @@ from .safe_io import (
     durable_unlink,
     sync_directory,
     copy_file_atomic,
+    read_regular_bounded,
     regular_file_blocks,
+    write_bytes_atomic,
     write_text_atomic,
 )
 
@@ -319,21 +321,19 @@ def combine_dote_chunks(
                 f"Invalid chunk duration at position {position}."
             ) from None
     if len(dote_chunks) == 1:
-        # Copy and return early
         [source_dote_file] = dote_chunks
-        data = load_dote(source_dote_file)
-        _check_combined_budget(len(data["lines"]), 0)
+        try:
+            snapshot = read_regular_bounded(
+                source_dote_file,
+                limit=COMBINED_MAX_BYTES,
+                description=f"Combined transcript ({source_dote_file.name})",
+            )
+        except RuntimeError as exc:
+            raise ValueError(str(exc)) from None
+        data = load_dote(source_dote_file, snapshot=snapshot)
+        _check_combined_budget(len(data["lines"]), len(snapshot))
         rprint(f"Copying {source_dote_file} to {output_path}")
-        with atomic_output(output_path) as tmp_path:
-            size = 0
-            with (
-                tmp_path.open("wb") as target,
-                closing(regular_file_blocks(source_dote_file)) as blocks,
-            ):
-                for block in blocks:
-                    size += len(block)
-                    _check_combined_budget(len(data["lines"]), size)
-                    target.write(block)
+        write_bytes_atomic(output_path, snapshot)
         return None
 
     rprint(f"Combining {len(dote_chunks)} DOTe chunks into {output_path}")
