@@ -181,3 +181,34 @@ def test_completed_leader_retires_pipe_detached_descendants(
     finally:
         killpg(unrelated.pid, signal.SIGKILL)
         unrelated.wait()
+
+
+def test_copy_refuses_source_rewritten_between_blocks(tmp_path, monkeypatch):
+    import os
+    from podcast_transcript import safe_io
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.write_bytes(b"abcdefgh")
+    target.write_bytes(b"previous completed transcript")
+    before = source.stat()
+    read = os.read
+    rewritten = False
+
+    def read_then_rewrite(descriptor, size):
+        nonlocal rewritten
+        block = read(descriptor, size)
+        if block and not rewritten:
+            rewritten = True
+            source.write_bytes(b"12345678")
+            os.utime(
+                source, ns=(before.st_atime_ns, before.st_mtime_ns - 1_000_000_000)
+            )
+        return block
+
+    monkeypatch.setattr(safe_io, "COPY_BUFFER_BYTES", 4)
+    monkeypatch.setattr(os, "read", read_then_rewrite)
+    with pytest.raises(OSError, match="changed during read"):
+        safe_io.copy_file_atomic(source, target)
+    assert rewritten
+    assert target.read_bytes() == b"previous completed transcript"
+    assert not list(tmp_path.glob(".output-*"))

@@ -427,6 +427,8 @@ the previous transcript metadata, chunks and all exports are copied byte-for-byt
 files and published last, so interrupted promotion cannot advertise old/mixed bytes under new
 settings. Promoted exports are byte-identical to the staged ones. Readability scans, backup and promotion
 copy regular files in blocks of at most 1 MiB, without retaining whole binary exports in memory.
+The streamed reader checks the opened file's size, modification and change times, and total bytes
+read at EOF. A changed source aborts the copy and leaves its destination intact.
 Each readability pass and each promotion/restore pass has a shared limit of 100,000
 visited directory entries (including unrelated entries and repeated scans), 64 GiB of
 aggregate transcript bytes read across hashing and copying, and one hour of elapsed time.

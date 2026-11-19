@@ -1,3 +1,11 @@
+Unreleased
+==========
+
+### Fixes
+
+- Reject transcript sources that change during streamed copies, preserving the previous
+  destination and discarding the staged bytes.
+
 0.2.0 - 2026-11-17
 ==================
 

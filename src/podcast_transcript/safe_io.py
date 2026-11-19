@@ -24,6 +24,7 @@ from pathlib import Path
 from time import monotonic
 
 from .config import private_mkdir, settings
+from .input_admission import file_generation
 from .input_admission import read_regular_bounded as read_regular_bounded
 
 STDERR_TAIL_LINES = 20
@@ -167,13 +168,15 @@ class TranscriptWorkBudget:
 def regular_file_blocks(
     path: Path, *, budget: TranscriptWorkBudget | None = None
 ) -> Generator[bytes, None, None]:
-    """Read regular files in bounded blocks without following a final symlink."""
+    """Read bounded blocks and verify the opened regular file at EOF."""
     descriptor = os.open(
         path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     )
     try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
             raise OSError("Transcript copy requires a regular file.")
+        consumed = 0
         while True:
             if budget is not None:
                 budget.check()
@@ -187,7 +190,13 @@ def regular_file_blocks(
                 budget.charge(len(block))
             if not block:
                 break
+            consumed += len(block)
             yield block
+        if (
+            file_generation(before) != file_generation(os.fstat(descriptor))
+            or consumed != before.st_size
+        ):
+            raise OSError("Transcript source changed during read.")
     finally:
         os.close(descriptor)
 

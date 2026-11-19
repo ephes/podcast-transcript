@@ -5,6 +5,10 @@ import stat
 from pathlib import Path
 
 
+def file_generation(info: os.stat_result) -> tuple[int, ...]:
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def read_regular_bounded(
     path: Path, *, limit: int, description: str, dir_fd: int | None = None
 ) -> bytes:
@@ -42,18 +46,9 @@ def read_regular_bounded(
         except OSError:
             raise RuntimeError(f"{description} changed during read.") from None
 
-        def generation(value: os.stat_result) -> tuple[int, ...]:
-            return (
-                value.st_dev,
-                value.st_ino,
-                value.st_size,
-                value.st_mtime_ns,
-                value.st_ctime_ns,
-            )
-
         if (
-            generation(info) != generation(after)
-            or generation(after) != generation(named)
+            file_generation(info) != file_generation(after)
+            or file_generation(after) != file_generation(named)
             or not stat.S_ISREG(named.st_mode)
             or len(data) != info.st_size
         ):
