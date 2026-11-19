@@ -402,7 +402,8 @@ def convert_to_webvtt(dote_path: Path, vtt_path: Path) -> None:
     for line in lines:
         start_time = line["startTime"].replace(",", ".")
         end_time = line["endTime"].replace(",", ".")
-        text = line["text"].replace("\r\n", "\n").replace("\r", "\n")
+        text = line["text"].replace("\0", "\ufffd")
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
         text = re.sub(r"\n(?:[ \t]*\n)+", "\n", text).strip("\n")
         if not text.strip():
             continue
