@@ -163,6 +163,7 @@ def test_dotenv_only_assigns_supported_keys(tmp_path, monkeypatch):
     monkeypatch.setenv("TRANSCRIPT_LANGUAGE", "de")
     (tmp_path / ".env").write_text(
         "READ_ENV_VARS=shadow\nCONSOLE=shadow\nUNRELATED_PROJECT=ignored\n"
+        "export UNRELATED_PROJECT=also ignored\n"
         "__DICT__=shadow\nTRANSCRIPT_HOME=wrong\nTRANSCRIPT_DIR=wrong\n"
         "GROQ_API_KEY=file-token\nVOXHELM_API_KEY=file-voxhelm\n"
         "TRANSCRIPT_LANGUAGE=en\nTRANSCRIPT_PROMPT=synthetic prompt\n"
@@ -177,6 +178,23 @@ def test_dotenv_only_assigns_supported_keys(tmp_path, monkeypatch):
     assert settings.voxhelm_api_key == "environment-voxhelm"
     assert settings.transcript_language == "de"
     assert settings.transcript_prompt == "synthetic prompt"
+
+
+def test_dotenv_rejects_duplicate_recognized_keys_before_applying_settings(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "TRANSCRIPT_LANGUAGE=de\n"
+        "GROQ_API_KEY=synthetic-first\n"
+        "  export GROQ_API_KEY = synthetic-second\n"
+    )
+    settings = Settings.__new__(Settings)
+    settings.groq_api_key = "synthetic-existing"
+    previous = vars(settings).copy()
+
+    with pytest.raises(RuntimeError, match=r"^Duplicate dotenv key: GROQ_API_KEY\.$"):
+        settings.read_env_file(env_file)
+
+    assert vars(settings) == previous
 
 
 @pytest.mark.parametrize("kind", ["oversize", "invalid-utf8", "growth", "fifo", "link"])

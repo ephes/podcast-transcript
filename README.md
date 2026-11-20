@@ -109,7 +109,9 @@ supported; a `#` there is part of the value.
 
 Only `GROQ_API_KEY`, `VOXHELM_API_BASE`, `VOXHELM_API_KEY` and the options listed under
 Other Configuration Options, Source admission and Local commands are admitted (uppercase names).
-Unknown names are ignored. `TRANSCRIPT_HOME` and `TRANSCRIPT_DIR` are environment-only so they
+Unknown names are ignored. Repeating a supported key in one `.env` file, including with an
+`export` prefix or extra whitespace, rejects the entire file with an error that names the key.
+`TRANSCRIPT_HOME` and `TRANSCRIPT_DIR` are environment-only so they
 select the configuration location before loading it. Environment values override `.env`, including
 API keys. The dotenv file must be a regular UTF-8 file, without symlinks, of at most 64 KiB total,
 counted during reads even if it grows. FIFO/device/directory, oversized and invalid UTF-8 inputs

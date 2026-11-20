@@ -151,9 +151,11 @@ class Settings:
             if parsed is not None:
                 key, value = parsed
                 if key in CONFIGURATION_KEYS:
-                    admitted[key.lower()] = value
+                    if key in admitted:
+                        raise RuntimeError(f"Duplicate dotenv key: {key}.")
+                    admitted[key] = value
         for key, value in admitted.items():
-            setattr(self, key, value)
+            setattr(self, key.lower(), value)
 
     def read_env_vars(self):
         """Apply supported environment variables after dotenv settings."""

@@ -3,6 +3,7 @@ Unreleased
 
 ### Fixes
 
+- Reject duplicate supported keys in a dotenv file before applying any of its settings.
 - Reuse admitted transcript inventories during settings replacement so duplicate scans cannot
   exhaust the entry budget after updating recovery. Refuse inventory changes detected during backup.
 - Report directory sync failures after an atomic rename as uncertain durability for
