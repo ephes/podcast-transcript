@@ -111,11 +111,11 @@ Only `GROQ_API_KEY`, `VOXHELM_API_BASE`, `VOXHELM_API_KEY` and the options liste
 Other Configuration Options, Source admission and Local commands are admitted (uppercase names).
 Unknown names are ignored. Repeating a supported key in one `.env` file, including with an
 `export` prefix or extra whitespace, rejects the entire file with an error that names the key.
-`TRANSCRIPT_HOME` and `TRANSCRIPT_DIR` are environment-only so they
-select the configuration location before loading it. Environment values override `.env`, including
-API keys. The dotenv file must be a regular UTF-8 file, without symlinks, of at most 64 KiB total,
-counted during reads even if it grows. FIFO/device/directory, oversized and invalid UTF-8 inputs
-stop startup with a value-free error; no partial settings from that file are applied.
+`TRANSCRIPT_HOME` and `TRANSCRIPT_DIR` are environment-only so they select the configuration
+location before loading it. Environment values override `.env`, including API keys. The dotenv
+file must be a regular UTF-8 file with an optional leading BOM, without symlinks, and at most
+64 KiB total, counted during reads even if it grows. FIFO/device/directory, oversized and invalid
+UTF-8 inputs stop startup with a value-free error; no partial settings from that file are applied.
 Control and dotenv reads also verify size, nanosecond modification/change times, consumed
 length and the named file identity after reading. Concurrent rewrites, truncations or
 replacements are refused; rerun with stable files. Prior transcripts and recovery metadata

@@ -197,6 +197,18 @@ def test_dotenv_rejects_duplicate_recognized_keys_before_applying_settings(tmp_p
     assert vars(settings) == previous
 
 
+@pytest.mark.parametrize("prefix", ["", "export "])
+def test_dotenv_accepts_first_assignment_after_utf8_bom(tmp_path, prefix):
+    env_file = tmp_path / ".env"
+    value = "synthetic\ufefftoken"
+    env_file.write_text(f"{prefix}GROQ_API_KEY={value}\n", encoding="utf-8-sig")
+    settings = Settings.__new__(Settings)
+
+    settings.read_env_file(env_file)
+
+    assert settings.groq_api_key == value
+
+
 @pytest.mark.parametrize("kind", ["oversize", "invalid-utf8", "growth", "fifo", "link"])
 def test_dotenv_refuses_unsafe_input(tmp_path, monkeypatch, kind):
     import os
@@ -225,7 +237,8 @@ def test_dotenv_refuses_unsafe_input(tmp_path, monkeypatch, kind):
         env_file.symlink_to(target)
     else:
         env_file.write_bytes(
-            secret
+            (b"\xef\xbb\xbf" if kind == "invalid-utf8" else b"")
+            + secret
             + (
                 b"x" * 80
                 if kind == "oversize"

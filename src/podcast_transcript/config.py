@@ -142,7 +142,7 @@ class Settings:
             env_file, limit=DOTENV_MAX_BYTES, description="dotenv configuration"
         )
         try:
-            text = raw.decode("utf-8")
+            text = raw.decode("utf-8-sig")
         except UnicodeError:
             raise RuntimeError("Invalid UTF-8 dotenv configuration.") from None
         admitted = {}
