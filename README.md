@@ -276,9 +276,10 @@ example `audio-3f2a9c41d0b7`. Episodes that share a file name, such as `.../123/
 `.../124/audio.mp3`, therefore get separate directories. The output files themselves keep the readable
 name (`audio.dote.json`, `audio.txt`, ...). Readable stems are shortened only when needed,
 at UTF-8 byte boundaries; the hash still covers the complete original source identity.
-Cache filenames stay within 213 UTF-8 bytes, reserving 42 bytes for atomic temporary
-names under the 255-byte filesystem component limit. The shared stem also reserves
-space for the longest export/resample suffix and the cache lock. Bounded source copies
+Cache filenames keep the existing 213-byte UTF-8 limit for compatibility with saved
+episodes. Atomic publication uses a short filename with the output's extension in
+a private staging directory. The shared stem reserves space for the longest
+export/resample suffix and the cache lock. Bounded source copies
 keep ordinary audio extensions; very long extensions are shortened with the name.
 Short existing keys and paths stay unchanged, except for newly reserved storage roles.
 Previously unusable long names receive a new bounded cache key and rebuild once; older
@@ -641,10 +642,17 @@ control JSON or remove its marker deliberately before retrying; the error names 
 chunk names still rebuilds the chunk set and its transcripts automatically; downloaded and resampled
 audio is reused. Invalid manifests remain in place until transcript cleanup finishes, so interrupted cleanup is retried.
 
+### Output durability errors
+
+When writing fails before an atomic replacement, the destination retains its prior contents.
+If syncing either parent directory fails after the rename, the command reports that the
+replacement is visible with uncertain durability and identifies the directory whose sync
+failed. Cache completion markers are written after their required artifacts are synced.
+
 ### Starting an episode over
 
-Failed steps are not cached, so re-running `transcribe` retries them. To force a fresh download and
-transcription of one episode, delete its directory and run `transcribe` again:
+To force a fresh download and transcription of one episode, delete its directory and run
+`transcribe` again:
 
 ```shell
 rm -r ~/.podcast-transcripts/transcripts/<episode-directory>  # or $TRANSCRIPT_DIR/<episode-directory>

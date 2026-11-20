@@ -1,11 +1,10 @@
 """
 Helpers that make pipeline steps fail closed.
 
-Every step in the pipeline caches its result by checking whether the output
-file exists. That is only safe if an output file appears exclusively after the
-step succeeded. These helpers stage files in a private directory beside the final output
-and rename them into place only on success, and they turn failed subprocesses
-into exceptions that carry the tool's stderr.
+These helpers stage files in a private directory beside the final output and
+rename them into place after writing succeeds. They report directory sync
+failures after rename separately from failures before publication. Failed
+subprocesses raise exceptions that carry the tool's stderr.
 """
 
 import math
@@ -16,7 +15,6 @@ import signal
 import stat
 import subprocess
 import tempfile
-import uuid
 
 from collections.abc import Iterator, Generator
 from contextlib import closing, contextmanager
@@ -29,18 +27,18 @@ from .input_admission import read_regular_bounded as read_regular_bounded
 
 STDERR_TAIL_LINES = 20
 STDERR_TAIL_CHARS = 2000
-# Extra UTF-8 bytes added by partial_path_for, excluding the original filename.
-ATOMIC_NAME_EXTRA_BYTES = 42
 
 
-def partial_path_for(path: Path) -> Path:
-    """
-    Return a unique, hidden temporary path next to ``path``.
+class PublicationUncertainError(OSError):
+    """The replacement became visible, and a directory sync failed."""
 
-    The suffix is kept so tools like ffmpeg can still infer the output format,
-    and the leading dot keeps the file out of ``chunk_*.mp3`` style globs.
-    """
-    return path.with_name(f".{path.stem}.{uuid.uuid4().hex}.partial{path.suffix}")
+    def __init__(self, target: Path, directory: Path) -> None:
+        self.target = target
+        self.directory = directory
+        super().__init__(
+            f"Output was published at {target}. "
+            f"Durability is uncertain after directory sync failed for {directory}."
+        )
 
 
 @contextmanager
@@ -48,16 +46,18 @@ def atomic_output(path: Path) -> Iterator[Path]:
     """
     Yield a temporary path to write to and move it to ``path`` on success.
 
-    If the block raises, the temporary file is removed and ``path`` is left
-    untouched. If the block finishes without creating the temporary file, a
-    ``RuntimeError`` is raised instead of silently caching nothing.
+    Errors before rename leave ``path`` untouched. A missing temporary file
+    raises ``RuntimeError``. A directory sync failure after rename raises
+    ``PublicationUncertainError`` with the new output already visible at ``path``.
     """
     private_mkdir(path.parent)
     # Tools may create their output with ambient permissions. A private staging
     # directory protects those bytes before publication, even in a shared parent.
     mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
     with tempfile.TemporaryDirectory(prefix=".output-", dir=path.parent) as directory:
-        tmp_path = Path(directory) / partial_path_for(path).name
+        # The directory supplies uniqueness. A single-byte stem keeps the
+        # media suffix for tools like ffmpeg without lengthening the filename.
+        tmp_path = Path(directory) / f"_{path.suffix}"
         yield tmp_path
         if not tmp_path.exists() and not tmp_path.is_symlink():
             raise RuntimeError(f"Expected output was not created: {path}")
@@ -91,13 +91,20 @@ def durable_replace(source: Path, target: Path) -> None:
 
     A symlink's target must already be durable. Never open a staged symlink:
     short-audio links are relative to their final parent, not the staging one.
+
+    Raise ``PublicationUncertainError`` if a directory sync fails after rename.
     """
     if not source.is_symlink():
         sync_file(source)
     os.replace(source, target)
-    sync_directory(target.parent)
-    if source.parent != target.parent:
-        sync_directory(source.parent)
+    directory = target.parent
+    try:
+        sync_directory(directory)
+        if source.parent != directory:
+            directory = source.parent
+            sync_directory(directory)
+    except OSError as exc:
+        raise PublicationUncertainError(target, directory) from exc
 
 
 def durable_unlink(path: Path) -> None:

@@ -27,7 +27,6 @@ from .safe_io import (
     durable_unlink,
     sync_file,
     sync_directory,
-    ATOMIC_NAME_EXTRA_BYTES,
 )
 
 FFPROBE_TIMEOUT_SECONDS = 60.0
@@ -65,8 +64,8 @@ GENERATED_TRANSCRIPT_RE = re.compile(
 )
 CACHE_KEY_HASH_LENGTH = 12
 TRANSCRIPT_OUTPUT_SUFFIXES = (".dote.json", ".podlove.json", ".webvtt", ".txt")
-FILESYSTEM_COMPONENT_MAX_BYTES = 255
-CACHE_FILENAME_MAX_BYTES = FILESYSTEM_COMPONENT_MAX_BYTES - ATOMIC_NAME_EXTRA_BYTES
+# Preserve cache paths generated under the original 213-byte filename limit.
+CACHE_FILENAME_MAX_BYTES = 213
 READABLE_PREFIX_MAX_BYTES = CACHE_FILENAME_MAX_BYTES - max(
     len(suffix) for suffix in (*TRANSCRIPT_OUTPUT_SUFFIXES, "_16khz.mp3")
 )

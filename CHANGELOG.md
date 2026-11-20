@@ -3,6 +3,10 @@ Unreleased
 
 ### Fixes
 
+- Report directory sync failures after an atomic rename as uncertain durability for
+  the already visible replacement.
+- Use short staging names that preserve media extensions and allow publication near
+  the filesystem filename limit.
 - Validate staged whisper-cli JSON before publishing it, preserving any prior intermediate on failure.
 - Check WAV headers and frames against the same opened regular file and reject changes during validation.
 - Stream sanitized WebVTT cues into a private stage before publishing the UTF-8 export.

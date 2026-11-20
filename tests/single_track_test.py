@@ -57,11 +57,12 @@ def test_resample_audio(mocker, audio):
         "-fs",
         str(2 * 1024**3),
     ]
-    # ffmpeg writes to a hidden temp file with the same suffix ...
-    assert Path(cmd[-1]).name.startswith(".")
-    assert Path(cmd[-1]).suffix == ".mp3"
+    # ffmpeg writes to a private staging directory with the same media suffix.
+    stage = Path(cmd[-1])
+    assert stage.parent.name.startswith(".output-")
+    assert stage.parent.parent == output_path.parent
+    assert stage.suffix == ".mp3"
     assert "Resampling" in mock_media_command.call_args.kwargs["description"]
-    # ... which is renamed into place on success
     assert output_path.read_bytes() == b"resampled"
     assert sorted(p.name for p in output_path.parent.iterdir()) == sorted(
         [input_path.name, output_path.name]
