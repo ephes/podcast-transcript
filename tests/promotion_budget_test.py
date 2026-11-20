@@ -37,6 +37,93 @@ def test_promotion_inventory_is_bounded_before_sorting(audio, monkeypatch):
     assert len(consumed) == 7
 
 
+def test_promotion_reuses_admitted_inventories_near_entry_limit(
+    episode, monkeypatch, mocker
+):
+    store, previous = episode
+    for index in range(20):
+        (store.episode_chunks_dir / f"unrelated-{index}").touch()
+    # Charge the live and staged inventories and the backup digest scan once.
+    live_entries = len(list(store.episode_chunks_dir.iterdir()))
+    chunk_transcripts = sum(path.parent.name == "chunks" for path in previous)
+    entry_limit = live_entries + (2 + chunk_transcripts) + chunk_transcripts
+    monkeypatch.setattr(safe_io, "TRANSCRIPT_WORK_MAX_ENTRIES", entry_limit)
+    scans = mocker.spy(single_track, "_transcript_files")
+
+    paths = single_track.transcribe(store.url, RecordingBackend("new", "new"))
+
+    assert paths["plain text"].read_text() == "new\nnew"
+    recovery = store.podcast_dir / ".previous-transcripts"
+    assert all(
+        (recovery / path).read_bytes() == data for path, data in previous.items()
+    )
+    directories = [call.args[0].podcast_dir for call in scans.call_args_list]
+    assert directories.count(store.podcast_dir) == 2  # Readability and admission.
+    assert sum(path.name.startswith(".replacement-") for path in directories) == 1
+    assert sum(path.name.startswith(".backup-") for path in directories) == 1
+
+
+def test_promotion_refuses_over_budget_staged_inventory_before_recovery(
+    episode, monkeypatch
+):
+    store, previous = episode
+    single_track.transcribe(store.url, RecordingBackend("second", "second"))
+    recovery = store.podcast_dir / ".previous-transcripts"
+    recovery_manifest = (recovery / "recovery.json").read_bytes()
+    current = {path: (store.podcast_dir / path).read_bytes() for path in previous}
+    # The live inventory fits, but the staged inventory cannot be admitted.
+    monkeypatch.setattr(
+        safe_io,
+        "TRANSCRIPT_WORK_MAX_ENTRIES",
+        len(list(store.episode_chunks_dir.iterdir())),
+    )
+
+    with pytest.raises(RuntimeError, match="Transcript work.*entry"):
+        single_track.transcribe(store.url, RecordingBackend("third", "third"))
+
+    assert all(
+        (store.podcast_dir / path).read_bytes() == data
+        for path, data in current.items()
+    )
+    assert (recovery / "recovery.json").read_bytes() == recovery_manifest
+    assert all(
+        (recovery / path).read_bytes() == data for path, data in previous.items()
+    )
+
+
+@pytest.mark.parametrize("changed", ["live", "staged"])
+def test_promotion_refuses_inventory_changes_during_backup(
+    episode, monkeypatch, changed
+):
+    store, previous = episode
+    single_track.transcribe(store.url, RecordingBackend("second", "second"))
+    recovery = store.podcast_dir / ".previous-transcripts"
+    recovery_manifest = (recovery / "recovery.json").read_bytes()
+    current = {path: (store.podcast_dir / path).read_bytes() for path in previous}
+    digest = single_track._generation_digest
+
+    def add_chunk_after_digest(audio, **kwargs):
+        result = digest(audio, **kwargs)
+        directory = store.episode_chunks_dir
+        if changed == "staged":
+            directory = next(store.podcast_dir.glob(".replacement-*")) / "chunks"
+        (directory / "chunk_999.json").write_text("{}")
+        return result
+
+    monkeypatch.setattr(single_track, "_generation_digest", add_chunk_after_digest)
+    with pytest.raises(RuntimeError, match="Transcript inventory changed"):
+        single_track.transcribe(store.url, RecordingBackend("third", "third"))
+
+    assert all(
+        (store.podcast_dir / path).read_bytes() == data
+        for path, data in current.items()
+    )
+    assert (recovery / "recovery.json").read_bytes() == recovery_manifest
+    assert all(
+        (recovery / path).read_bytes() == data for path, data in previous.items()
+    )
+
+
 def test_growing_backup_stops_and_preserves_previous_recovery(episode, monkeypatch):
     store, _ = episode
     single_track.transcribe(store.url, RecordingBackend("second", "second"))

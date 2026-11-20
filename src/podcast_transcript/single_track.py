@@ -26,6 +26,7 @@ from .audio import (
 )
 from .backends import MLX, TranscriptionBackend, Voxhelm, WhisperCpp
 from .config import private_mkdir, settings
+from .input_admission import file_generation
 from .json_input import load_control_json
 from .transcript_validation import (
     validate_segments,
@@ -639,7 +640,13 @@ def restore_last_success(url: str) -> dict[str, Path]:
             if manifest["audio"] != _audio_generation(audio):
                 raise RuntimeError("Changed prepared audio during recovery.")
             # Keep recovery untouched, even if a later copy/fsync fails.
-            _publish_transcripts(audio, snapshot, budget=budget)
+            _publish_transcripts(
+                audio,
+                snapshot,
+                new_files=_transcript_files(snapshot, budget=budget),
+                old_files=_transcript_files(audio, budget=budget),
+                budget=budget,
+            )
         return _transcript_paths(audio)
 
 
@@ -875,6 +882,13 @@ def _transcript_files(
     ] + sorted(chunks)
 
 
+def _chunk_directory_generation(audio: Audio) -> tuple[int, ...] | None:
+    try:
+        return file_generation(audio.episode_chunks_dir.stat())
+    except FileNotFoundError:
+        return None
+
+
 def _promote_transcripts(
     audio: Audio, staged: Audio, audio_generation: dict[str, str | None]
 ) -> None:
@@ -882,8 +896,10 @@ def _promote_transcripts(
         raise RuntimeError("Prepared audio changed during transcription; retry.")
     # Admit both inventories before replacing either recovery or public metadata.
     budget = TranscriptWorkBudget()
+    old_generation = _chunk_directory_generation(audio)
+    new_generation = _chunk_directory_generation(staged)
     old_files = _transcript_files(audio, budget=budget)
-    _transcript_files(staged, budget=budget)
+    new_files = _transcript_files(staged, budget=budget)
     # Keep a durable recovery copy before touching any currently published file.
     recovery = audio.podcast_dir / ".previous-transcripts"
     with tempfile.TemporaryDirectory(
@@ -907,22 +923,32 @@ def _promote_transcripts(
         )
         sync_directory(backup)
         budget.check()
+        # The lock covers cooperating writers. Detect external changes to the
+        # enumerated names during admission or backup before committing recovery.
+        if old_generation != _chunk_directory_generation(
+            audio
+        ) or new_generation != _chunk_directory_generation(staged):
+            raise RuntimeError("Transcript inventory changed during backup; retry.")
         if recovery.exists():
             shutil.rmtree(recovery)
         os.replace(backup, recovery)
         sync_directory(audio.podcast_dir)
 
-    _publish_transcripts(audio, staged, budget=budget)
+    _publish_transcripts(
+        audio, staged, new_files=new_files, old_files=old_files, budget=budget
+    )
 
 
 def _publish_transcripts(
-    audio: Audio, staged: Audio, *, budget: TranscriptWorkBudget | None = None
+    audio: Audio,
+    staged: Audio,
+    *,
+    new_files: list[Path],
+    old_files: list[Path],
+    budget: TranscriptWorkBudget,
 ) -> None:
     # Metadata is the completion claim: a partial multi-file promotion must never
     # make either old or mixed bytes reusable as the replacement generation.
-    budget = budget or TranscriptWorkBudget()
-    new_files = _transcript_files(staged, budget=budget)
-    old_files = _transcript_files(audio, budget=budget)
     budget.check()
     durable_unlink(audio.cache_metadata_path)
     targets = {
