@@ -3,6 +3,7 @@ Unreleased
 
 ### Fixes
 
+- Require integer whisper-cli seek offsets before publishing converted segments.
 - Handle excessively nested Groq 429 bodies as rate limits without a usable wait, preserving prior transcripts.
 - Accept a leading UTF-8 BOM in dotenv files so the first setting is read.
 - Reject duplicate supported keys in a dotenv file before applying any of its settings.

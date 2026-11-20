@@ -50,11 +50,11 @@ def test_probe_capture_overflow_reaps_child(monkeypatch, tmp_path, stream):
     assert all(path.read_bytes() == before[path] for path in paths)
 
 
-def native(timestamp):
+def native(timestamp, *, seek=0):
     return {
         "transcription": [
             {
-                "offsets": {"from": 0},
+                "offsets": {"from": seek},
                 "timestamps": {"from": timestamp, "to": timestamp},
                 "text": "private-synthetic-text",
             }
@@ -84,6 +84,32 @@ def test_native_invalid_timestamp_preserves_output(tmp_path, timestamp):
         backends.WhisperCpp().convert_output_format(source, target)
     assert "private-synthetic-text" not in str(error.value)
     assert target.read_bytes() == b"previous"
+
+
+@pytest.mark.parametrize("seek", [True, 1.5, 1.0, "1"])
+def test_native_invalid_seek_preserves_output(tmp_path, seek):
+    source = tmp_path / "native.json"
+    source.write_text(json.dumps(native("00:00:00,000", seek=seek)))
+    target = tmp_path / "transcript.json"
+    target.write_bytes(b"previous")
+
+    with pytest.raises(ValueError, match="Invalid native transcript.*integer seek"):
+        backends.WhisperCpp().convert_output_format(source, target)
+
+    assert target.read_bytes() == b"previous"
+
+
+@pytest.mark.parametrize("seek", [0, 7_199_000])
+def test_native_integer_seek_is_preserved(tmp_path, seek):
+    source = tmp_path / "native.json"
+    source.write_text(json.dumps(native("01:59:59,000", seek=seek)))
+    target = tmp_path / "transcript.json"
+
+    backends.WhisperCpp().convert_output_format(source, target)
+
+    actual_seek = json.loads(target.read_text())["segments"][0]["seek"]
+    assert type(actual_seek) is int
+    assert actual_seek == seek
 
 
 @pytest.mark.parametrize(

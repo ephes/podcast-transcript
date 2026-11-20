@@ -636,11 +636,12 @@ class WhisperCpp:
                 raise ValueError
             segments = []
             for idx, entry in enumerate(input_data["transcription"]):
+                seek = entry["offsets"]["from"]
+                if type(seek) is not int:
+                    raise ValueError
                 segment = {
                     "id": idx,
-                    "seek": int(
-                        entry["offsets"]["from"]
-                    ),  # Using 'from' offset as seek position
+                    "seek": seek,
                     "start": timestamp_to_seconds(entry["timestamps"]["from"]),
                     "end": timestamp_to_seconds(entry["timestamps"]["to"]),
                     "text": entry["text"].strip(),
@@ -650,7 +651,8 @@ class WhisperCpp:
             result = {"segments": segments}
         except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
             raise ValueError(
-                "Invalid native transcript: require native segments and HH:MM:SS,mmm timestamps."
+                "Invalid native transcript: require native segments with integer seek "
+                "offsets and HH:MM:SS,mmm timestamps."
             ) from None
         validate_whisper_transcript(result)
         return result

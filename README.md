@@ -498,7 +498,9 @@ Admitted multi-chunk output is serialized directly to staging without another ep
 ### Transcript and cached-artifact validation
 
 Native whisper-cpp timestamps require the same full `HH:MM:SS,mmm` grammar as DOTe below,
-including component ranges and multi-day hours. Malformed native schemas and JSON raise a
+including component ranges and multi-day hours. Each segment's `offsets.from` must be a JSON
+integer and is copied unchanged to `seek`. Boolean, floating-point and quoted offsets are
+rejected. Malformed native schemas and JSON raise a
 controlled error without transcript text and preserve previous native and converted raw caches.
 
 Successful Groq/Voxhelm responses, raw, DOTe, native/MLX output and cache-control JSON reject
