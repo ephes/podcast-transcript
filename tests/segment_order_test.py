@@ -98,3 +98,24 @@ def test_invalid_backend_order_preserves_previous_generation(episode, monkeypatc
     assert all(
         (store.podcast_dir / p).read_bytes() == value for p, value in previous.items()
     )
+
+
+def test_raw_chunk_with_unpaired_surrogate_is_refused_before_dote(tmp_path):
+    segments = raw([0, 1])
+    segments[1]["text"] = "synthetic\ud800text"
+    with pytest.raises(ValueError, match=r"^Invalid transcript segment 2: .*scalar"):
+        validate_segments(segments)
+    chunk = tmp_path / "chunk_000.json"
+    chunk.write_text(json.dumps({"segments": segments}))
+    with pytest.raises(
+        ValueError, match=r"^chunk_000\.json: Invalid transcript segment 2: "
+    ) as error:
+        single_track.whisper_text_chunks_to_dote([chunk])
+    assert "synthetic" not in str(error.value)
+    assert not chunk.with_suffix(".dote.json").exists()
+
+
+def test_raw_segment_text_keeps_paired_non_bmp_characters():
+    segments = raw([0])
+    segments[0]["text"] = "hello \U0001f30d"
+    validate_segments(segments)

@@ -497,8 +497,11 @@ remove the marker deliberately before retrying.
 
 All backend results must be Whisper objects containing a `segments` list. An empty list is a valid
 silent transcript. Each segment requires string `text` plus numeric `start` and `end` in seconds;
-optional top-level `text` must also be a string. Times must be finite, nonnegative, representable
-in milliseconds, and ordered (`end >= start`); booleans and numeric strings are rejected.
+optional top-level `text` must also be a string. Segment text must contain only Unicode scalar
+values; an unpaired surrogate (for example a JSON `\ud800` escape) is rejected before any raw cache
+or DOTe is written, and the error names the raw chunk. Times must be finite, nonnegative,
+representable in milliseconds, and ordered (`end >= start`); booleans and numeric strings are
+rejected.
 Segment starts must be nondecreasing in the supplied order. Equal starts, overlapping segments and
 zero-length cues are allowed; segments are never silently sorted, so text/speaker association stays
 unchanged. Out-of-order backend and cached raw/DOTe lists are refused before cache/export publication;

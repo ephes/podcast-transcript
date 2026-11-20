@@ -37,6 +37,10 @@ def validate_segments(segments: object) -> None:
         message = f"Invalid transcript segment {position}: require text and finite, nonnegative start/end with end >= start."
         if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
             raise ValueError(message)
+        if _SURROGATE.search(segment["text"]):
+            raise ValueError(
+                f"Invalid transcript segment {position}: text must contain only Unicode scalar values."
+            )
         times: list[int | float] = []
         for key in ("start", "end"):
             value = segment.get(key)
