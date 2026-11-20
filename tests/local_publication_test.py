@@ -154,6 +154,44 @@ def test_atomic_output_syncs_data_then_rename_then_directory(tmp_path, monkeypat
     assert events[2][0] == "directory"
 
 
+@pytest.mark.parametrize("failed_parent", ["destination", "staging"])
+def test_atomic_output_reports_visible_output_after_directory_sync_failure(
+    tmp_path, monkeypatch, failed_parent
+):
+    target = tmp_path / "result.json"
+    target.write_bytes(b"previous")
+    original_error = OSError("synthetic directory sync failure")
+    real_sync = safe_io.sync_directory
+    syncs = []
+
+    def sync_directory(path):
+        syncs.append(path)
+        if path == failed_directory:
+            raise original_error
+        real_sync(path)
+
+    monkeypatch.setattr(safe_io, "sync_directory", sync_directory)
+    with pytest.raises(OSError) as raised:
+        with safe_io.atomic_output(target) as stage:
+            failed_directory = (
+                target.parent if failed_parent == "destination" else stage.parent
+            )
+            stage.write_bytes(b"replacement")
+
+    assert target.read_bytes() == b"replacement"
+    assert not stage.parent.exists()
+    expected_syncs = [target.parent]
+    if failed_parent == "staging":
+        expected_syncs.append(stage.parent)
+    assert syncs == expected_syncs
+    error = raised.value
+    assert "Durability is uncertain" in str(error)
+    assert isinstance(error, safe_io.PublicationUncertainError)
+    assert error.target == target
+    assert error.directory == failed_directory
+    assert error.__cause__ is original_error
+
+
 @pytest.mark.parametrize("phase", ["file", "directory", "replace"])
 def test_publication_failure_does_not_publish_completion(tmp_path, monkeypatch, phase):
     store = audio.Audio(base_dir=tmp_path, url="https://example.test/episode.mp3")

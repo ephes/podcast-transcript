@@ -1,11 +1,10 @@
 """
 Helpers that make pipeline steps fail closed.
 
-Every step in the pipeline caches its result by checking whether the output
-file exists. That is only safe if an output file appears exclusively after the
-step succeeded. These helpers stage files in a private directory beside the final output
-and rename them into place only on success, and they turn failed subprocesses
-into exceptions that carry the tool's stderr.
+These helpers stage files in a private directory beside the final output and
+rename them into place after writing succeeds. They report directory sync
+failures after rename separately from failures before publication. Failed
+subprocesses raise exceptions that carry the tool's stderr.
 """
 
 import math
@@ -30,14 +29,26 @@ STDERR_TAIL_LINES = 20
 STDERR_TAIL_CHARS = 2000
 
 
+class PublicationUncertainError(OSError):
+    """The replacement became visible, and a directory sync failed."""
+
+    def __init__(self, target: Path, directory: Path) -> None:
+        self.target = target
+        self.directory = directory
+        super().__init__(
+            f"Output was published at {target}. "
+            f"Durability is uncertain after directory sync failed for {directory}."
+        )
+
+
 @contextmanager
 def atomic_output(path: Path) -> Iterator[Path]:
     """
     Yield a temporary path to write to and move it to ``path`` on success.
 
-    If the block raises, the temporary file is removed and ``path`` is left
-    untouched. If the block finishes without creating the temporary file, a
-    ``RuntimeError`` is raised instead of silently caching nothing.
+    Errors before rename leave ``path`` untouched. A missing temporary file
+    raises ``RuntimeError``. A directory sync failure after rename raises
+    ``PublicationUncertainError`` with the new output already visible at ``path``.
     """
     private_mkdir(path.parent)
     # Tools may create their output with ambient permissions. A private staging
@@ -80,13 +91,20 @@ def durable_replace(source: Path, target: Path) -> None:
 
     A symlink's target must already be durable. Never open a staged symlink:
     short-audio links are relative to their final parent, not the staging one.
+
+    Raise ``PublicationUncertainError`` if a directory sync fails after rename.
     """
     if not source.is_symlink():
         sync_file(source)
     os.replace(source, target)
-    sync_directory(target.parent)
-    if source.parent != target.parent:
-        sync_directory(source.parent)
+    directory = target.parent
+    try:
+        sync_directory(directory)
+        if source.parent != directory:
+            directory = source.parent
+            sync_directory(directory)
+    except OSError as exc:
+        raise PublicationUncertainError(target, directory) from exc
 
 
 def durable_unlink(path: Path) -> None:

@@ -642,10 +642,17 @@ control JSON or remove its marker deliberately before retrying; the error names 
 chunk names still rebuilds the chunk set and its transcripts automatically; downloaded and resampled
 audio is reused. Invalid manifests remain in place until transcript cleanup finishes, so interrupted cleanup is retried.
 
+### Output durability errors
+
+When writing fails before an atomic replacement, the destination retains its prior contents.
+If syncing either parent directory fails after the rename, the command reports that the
+replacement is visible with uncertain durability and identifies the directory whose sync
+failed. Cache completion markers are written after their required artifacts are synced.
+
 ### Starting an episode over
 
-Failed steps are not cached, so re-running `transcribe` retries them. To force a fresh download and
-transcription of one episode, delete its directory and run `transcribe` again:
+To force a fresh download and transcription of one episode, delete its directory and run
+`transcribe` again:
 
 ```shell
 rm -r ~/.podcast-transcripts/transcripts/<episode-directory>  # or $TRANSCRIPT_DIR/<episode-directory>
