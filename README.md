@@ -497,8 +497,11 @@ remove the marker deliberately before retrying.
 
 All backend results must be Whisper objects containing a `segments` list. An empty list is a valid
 silent transcript. Each segment requires string `text` plus numeric `start` and `end` in seconds;
-optional top-level `text` must also be a string. Times must be finite, nonnegative, representable
-in milliseconds, and ordered (`end >= start`); booleans and numeric strings are rejected.
+optional top-level `text` must also be a string. Segment text must contain only Unicode scalar
+values; an unpaired surrogate (for example a JSON `\ud800` escape) is rejected before any raw cache
+or DOTe is written, and the error names the raw chunk. Times must be finite, nonnegative,
+representable in milliseconds, and ordered (`end >= start`); booleans and numeric strings are
+rejected.
 Segment starts must be nondecreasing in the supplied order. Equal starts, overlapping segments and
 zero-length cues are allowed; segments are never silently sorted, so text/speaker association stays
 unchanged. Out-of-order backend and cached raw/DOTe lists are refused before cache/export publication;
@@ -513,12 +516,14 @@ that `chunks/chunk_NNN.json` and its derived `chunk_NNN.dote.json`, plus the com
 outputs, then rerun to retranscribe that chunk. Valid prepared audio and other raw chunks are reused.
 Errors identify the cached filename and segment position without including transcript text.
 
-DOTe `speakerDesignation` is optional (defaults to an empty speaker in Podlove); when present it
-must be a string. Cached DOTe cues use full `HH:MM:SS,mmm` strings: at least two hour digits, exactly two minute/second
-digits (00–59), and exactly three millisecond digits. Hours may exceed 24. Suffixes, malformed
-widths and reversed cues are rejected consistently before combining (including single-chunk copies)
-or writing any export. Existing output bytes are preserved on validation failure. Correct or remove
-the invalid DOTe cache and regenerate its combined exports before retrying.
+DOTe cue text and optional `speakerDesignation` must be strings containing only Unicode scalar
+values. An unpaired surrogate is rejected before combining or exporting. The error identifies the
+cached filename and line number. A missing `speakerDesignation` defaults to an empty speaker in
+Podlove. Cached DOTe cues use full `HH:MM:SS,mmm` strings: at least two hour digits, exactly two
+minute/second digits (00–59), and exactly three millisecond digits. Hours may exceed 24. Suffixes,
+malformed widths and reversed cues are rejected consistently before combining (including single-chunk
+copies) or writing any export. Existing output bytes are preserved on validation failure. Correct or
+remove the invalid DOTe cache and regenerate its combined exports before retrying.
 
 ## Output Formats
 
@@ -528,6 +533,8 @@ the invalid DOTe cache and regenerate its combined exports before retrying.
   Cue text treats `&`, `<` and `>` as literal text, escaping them as entities. CRLF and CR
   become LF; consecutive blank or whitespace-only lines collapse to one line break, and leading
   and trailing newlines are removed so each segment remains one cue. Other line breaks are kept.
+  The WebVTT export renders NUL (U+0000) in cue text as U+FFFD, following the
+  [WebVTT parsing rule](https://www.w3.org/TR/webvtt1/#webvtt-parser-algorithm).
   Blank or whitespace-only cues are omitted. Nonblank cues whose start and end coincide after
   nearest-millisecond rounding (including equal source endpoints) render with an end one millisecond
   after the start. Other timings, overlaps and cue order are preserved. This display policy changes
@@ -538,10 +545,10 @@ the invalid DOTe cache and regenerate its combined exports before retrying.
 
 ### Regenerating cached WebVTT exports
 
-Existing `.webvtt` files remain cached. To apply current literal-text escaping and minimum-duration
-rendering to an existing export,
-delete just that file in the episode cache directory and rerun the same transcription command with
-the same backend settings. The cached transcript is reused to generate the corrected WebVTT file.
+Existing `.webvtt` files remain cached. To apply current cue text and timing rules to an existing
+export, delete just that file in the episode cache directory and rerun the same transcription
+command with the same backend settings. The cached transcript is reused to generate the corrected
+WebVTT file.
 
 ### Cache directories from versions before 0.2.0
 

@@ -137,7 +137,7 @@ def test_fractional_and_zero_length_segments(tmp_path):
     assert line["text"] == "x"
 
 
-def dote(path, start, end):
+def dote(path, start, end, *, text="hello", speaker=""):
     path.write_text(
         json.dumps(
             {
@@ -145,8 +145,8 @@ def dote(path, start, end):
                     {
                         "startTime": start,
                         "endTime": end,
-                        "text": "hello",
-                        "speakerDesignation": "",
+                        "text": text,
+                        "speakerDesignation": speaker,
                     }
                 ]
             }
@@ -207,6 +207,62 @@ def test_multiday_timecodes_supported_by_all_exports(tmp_path, exporter):
     exporter(source, out)
     assert out.exists()
     assert "hello" in out.read_text()
+
+
+@pytest.mark.parametrize("exporter", EXPORTERS)
+@pytest.mark.parametrize(
+    "fields", [{"text": "synthetic\ud800text"}, {"speaker": "synthetic\udfffname"}]
+)
+def test_dote_rejects_unpaired_surrogates_before_publication(
+    tmp_path, exporter, fields, mocker
+):
+    source = dote(
+        tmp_path / "chunk.dote.json", "00:00:00,000", "00:00:01,000", **fields
+    )
+    out = tmp_path / "out"
+    out.write_bytes(b"previous")
+    writers = [
+        mocker.spy(track, name)
+        for name in ("atomic_output", "write_bytes_atomic", "write_text_atomic")
+    ]
+
+    with pytest.raises(
+        ValueError, match=r"^chunk\.dote\.json: Invalid DOTe line 1: .*\.$"
+    ) as error:
+        exporter(source, out)
+
+    assert "synthetic" not in str(error.value)
+    for writer in writers:
+        writer.assert_not_called()
+    assert out.read_bytes() == b"previous"
+
+
+@pytest.mark.parametrize("exporter", EXPORTERS)
+def test_dote_preserves_non_bmp_text_and_speaker_in_exports(tmp_path, exporter):
+    text = "hello \U0001f30d"
+    speaker = "voice \U0001f3a4"
+    source = dote(
+        tmp_path / "chunk.dote.json",
+        "00:00:00,000",
+        "00:00:01,000",
+        text=text,
+        speaker=speaker,
+    )
+    out = tmp_path / "out"
+
+    exporter(source, out)
+
+    rendered = out.read_text(encoding="utf-8")
+    if exporter in (combine_one, combine_multiple):
+        for line in json.loads(rendered)["lines"]:
+            assert line["text"] == text
+            assert line["speakerDesignation"] == speaker
+    elif exporter is track.convert_dote_to_podlove:
+        [line] = json.loads(rendered)["transcripts"]
+        assert line["text"] == text
+        assert line["speaker"] == speaker
+    else:
+        assert text in rendered.splitlines()
 
 
 def test_whisper_cpp_invalid_times_preserve_raw_output(tmp_path):

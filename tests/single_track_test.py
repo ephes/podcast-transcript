@@ -1106,3 +1106,25 @@ def test_webvtt_omits_blank_cues_only_from_rendered_output(tmp_path, text):
 
     assert output.read_text() == "WEBVTT\n"
     assert source.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [("café\0日本語\0🌍", "café\ufffd日本語\ufffd🌍"), ("\0", "\ufffd")],
+)
+def test_webvtt_replaces_nul_in_cue_text(tmp_path, text, expected):
+    from podcast_transcript.single_track import convert_to_webvtt
+
+    source = _write_dote(
+        tmp_path / "input.dote.json",
+        [("00:00:00,000", "00:00:01,000", text)],
+    )
+    original = source.read_bytes()
+    output = tmp_path / "output.webvtt"
+
+    convert_to_webvtt(source, output)
+
+    assert output.read_text(encoding="utf-8") == (
+        f"WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n{expected}\n"
+    )
+    assert source.read_bytes() == original

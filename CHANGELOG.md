@@ -6,6 +6,10 @@ Unreleased
 - Reject transcript sources that change during streamed copies, preserving the previous
   destination and discarding the staged bytes.
 - Validate single-chunk DOTe from a byte-limited snapshot and publish exactly the validated bytes.
+- Reject unpaired surrogates in DOTe cue text and speaker designations before combining or exporting.
+- Reject unpaired surrogates in backend and cached raw Whisper segment text before writing raw
+  caches or DOTe, so the error names the raw chunk.
+- Render NUL in WebVTT cue text as the Unicode replacement character.
 
 0.2.0 - 2026-11-17
 ==================

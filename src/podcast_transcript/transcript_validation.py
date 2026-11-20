@@ -8,6 +8,9 @@ from fractions import Fraction
 from .json_input import loads_unique
 
 
+_SURROGATE = re.compile(r"[\ud800-\udfff]")
+
+
 def exact_seconds(value: object) -> Fraction:
     """Admit millisecond-representable seconds as an exact decimal fraction."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -34,6 +37,10 @@ def validate_segments(segments: object) -> None:
         message = f"Invalid transcript segment {position}: require text and finite, nonnegative start/end with end >= start."
         if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
             raise ValueError(message)
+        if _SURROGATE.search(segment["text"]):
+            raise ValueError(
+                f"Invalid transcript segment {position}: text must contain only Unicode scalar values."
+            )
         times: list[int | float] = []
         for key in ("start", "end"):
             value = segment.get(key)
@@ -123,13 +130,21 @@ def validate_dote(data: object) -> None:
         raise ValueError("Invalid DOTe: lines must be a list.")
     previous_start = -1
     for position, line in enumerate(data["lines"], 1):
-        if not isinstance(line, dict) or not isinstance(line.get("text"), str):
+        text = line.get("text") if isinstance(line, dict) else None
+        if not isinstance(text, str):
             raise ValueError(f"Invalid DOTe line {position}: require a text string.")
-        if "speakerDesignation" in line and not isinstance(
-            line["speakerDesignation"], str
-        ):
+        if _SURROGATE.search(text):
+            raise ValueError(
+                f"Invalid DOTe line {position}: text must contain only Unicode scalar values."
+            )
+        speaker = line.get("speakerDesignation", "")
+        if not isinstance(speaker, str):
             raise ValueError(
                 f"Invalid DOTe line {position}: speakerDesignation must be a string."
+            )
+        if _SURROGATE.search(speaker):
+            raise ValueError(
+                f"Invalid DOTe line {position}: speakerDesignation must contain only Unicode scalar values."
             )
         start = parse_dote_timecode(line.get("startTime"))
         end = parse_dote_timecode(line.get("endTime"))
