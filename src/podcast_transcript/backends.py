@@ -577,9 +577,8 @@ class WhisperCpp:
         self,
         input_path: Path,
         output_path: Path,
-    ) -> None:
-        """
-        Transcribe audio using whisper-cli with specified parameters.
+    ) -> dict:
+        """Publish validated whisper-cli JSON and return its Whisper projection.
 
         Args:
             input_path (Path): Path to the input audio file
@@ -592,6 +591,13 @@ class WhisperCpp:
             # whisper-cli appends ".json" to the -of base path
             tmp_base = tmp_json_path.with_suffix("")
             self.run_whisper_cli(input_path, tmp_base)
+            try:
+                result = self._read_native_transcript(tmp_json_path)
+            except FileNotFoundError:
+                raise RuntimeError(
+                    f"Expected output was not created: {json_path}"
+                ) from None
+        return result
 
     def run_whisper_cli(self, input_path: Path, output_base: Path) -> None:
         args = [
@@ -649,7 +655,7 @@ class WhisperCpp:
         validate_whisper_transcript(result)
         return result
 
-    def convert_output_format(self, input_path: Path, output_path: Path) -> None:
+    def _read_native_transcript(self, input_path: Path) -> dict:
         raw = read_regular_bounded(
             input_path,
             limit=LOCAL_TRANSCRIPT_MAX_BYTES,
@@ -659,25 +665,19 @@ class WhisperCpp:
             cpp_transcript = loads_unique(raw)
         except (ValueError, UnicodeError, RecursionError):
             raise ValueError("Invalid native transcript JSON.") from None
-        transformed_transcript = self.transform_transcription(cpp_transcript)
-        validate_whisper_transcript(transformed_transcript)
-        write_text_atomic(output_path, json.dumps(transformed_transcript))
+        return self.transform_transcription(cpp_transcript)
+
+    def convert_output_format(self, input_path: Path, output_path: Path) -> None:
+        result = self._read_native_transcript(input_path)
+        write_text_atomic(output_path, json.dumps(result))
 
     def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
         # Convert the audio file to WAV format
         wav_file = audio_file.with_suffix(".wav")
         if not self.valid_wav(wav_file):
             self.convert_to_wav(audio_file, wav_file)
-        # Transcribe the WAV file
         whisper_transcript_path = transcript_path.with_suffix(
             ".whisper-cpp"
         )  # .json is automatically appended
-        self.transcribe_wav(wav_file, whisper_transcript_path)
-        whisper_read_transcript_path = transcript_path.with_suffix(".whisper-cpp.json")
-        # Convert the whisper-cpp JSON to original Whisper format
-        try:
-            self.convert_output_format(whisper_read_transcript_path, transcript_path)
-        except (ValueError, RuntimeError):
-            # This run just published the intermediate; drop the refused copy only.
-            whisper_read_transcript_path.unlink(missing_ok=True)
-            raise
+        result = self.transcribe_wav(wav_file, whisper_transcript_path)
+        write_text_atomic(transcript_path, json.dumps(result))

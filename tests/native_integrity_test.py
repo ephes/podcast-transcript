@@ -84,7 +84,7 @@ def test_bad_cached_wav_is_rebuilt_before_inference(monkeypatch, tmp_path, conte
         consumed.append(source.read_bytes())
         Path(str(target) + ".json").write_text(json.dumps({"transcription": []}))
 
-    monkeypatch.setattr(backends.WhisperCpp, "transcribe_wav", infer)
+    monkeypatch.setattr(backends.WhisperCpp, "run_whisper_cli", infer)
     backends.WhisperCpp().transcribe(source, source.with_suffix(".json"))
     assert rebuilt == [source]
     assert consumed == [wav_bytes()]
@@ -104,7 +104,7 @@ def test_valid_cached_wav_is_reused(monkeypatch, tmp_path):
     def infer(self, source, target):
         Path(str(target) + ".json").write_text(json.dumps({"transcription": []}))
 
-    monkeypatch.setattr(backends.WhisperCpp, "transcribe_wav", infer)
+    monkeypatch.setattr(backends.WhisperCpp, "run_whisper_cli", infer)
     backends.WhisperCpp().transcribe(source, source.with_suffix(".json"))
 
 
@@ -126,7 +126,7 @@ def test_failed_wav_repair_preserves_final_and_source(monkeypatch, tmp_path, out
     monkeypatch.setattr(backends, "run_checked", run)
     monkeypatch.setattr(
         backends.WhisperCpp,
-        "transcribe_wav",
+        "run_whisper_cli",
         lambda *a: pytest.fail("bad WAV reached inference"),
     )
     with pytest.raises(RuntimeError):
