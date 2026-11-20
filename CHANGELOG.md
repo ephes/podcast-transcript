@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Reuse admitted transcript inventories during settings replacement so duplicate scans cannot
+  exhaust the entry budget after updating recovery. Refuse inventory changes detected during backup.
 - Report directory sync failures after an atomic rename as uncertain durability for
   the already visible replacement.
 - Use short staging names that preserve media extensions and allow publication near
