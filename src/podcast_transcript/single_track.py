@@ -397,28 +397,25 @@ def convert_to_webvtt(dote_path: Path, vtt_path: Path) -> None:
     """Converts DOTe format to WebVTT format."""
     dote_data = load_dote(dote_path)
 
-    lines = dote_data.get("lines", [])
-    output = ["WEBVTT\n"]
-    for line in lines:
-        start_time = line["startTime"].replace(",", ".")
-        end_time = line["endTime"].replace(",", ".")
-        text = line["text"].replace("\0", "\ufffd")
-        text = text.replace("\r\n", "\n").replace("\r", "\n")
-        text = re.sub(r"\n(?:[ \t]*\n)+", "\n", text).strip("\n")
-        if not text.strip():
-            continue
-        start_ms = parse_dote_timecode(line["startTime"])
-        end_ms = parse_dote_timecode(line["endTime"])
-        if end_ms == start_ms:
-            # Quantization can collapse an admitted span. Extend only this
-            # rendered cue; source and DOTe timing evidence stays unchanged.
-            end_time = format_dote_timecode(start_ms + 1).replace(",", ".")
-        text = escape(text, quote=False)
-        output.append(f"{start_time} --> {end_time}")
-        output.append(text)
-        output.append("")  # Blank line to separate captions
-
-    write_text_atomic(vtt_path, "\n".join(output))
+    with atomic_output(vtt_path) as temporary:
+        with temporary.open("x", encoding="utf-8") as target:
+            target.write("WEBVTT\n")
+            for line in dote_data.get("lines", []):
+                start_time = line["startTime"].replace(",", ".")
+                end_time = line["endTime"].replace(",", ".")
+                text = line["text"].replace("\0", "\ufffd")
+                text = text.replace("\r\n", "\n").replace("\r", "\n")
+                text = re.sub(r"\n(?:[ \t]*\n)+", "\n", text).strip("\n")
+                if not text.strip():
+                    continue
+                start_ms = parse_dote_timecode(line["startTime"])
+                end_ms = parse_dote_timecode(line["endTime"])
+                if end_ms == start_ms:
+                    # Quantization can collapse an admitted span. Extend only this
+                    # rendered cue; source and DOTe timing evidence stays unchanged.
+                    end_time = format_dote_timecode(start_ms + 1).replace(",", ".")
+                text = escape(text, quote=False)
+                target.write(f"\n{start_time} --> {end_time}\n{text}\n")
 
 
 def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
