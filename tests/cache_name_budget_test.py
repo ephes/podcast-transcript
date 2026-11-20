@@ -1,4 +1,4 @@
-"""Cache components reserve bytes for exports, locks and atomic staging names."""
+"""Cache components reserve bytes for exports and locks."""
 
 import hashlib
 import shutil
@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 import pytest
 
-from podcast_transcript import audio, safe_io, single_track
+from podcast_transcript import audio, single_track
 from single_track_test import RecordingBackend
 
 
@@ -44,7 +44,6 @@ def test_long_source_completes_with_byte_bounded_distinct_paths(
     ]
     for path in paths:
         assert len(path.name.encode("utf-8")) <= 213
-        assert len(safe_io.partial_path_for(path).name.encode("utf-8")) <= 255
     assert len(set(paths)) == len(paths)
     assert len(f"{store.cache_key}.lock".encode("utf-8")) <= 255
     result = single_track.transcribe(url, RecordingBackend("first", "one"))
@@ -61,10 +60,7 @@ def test_long_percent_decoded_url_names_remain_distinct_and_stable(tmp_path):
     assert stores[0].cache_key != stores[1].cache_key
     for store in stores:
         assert len(store.cache_key.encode("utf-8")) <= 250
-        assert (
-            len(safe_io.partial_path_for(store.episode_path).name.encode("utf-8"))
-            <= 255
-        )
+        assert len(store.episode_path.name.encode("utf-8")) <= 213
         assert store.cache_key == audio.get_cache_key(store.url)
 
 

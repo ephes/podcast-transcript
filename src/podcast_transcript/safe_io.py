@@ -16,7 +16,6 @@ import signal
 import stat
 import subprocess
 import tempfile
-import uuid
 
 from collections.abc import Iterator, Generator
 from contextlib import closing, contextmanager
@@ -29,18 +28,6 @@ from .input_admission import read_regular_bounded as read_regular_bounded
 
 STDERR_TAIL_LINES = 20
 STDERR_TAIL_CHARS = 2000
-# Extra UTF-8 bytes added by partial_path_for, excluding the original filename.
-ATOMIC_NAME_EXTRA_BYTES = 42
-
-
-def partial_path_for(path: Path) -> Path:
-    """
-    Return a unique, hidden temporary path next to ``path``.
-
-    The suffix is kept so tools like ffmpeg can still infer the output format,
-    and the leading dot keeps the file out of ``chunk_*.mp3`` style globs.
-    """
-    return path.with_name(f".{path.stem}.{uuid.uuid4().hex}.partial{path.suffix}")
 
 
 @contextmanager
@@ -57,7 +44,9 @@ def atomic_output(path: Path) -> Iterator[Path]:
     # directory protects those bytes before publication, even in a shared parent.
     mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
     with tempfile.TemporaryDirectory(prefix=".output-", dir=path.parent) as directory:
-        tmp_path = Path(directory) / partial_path_for(path).name
+        # The directory supplies uniqueness. A single-byte stem keeps the
+        # media suffix for tools like ffmpeg without lengthening the filename.
+        tmp_path = Path(directory) / f"_{path.suffix}"
         yield tmp_path
         if not tmp_path.exists() and not tmp_path.is_symlink():
             raise RuntimeError(f"Expected output was not created: {path}")

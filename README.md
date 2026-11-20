@@ -276,9 +276,10 @@ example `audio-3f2a9c41d0b7`. Episodes that share a file name, such as `.../123/
 `.../124/audio.mp3`, therefore get separate directories. The output files themselves keep the readable
 name (`audio.dote.json`, `audio.txt`, ...). Readable stems are shortened only when needed,
 at UTF-8 byte boundaries; the hash still covers the complete original source identity.
-Cache filenames stay within 213 UTF-8 bytes, reserving 42 bytes for atomic temporary
-names under the 255-byte filesystem component limit. The shared stem also reserves
-space for the longest export/resample suffix and the cache lock. Bounded source copies
+Cache filenames keep the existing 213-byte UTF-8 limit for compatibility with saved
+episodes. Atomic publication uses a short filename with the output's extension in
+a private staging directory. The shared stem reserves space for the longest
+export/resample suffix and the cache lock. Bounded source copies
 keep ordinary audio extensions; very long extensions are shortened with the name.
 Short existing keys and paths stay unchanged, except for newly reserved storage roles.
 Previously unusable long names receive a new bounded cache key and rebuild once; older

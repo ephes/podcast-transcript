@@ -135,6 +135,17 @@ def record_publication(monkeypatch):
     return events
 
 
+def test_atomic_output_publishes_near_limit_media_name(tmp_path):
+    target = tmp_path / ("a" * 250 + ".mp3")
+    with safe_io.atomic_output(target) as stage:
+        assert stage.suffix == ".mp3"
+        assert stage.parent.parent == target.parent
+        stage.write_bytes(b"synthetic audio")
+
+    assert target.read_bytes() == b"synthetic audio"
+    assert not stage.parent.exists()
+
+
 def test_atomic_output_syncs_data_then_rename_then_directory(tmp_path, monkeypatch):
     events = record_publication(monkeypatch)
     safe_io.write_text_atomic(tmp_path / "result.json", "complete")
