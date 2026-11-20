@@ -3,6 +3,7 @@ Unreleased
 
 ### Fixes
 
+- Stream plaintext transcript entries into a private stage before publishing the UTF-8 export.
 - Reject transcript sources that change during streamed copies, preserving the previous
   destination and discarding the staged bytes.
 - Validate single-chunk DOTe from a byte-limited snapshot and publish exactly the validated bytes.

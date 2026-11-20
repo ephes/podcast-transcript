@@ -425,13 +425,12 @@ def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
     """Converts DOTe format to plain text."""
     dote_data = load_dote(dote_path)
 
-    lines = dote_data.get("lines", [])
-    output = []
-    for line in lines:
-        text = line["text"]
-        output.append(text)
-
-    write_text_atomic(plaintext_path, "\n".join(output))
+    with atomic_output(plaintext_path) as temporary:
+        with temporary.open("x", encoding="utf-8") as target:
+            for index, line in enumerate(dote_data.get("lines", [])):
+                if index:
+                    target.write("\n")
+                target.write(line["text"])
 
 
 @contextmanager
