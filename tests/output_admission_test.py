@@ -95,14 +95,28 @@ def test_native_output_must_be_regular_file(tmp_path, kind):
     assert not (tmp_path / "out.json").exists()
 
 
-@pytest.mark.parametrize("content", ["oversized", "nested"])
-def test_refused_native_output_preserves_transcript_and_drops_intermediate(
-    monkeypatch, tmp_path, content
+@pytest.mark.parametrize("has_previous", [False, True])
+@pytest.mark.parametrize(
+    ("payload", "error", "message"),
+    [
+        pytest.param(
+            b"x" * 4097, RuntimeError, "Native transcript output exceeded", id="size"
+        ),
+        pytest.param(b"{", ValueError, "Invalid native transcript JSON", id="json"),
+        pytest.param(
+            b'{"transcription": "invalid"}',
+            ValueError,
+            "require native segments",
+            id="schema",
+        ),
+    ],
+)
+def test_refused_native_output_preserves_previous_artifacts(
+    monkeypatch, tmp_path, has_previous, payload, error, message
 ):
     from native_integrity_test import wav_bytes
 
     monkeypatch.setattr(backends, "LOCAL_TRANSCRIPT_MAX_BYTES", 4096)
-    payload = b"x" * 4097 if content == "oversized" else b"[" * 3000 + b"]" * 3000
 
     def fake_run(cmd, **kwargs):
         if cmd[0] == "ffmpeg":
@@ -117,11 +131,18 @@ def test_refused_native_output_preserves_transcript_and_drops_intermediate(
     chunk.write_bytes(b"mp3")
     transcript = tmp_path / "chunk_000.json"
     transcript.write_bytes(b"previous")
-    with pytest.raises((RuntimeError, ValueError)):
+    intermediate = tmp_path / "chunk_000.whisper-cpp.json"
+    if has_previous:
+        intermediate.write_bytes(native_output())
+    with pytest.raises(error, match=message):
         backends.WhisperCpp(model_name="model.bin").transcribe(chunk, transcript)
     assert transcript.read_bytes() == b"previous"
-    assert not (tmp_path / "chunk_000.whisper-cpp.json").exists()
+    if has_previous:
+        assert intermediate.read_bytes() == native_output()
+    else:
+        assert not intermediate.exists()
     assert chunk.read_bytes() == b"mp3"
+    assert not list(tmp_path.glob(".output-*"))
 
 
 @pytest.mark.parametrize("name", ["groq", "voxhelm"])

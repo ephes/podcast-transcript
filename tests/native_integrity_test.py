@@ -23,6 +23,38 @@ def wav_bytes(*, channels=1, rate=16000, width=2, frames=80):
     return stream.getvalue()
 
 
+def test_wav_size_check_uses_opened_generation(monkeypatch, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    wav = cache / "chunk.wav"
+    wav.write_bytes(wav_bytes())
+    getnframes = wave.Wave_read.getnframes
+
+    def replace_path_after_header(source):
+        cache.rename(tmp_path / "old-cache")
+        cache.mkdir()
+        wav.write_bytes(b"")
+        return getnframes(source)
+
+    monkeypatch.setattr(wave.Wave_read, "getnframes", replace_path_after_header)
+    assert backends.WhisperCpp.valid_wav(wav)
+
+
+def test_wav_changed_in_place_during_frame_read_is_refused(monkeypatch, tmp_path):
+    wav = tmp_path / "chunk.wav"
+    wav.write_bytes(wav_bytes())
+    readframes = wave.Wave_read.readframes
+
+    def append_after_frame_read(source, count):
+        frames = readframes(source, count)
+        with wav.open("ab") as output:
+            output.write(b"\0\0")
+        return frames
+
+    monkeypatch.setattr(wave.Wave_read, "readframes", append_after_frame_read)
+    assert not backends.WhisperCpp.valid_wav(wav)
+
+
 @pytest.mark.parametrize(
     "content",
     [
@@ -52,7 +84,7 @@ def test_bad_cached_wav_is_rebuilt_before_inference(monkeypatch, tmp_path, conte
         consumed.append(source.read_bytes())
         Path(str(target) + ".json").write_text(json.dumps({"transcription": []}))
 
-    monkeypatch.setattr(backends.WhisperCpp, "transcribe_wav", infer)
+    monkeypatch.setattr(backends.WhisperCpp, "run_whisper_cli", infer)
     backends.WhisperCpp().transcribe(source, source.with_suffix(".json"))
     assert rebuilt == [source]
     assert consumed == [wav_bytes()]
@@ -72,7 +104,7 @@ def test_valid_cached_wav_is_reused(monkeypatch, tmp_path):
     def infer(self, source, target):
         Path(str(target) + ".json").write_text(json.dumps({"transcription": []}))
 
-    monkeypatch.setattr(backends.WhisperCpp, "transcribe_wav", infer)
+    monkeypatch.setattr(backends.WhisperCpp, "run_whisper_cli", infer)
     backends.WhisperCpp().transcribe(source, source.with_suffix(".json"))
 
 
@@ -94,7 +126,7 @@ def test_failed_wav_repair_preserves_final_and_source(monkeypatch, tmp_path, out
     monkeypatch.setattr(backends, "run_checked", run)
     monkeypatch.setattr(
         backends.WhisperCpp,
-        "transcribe_wav",
+        "run_whisper_cli",
         lambda *a: pytest.fail("bad WAV reached inference"),
     )
     with pytest.raises(RuntimeError):

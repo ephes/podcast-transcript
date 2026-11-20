@@ -267,6 +267,7 @@ def test_whisper_cpp_writes_transcript_via_temp_base(mocker, tmp_path):
         return subprocess.CompletedProcess(cmd, 0)
 
     mocker.patch("podcast_transcript.backends.run_checked", side_effect=fake_run)
+    read_native = mocker.spy(backends, "read_regular_bounded")
     audio_chunk = tmp_path / "chunk_000.mp3"
     audio_chunk.write_bytes(b"mp3")
     transcript_path = tmp_path / "chunk_000.json"
@@ -274,7 +275,10 @@ def test_whisper_cpp_writes_transcript_via_temp_base(mocker, tmp_path):
     WhisperCpp(model_name="model.bin").transcribe(audio_chunk, transcript_path)
 
     assert json.loads(transcript_path.read_text())["segments"][0]["text"] == "Hello"
-    assert (tmp_path / "chunk_000.whisper-cpp.json").exists()
+    intermediate = tmp_path / "chunk_000.whisper-cpp.json"
+    assert json.loads(intermediate.read_text()) == cpp_output
+    read_native.assert_called_once()
+    assert read_native.call_args.args[0].parent.name.startswith(".output-")
     assert (tmp_path / "chunk_000.wav").exists()
     # No temporary files are left behind
     assert not [p for p in tmp_path.iterdir() if p.name.startswith(".")]

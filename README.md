@@ -405,7 +405,8 @@ On Windows, timeout/error cleanup uses `taskkill /T`; successful pipe-detached d
 have the POSIX group-retirement guarantee.
 
 whisper-cpp reuses a WAV only after checking nonempty, complete mono 16kHz PCM16 samples through
-the standard WAV reader in bounded blocks. Corrupt, truncated or differently shaped WAV caches
+the standard WAV reader in bounded blocks. The size check uses the opened regular file, and
+changes to that file during validation cause rejection. Corrupt, truncated or differently shaped WAV caches
 are rebuilt from the source MP3. New conversions are validated before publication; failed repairs
 preserve the source, old WAV and previous final transcript. A valid WAV is reused unchanged.
 
@@ -489,7 +490,7 @@ Admitted multi-chunk output is serialized directly to staging without another ep
 
 Native whisper-cpp timestamps require the same full `HH:MM:SS,mmm` grammar as DOTe below,
 including component ranges and multi-day hours. Malformed native schemas and JSON raise a
-controlled error without transcript text and never replace converted raw caches.
+controlled error without transcript text and preserve previous native and converted raw caches.
 
 Successful Groq/Voxhelm responses, raw, DOTe, native/MLX output and cache-control JSON reject
 duplicate object keys at every depth, without echoing values. Ambiguous control markers stop reuse and preserve existing files; repair or
@@ -610,8 +611,10 @@ validated before publication. Each chunk pays the worker start-up and model load
 
 The JSON that whisper-cli writes is admitted before parsing: it must be a regular file (no FIFO,
 symlink or directory) of at most 64 MiB, counted while reading even if it grows. Oversized,
-excessively nested or invalid output fails the chunk, removes only that run's refused
-`*.whisper-cpp.json` intermediate, and keeps any previous transcript and the prepared audio.
+excessively nested or invalid output fails the chunk and discards the staged file. The
+`*.whisper-cpp.json` intermediate is published after validation, and the validated segments are
+reused to write the converted transcript. A refused output preserves any previous intermediate,
+converted transcript and prepared audio.
 
 ### Invalid audio duration or a stalled probe
 
