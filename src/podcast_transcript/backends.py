@@ -204,7 +204,7 @@ class Groq:
         """Return Groq's rate-limit message, or None if the body has none."""
         try:
             error = response.json()
-        except ValueError:
+        except (ValueError, UnicodeError, RecursionError):
             return None
         if not isinstance(error, dict):
             return None

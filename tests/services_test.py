@@ -369,6 +369,25 @@ def _groq():
     )
 
 
+def test_groq_rate_limit_with_recursive_body_preserves_transcript(mocker, audio):
+    # Python 3.14's C JSON decoder can exceed sys.getrecursionlimit().
+    depth = 100_000
+    body = "[" * depth + "0" + "]" * depth
+    response = _http_error_response(mocker, 429, body)
+    request = patch_stream(mocker, return_value=response)
+    sleep_until = mocker.patch.object(Groq, "sleep_until")
+    audio_chunk = _dummy_chunk(audio)
+    transcript_path = audio_chunk.with_suffix(".json")
+    transcript_path.write_bytes(b'{"segments": []}')
+
+    with pytest.raises(RuntimeError, match="status 429.*retry later"):
+        _groq().transcribe(audio_chunk, transcript_path)
+
+    request.assert_called_once()
+    sleep_until.assert_not_called()
+    assert transcript_path.read_bytes() == b'{"segments": []}'
+
+
 def _voxhelm(api_base="https://voxhelm.example"):
     return Voxhelm(
         api_base=api_base,

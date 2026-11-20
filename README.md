@@ -182,7 +182,8 @@ You can also set the following environment variables or specify them in the .env
   A timeout stops the run with an error naming the backend. The Groq backend retries rate-limited (429) requests
   at most 10 times in total. Rate-limit waits (including a two-second buffer) must be finite,
   positive and fit a cumulative wait budget equal to this setting. Waiting uses a monotonic clock;
-  unusable delays stop with a retry-later error.
+  unusable delays stop with a retry-later error. A 429 body that cannot be decoded, including
+  excessively nested JSON, provides no usable delay and stops the run without another request.
 
 Remote Groq and Voxhelm responses (success and error) are streamed with a 32 MiB body limit,
 independent of Content-Length. Requests send `Accept-Encoding: identity`; a response with any
