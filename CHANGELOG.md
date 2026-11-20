@@ -3,6 +3,7 @@ Unreleased
 
 ### Fixes
 
+- Check WAV headers and frames against the same opened regular file and reject changes during validation.
 - Stream sanitized WebVTT cues into a private stage before publishing the UTF-8 export.
 - Stream plaintext transcript entries into a private stage before publishing the UTF-8 export.
 - Reject transcript sources that change during streamed copies, preserving the previous

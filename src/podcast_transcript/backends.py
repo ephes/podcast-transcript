@@ -5,11 +5,13 @@ Transcriptions services
 import asyncio
 import importlib.util
 import io
+import os
 import re
 import json
 
 from .json_input import loads_unique
 import math
+import stat
 import wave
 import sys
 import tempfile
@@ -24,6 +26,7 @@ import httpx
 from rich import print as rprint
 
 from .config import private_mkdir, settings
+from .input_admission import file_generation
 from .transcript_validation import parse_dote_timecode, validate_whisper_transcript
 from .safe_io import (
     LOCAL_TRANSCRIPT_MAX_BYTES,
@@ -503,25 +506,36 @@ class WhisperCpp:
 
     @staticmethod
     def valid_wav(path: Path) -> bool:
-        """Validate cached PCM through the public wave API with bounded reads."""
+        """Validate cached PCM from one regular file using bounded reads."""
         try:
-            with wave.open(str(path), "rb") as source:
-                if (
-                    source.getnchannels(),
-                    source.getframerate(),
-                    source.getsampwidth(),
-                    source.getcomptype(),
-                ) != (1, 16000, 2, "NONE"):
+            with open(
+                path,
+                "rb",
+                opener=lambda name, flags: os.open(
+                    name, flags | getattr(os, "O_NONBLOCK", 0)
+                ),
+            ) as stream:
+                descriptor = stream.fileno()
+                before = os.fstat(descriptor)
+                if not stat.S_ISREG(before.st_mode):
                     return False
-                remaining = source.getnframes() * 2
-                if remaining <= 0 or remaining > path.stat().st_size:
-                    return False
-                while remaining:
-                    block = source.readframes(min(32768, remaining // 2))
-                    if not block or len(block) % 2:
+                with wave.open(stream, "rb") as source:
+                    if (
+                        source.getnchannels(),
+                        source.getframerate(),
+                        source.getsampwidth(),
+                        source.getcomptype(),
+                    ) != (1, 16000, 2, "NONE"):
                         return False
-                    remaining -= len(block)
-                return True
+                    remaining = source.getnframes() * 2
+                    if remaining <= 0 or remaining > before.st_size:
+                        return False
+                    while remaining:
+                        block = source.readframes(min(32768, remaining // 2))
+                        if not block or len(block) % 2:
+                            return False
+                        remaining -= len(block)
+                return file_generation(before) == file_generation(os.fstat(descriptor))
         except (OSError, EOFError, wave.Error):
             return False
 

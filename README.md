@@ -405,7 +405,8 @@ On Windows, timeout/error cleanup uses `taskkill /T`; successful pipe-detached d
 have the POSIX group-retirement guarantee.
 
 whisper-cpp reuses a WAV only after checking nonempty, complete mono 16kHz PCM16 samples through
-the standard WAV reader in bounded blocks. Corrupt, truncated or differently shaped WAV caches
+the standard WAV reader in bounded blocks. The size check uses the opened regular file, and
+changes to that file during validation cause rejection. Corrupt, truncated or differently shaped WAV caches
 are rebuilt from the source MP3. New conversions are validated before publication; failed repairs
 preserve the source, old WAV and previous final transcript. A valid WAV is reused unchanged.
 
