@@ -1,6 +1,9 @@
 import json
+import os
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -643,6 +646,118 @@ def test_changed_source_preparation_preserves_previous_generation(
     assert json.loads(audio.source_metadata_path.read_text()) == {
         "sha256": audio._content_fingerprint(source)
     }
+
+
+@pytest.fixture
+def fail_staged_text_write(monkeypatch):
+    real_open = Path.open
+
+    def install(output, *, successful_writes):
+        @contextmanager
+        def open_with_write_failure(file):
+            with file:
+                remaining = successful_writes
+
+                def write(text):
+                    nonlocal remaining
+                    if remaining == 0:
+                        raise OSError("injected stage write failure")
+                    remaining -= 1
+                    return file.write(text)
+
+                yield SimpleNamespace(write=write)
+
+        def open_path(path, *args, **kwargs):
+            file = real_open(path, *args, **kwargs)
+            if path.parent.name.startswith(".output-") and path.suffix == output.suffix:
+                return open_with_write_failure(file)
+            return file
+
+        monkeypatch.setattr(Path, "open", open_path)
+
+    return install
+
+
+@pytest.mark.parametrize(
+    "texts, expected",
+    [
+        ([], ""),
+        (["first", "last"], "first\nlast"),
+        (["café\nline two", "", "日本語\n"], "café\nline two\n\n日本語\n"),
+    ],
+)
+def test_plaintext_export_bytes(tmp_path, texts, expected):
+    from podcast_transcript.single_track import convert_to_plaintext
+
+    source = _write_dote(
+        tmp_path / "input.dote.json",
+        [("00:00:00,000", "00:00:01,000", text) for text in texts],
+    )
+    output = tmp_path / "output.txt"
+
+    convert_to_plaintext(source, output)
+
+    assert output.read_bytes() == expected.replace("\n", os.linesep).encode("utf-8")
+
+
+def test_plaintext_mid_write_failure_preserves_previous_export(
+    tmp_path, fail_staged_text_write
+):
+    from podcast_transcript.single_track import convert_to_plaintext
+
+    source = _write_dote(
+        tmp_path / "input.dote.json",
+        [("00:00:00,000", "00:00:01,000", text) for text in ("first", "second")],
+    )
+    output = tmp_path / "output.txt"
+    output.write_bytes(b"previous transcript")
+    fail_staged_text_write(output, successful_writes=1)
+
+    with pytest.raises(OSError, match="injected stage write failure"):
+        convert_to_plaintext(source, output)
+
+    assert output.read_bytes() == b"previous transcript"
+    assert sorted(tmp_path.iterdir()) == [source, output]
+
+
+def test_webvtt_large_escaped_export_bytes(tmp_path):
+    from podcast_transcript.single_track import convert_to_webvtt
+
+    span = ("25:59:59,999", "25:59:59,999")
+    payload = "<&\0>" * 128
+    escaped = "&lt;&amp;\ufffd&gt;" * 128
+    lines = [(*span, f"{i} café {payload}\r\n \t\r\nnext") for i in range(512)]
+    lines.insert(1, (*span, " \r\n\t"))
+    source = _write_dote(tmp_path / "input.dote.json", lines)
+    output = tmp_path / "output.webvtt"
+
+    convert_to_webvtt(source, output)
+
+    expected = "WEBVTT\n" + "".join(
+        f"\n25:59:59.999 --> 26:00:00.000\n{i} café {escaped}\nnext\n"
+        for i in range(512)
+    )
+    assert output.read_bytes() == expected.replace("\n", os.linesep).encode("utf-8")
+
+
+def test_webvtt_mid_write_failure_preserves_previous_export(
+    tmp_path, fail_staged_text_write
+):
+    from podcast_transcript.single_track import convert_to_webvtt
+
+    source = _write_dote(
+        tmp_path / "input.dote.json",
+        [("00:00:00,000", "00:00:01,000", text) for text in ("first", "second")],
+    )
+    output = tmp_path / "output.webvtt"
+    output.write_bytes(b"previous captions")
+    fail_staged_text_write(output, successful_writes=2)
+
+    with pytest.raises(OSError, match="injected stage write failure"):
+        convert_to_webvtt(source, output)
+
+    assert output.read_bytes() == b"previous captions"
+    assert sorted(tmp_path.iterdir()) == [source, output]
 
 
 def test_webvtt_preserves_literal_text_in_one_cue(tmp_path):
