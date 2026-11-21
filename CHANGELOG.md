@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Reject DOTe cue times beyond the safe JSON integer range before publishing caches or exports.
+
 - Reuse validated DOTe cue times when rendering Podlove JSON, preserving export bytes.
 
 - Reuse validated DOTe cue times when rendering WebVTT, preserving export bytes.

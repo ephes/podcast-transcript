@@ -29,6 +29,7 @@ from .config import private_mkdir, settings
 from .input_admission import file_generation
 from .json_input import load_control_json
 from .transcript_validation import (
+    DOTE_MAX_MILLISECONDS,
     validate_segments,
     validate_dote,
     exact_seconds,
@@ -255,10 +256,16 @@ def whisper_to_dote(input_data):
 
     validate_segments(input_data)
     output_data = {"lines": []}
-    for item in input_data:
+    for position, item in enumerate(input_data, 1):
+        start_ms = seconds_to_milliseconds(item["start"])
+        end_ms = seconds_to_milliseconds(item["end"])
+        if end_ms > DOTE_MAX_MILLISECONDS:
+            raise ValueError(
+                f"Invalid DOTe line {position}: timecode exceeds {DOTE_MAX_MILLISECONDS} milliseconds."
+            )
         line = {
-            "startTime": format_dote_timecode(seconds_to_milliseconds(item["start"])),
-            "endTime": format_dote_timecode(seconds_to_milliseconds(item["end"])),
+            "startTime": format_dote_timecode(start_ms),
+            "endTime": format_dote_timecode(end_ms),
             "speakerDesignation": "",
             "text": item["text"].strip(),
         }

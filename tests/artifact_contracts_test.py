@@ -252,6 +252,57 @@ def test_podlove_reuses_validated_cue_times(tmp_path, monkeypatch, mocker):
     assert out.read_bytes() == expected
 
 
+@pytest.mark.parametrize(
+    "end",
+    ["2501999792:59:00,992", "2501999793:00:00,000", "9" * 4300 + ":00:00,000"],
+    ids=["one-millisecond-over", "next-hour", "4300-digit-hours"],
+)
+def test_dote_refuses_out_of_range_cue_before_podlove_export(tmp_path, end, mocker):
+    source = dote(tmp_path / "chunk.dote.json", "00:00:00,000", end)
+    out = tmp_path / "out.podlove.json"
+    out.write_bytes(b"previous")
+    write = mocker.spy(track, "write_text_atomic")
+    error = r"^chunk\.dote\.json: Invalid DOTe line 1: .*9007199254740991"
+
+    with pytest.raises(ValueError, match=error):
+        track.load_dote(source)
+    with pytest.raises(ValueError, match=error):
+        track.convert_dote_to_podlove(source, out)
+    write.assert_not_called()
+    assert out.read_bytes() == b"previous"
+
+
+@pytest.mark.parametrize(
+    "timestamp,milliseconds",
+    [
+        ("125:00:00,001", 450_000_001),
+        ("0002501999792:59:00,991", 2**53 - 1),
+    ],
+)
+def test_podlove_exports_in_range_millisecond_integers(
+    tmp_path, timestamp, milliseconds
+):
+    source = dote(tmp_path / "chunk.dote.json", timestamp, timestamp)
+    out = tmp_path / "out.podlove.json"
+
+    track.convert_dote_to_podlove(source, out)
+
+    [cue] = json.loads(out.read_bytes())["transcripts"]
+    assert cue["start_ms"] == cue["end_ms"] == milliseconds
+    assert cue["start"] == cue["end"] == timestamp.replace(",", ".")
+
+
+def test_raw_conversion_refuses_to_publish_out_of_range_dote_chunk(tmp_path):
+    raw = tmp_path / "chunk.json"
+    raw.write_text(
+        json.dumps({"segments": [{"start": 0, "end": 10**13, "text": "synthetic"}]})
+    )
+
+    with pytest.raises(ValueError, match=r"Invalid DOTe line 1: .*9007199254740991"):
+        track.whisper_text_chunks_to_dote([raw])
+    assert not raw.with_suffix(".dote.json").exists()
+
+
 @pytest.mark.parametrize("exporter", EXPORTERS)
 @pytest.mark.parametrize(
     "fields", [{"text": "synthetic\ud800text"}, {"speaker": "synthetic\udfffname"}]
