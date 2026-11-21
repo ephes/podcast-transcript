@@ -21,6 +21,7 @@ from .audio import (
     Audio,
     ModelBudget,
     GENERATED_TRANSCRIPT_RE,
+    TRANSCRIPT_OUTPUT_LABELS,
     TRANSCRIPT_OUTPUT_SUFFIXES,
 )
 from .backends import MLX, TranscriptionBackend, Voxhelm, WhisperCpp
@@ -865,12 +866,10 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
 
 
 def _transcript_paths(audio: Audio) -> dict[str, Path]:
-    return dict(
-        zip(
-            ("DOTe", "podlove", "WebVTT", "plain text"),
-            (audio.output_path(suffix) for suffix in TRANSCRIPT_OUTPUT_SUFFIXES),
-        )
-    )
+    return {
+        TRANSCRIPT_OUTPUT_LABELS[suffix]: audio.output_path(suffix)
+        for suffix in TRANSCRIPT_OUTPUT_SUFFIXES
+    }
 
 
 def _transcript_files(
@@ -985,7 +984,6 @@ def _transcribe_prepared(
     *,
     validate_audio: Callable[[str | None], None],
 ) -> dict[str, Path]:
-    transcript_paths = {}
     audio.ensure_transcript_cache_matches(metadata)
 
     def validate_inputs(chunk: Path) -> None:
@@ -1005,17 +1003,13 @@ def _transcribe_prepared(
     dote_path = audio.output_path(".dote.json")
     if not dote_path.exists():
         combine_dote_chunks(dote_chunks, dote_path, chunk_durations)
-    transcript_paths["DOTe"] = dote_path
     podlove_path = audio.output_path(".podlove.json")
     if not podlove_path.exists():
         convert_dote_to_podlove(dote_path, podlove_path)
-    transcript_paths["podlove"] = podlove_path
     webvtt_path = audio.output_path(".webvtt")
     if not webvtt_path.exists():
         convert_to_webvtt(dote_path, webvtt_path)
-    transcript_paths["WebVTT"] = webvtt_path
     plaintext_path = audio.output_path(".txt")
     if not plaintext_path.exists():
         convert_to_plaintext(dote_path, plaintext_path)
-    transcript_paths["plain text"] = plaintext_path
-    return transcript_paths
+    return _transcript_paths(audio)

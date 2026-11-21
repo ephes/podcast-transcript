@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Derive transcription and restore receipts from the published output suffix-to-label mapping.
+
 - Require stable, regular UTF-8 raw Whisper and DOTe files within 64 MiB before parsing.
 
 - Require HTTP 200 without Content-Range for remote transcript results before caching.

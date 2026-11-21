@@ -64,7 +64,13 @@ GENERATED_TRANSCRIPT_RE = re.compile(
     r"chunk_\d{3,}\.(?:json|whisper-cpp\.json|dote\.json)"
 )
 CACHE_KEY_HASH_LENGTH = 12
-TRANSCRIPT_OUTPUT_SUFFIXES = (".dote.json", ".podlove.json", ".webvtt", ".txt")
+TRANSCRIPT_OUTPUT_LABELS = {
+    ".dote.json": "DOTe",
+    ".podlove.json": "podlove",
+    ".webvtt": "WebVTT",
+    ".txt": "plain text",
+}
+TRANSCRIPT_OUTPUT_SUFFIXES = tuple(TRANSCRIPT_OUTPUT_LABELS)
 # Preserve cache paths generated under the original 213-byte filename limit.
 CACHE_FILENAME_MAX_BYTES = 213
 READABLE_PREFIX_MAX_BYTES = CACHE_FILENAME_MAX_BYTES - max(

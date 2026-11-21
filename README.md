@@ -549,6 +549,10 @@ remove the invalid DOTe cache and regenerate its combined exports before retryin
 
 ## Output Formats
 
+Transcription and `--restore-last-success` report one path per published format using the same
+labels and file suffixes. The output inventory and both receipts share one suffix-to-label
+mapping in `audio.py`.
+
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.
 - **WebVTT (*.webvtt)**: A subtitle format that can be used for captioning in media players.
