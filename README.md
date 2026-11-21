@@ -571,6 +571,8 @@ mapping in `audio.py`.
   nearest-millisecond rounding (including equal source endpoints) render with an end one millisecond
   after the start. Other timings, overlaps and cue order are preserved. This display policy changes
   only WebVTT: raw source times and DOTe's existing rounded timestamps remain unchanged.
+  WebVTT reuses the milliseconds parsed during DOTe validation and keeps the original
+  timestamp spelling apart from the decimal separator and any one-millisecond extension.
   Cues are written as UTF-8 to a private staging file, then the export is published after writing succeeds.
 - **Plaintext**: UTF-8 transcript text, written one DOTe entry at a time to a private staging file.
   Entries are separated by newlines, with embedded line breaks preserved. An empty transcript

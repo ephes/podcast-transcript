@@ -1337,6 +1337,37 @@ def test_whisper_to_webvtt_keeps_visible_cue_spans(
     assert dote_path.read_bytes() == dote_bytes
 
 
+def test_webvtt_parses_each_dote_endpoint_once(tmp_path, monkeypatch, mocker):
+    from podcast_transcript import single_track, transcript_validation
+
+    dote = whisper_to_dote([{"start": 1.0001, "end": 1.0002, "text": "Quantized"}])
+    dote["lines"].append(
+        {"startTime": "00:00:02,000", "endTime": "00:00:03,000", "text": " "}
+    )
+    expected = ["WEBVTT\n\n00:00:01.000 --> 00:00:01.001\nQuantized\n"]
+    for index in range(64):
+        start = f"000123:00:00,{index:03}"
+        end = f"000123:00:01,{index:03}"
+        dote["lines"].append({"startTime": start, "endTime": end, "text": "Café &"})
+        expected.append(
+            f"\n000123:00:00.{index:03} --> 000123:00:01.{index:03}\nCafé &amp;\n"
+        )
+
+    source = tmp_path / "input.dote.json"
+    original = json.dumps(dote).encode("utf-8")
+    source.write_bytes(original)
+    output = tmp_path / "output.webvtt"
+    parse = mocker.Mock(wraps=transcript_validation.parse_dote_timecode)
+    monkeypatch.setattr(transcript_validation, "parse_dote_timecode", parse)
+    monkeypatch.setattr(single_track, "parse_dote_timecode", parse)
+
+    single_track.convert_to_webvtt(source, output)
+
+    assert output.read_bytes() == "".join(expected).encode("utf-8")
+    assert source.read_bytes() == original
+    assert parse.call_count == 2 * len(dote["lines"])
+
+
 @pytest.mark.parametrize("text", ["", " ", "\r\n \t\n"])
 def test_webvtt_omits_blank_cues_only_from_rendered_output(tmp_path, text):
     from podcast_transcript.single_track import convert_to_webvtt

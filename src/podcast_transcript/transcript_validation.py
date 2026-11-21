@@ -2,8 +2,10 @@
 
 import math
 import re
+from collections.abc import Iterator
 from pathlib import Path
 from fractions import Fraction
+from typing import cast
 
 from .input_admission import read_regular_bounded
 from .json_input import loads_unique
@@ -128,22 +130,40 @@ def format_dote_timecode(milliseconds: int) -> str:
     return f"{hours:02}:{minutes:02}:{seconds:02},{millis:03}"
 
 
-def load_dote(path: Path, *, snapshot: bytes | None = None) -> dict:
-    """Validate DOTe JSON, using the path for diagnostics with a supplied snapshot."""
+def _read_dote_json(path: Path, snapshot: bytes | None = None) -> object:
     if snapshot is None:
         snapshot = _read_transcript(path, "DOTe transcript")
     try:
-        data = loads_unique(snapshot.decode("utf-8"))
+        return loads_unique(snapshot.decode("utf-8"))
     except (ValueError, UnicodeError, RecursionError):
         raise ValueError(f"Invalid DOTe JSON in {path.name}.") from None
+
+
+def load_dote(path: Path, *, snapshot: bytes | None = None) -> dict:
+    """Validate DOTe JSON, using the path for diagnostics with a supplied snapshot."""
+    data = _read_dote_json(path, snapshot)
     try:
         validate_dote(data)
-        return data
+    except ValueError as exc:
+        raise ValueError(f"{path.name}: {exc}") from None
+    return cast(dict, data)
+
+
+def _load_dote_cues(path: Path) -> list[tuple[dict, int, int]]:
+    """Admit the full DOTe file and retain the parsed cue times for rendering."""
+    data = _read_dote_json(path)
+    try:
+        return list(_iter_validated_dote_cues(data))
     except ValueError as exc:
         raise ValueError(f"{path.name}: {exc}") from None
 
 
 def validate_dote(data: object) -> None:
+    for _ in _iter_validated_dote_cues(data):
+        pass
+
+
+def _iter_validated_dote_cues(data: object) -> Iterator[tuple[dict, int, int]]:
     if not isinstance(data, dict) or not isinstance(data.get("lines"), list):
         raise ValueError("Invalid DOTe: lines must be a list.")
     previous_start = -1
@@ -173,3 +193,4 @@ def validate_dote(data: object) -> None:
                 f"Invalid DOTe line {position}: starts must be nondecreasing."
             )
         previous_start = start
+        yield line, start, end
