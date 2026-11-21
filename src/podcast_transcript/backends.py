@@ -54,7 +54,7 @@ def remote_response(backend: str, url: str, **kwargs) -> httpx.Response:
     Content-Encoding before iteration leaves httpx with its identity decoder,
     so the counted bytes are exactly the received bytes.
     """
-    headers = dict(kwargs.pop("headers", None) or {})
+    headers = httpx.Headers(kwargs.pop("headers", None))
     headers["Accept-Encoding"] = "identity"
 
     async def receive() -> httpx.Response:

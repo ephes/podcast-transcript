@@ -186,8 +186,8 @@ You can also set the following environment variables or specify them in the .env
   excessively nested JSON, provides no usable delay and stops the run without another request.
 
 Remote Groq and Voxhelm responses (success and error) are streamed with a 32 MiB body limit,
-independent of Content-Length. Requests send `Accept-Encoding: identity`; a response with any
-other `Content-Encoding` (gzip, deflate, br, ...) is refused before decoding, so a small compressed
+independent of Content-Length. Requests replace any supplied spelling of `Accept-Encoding`
+with a single `identity` value and preserve other headers. A response with any other `Content-Encoding` (gzip, deflate, br, ...) is refused before decoding, so a small compressed
 block cannot expand past the limit. Overflow or refusal closes the response, fails the run
 and preserves previous transcript files. Remote failures report status or category without response bodies, prompts, URLs or exception
 messages. Timeout errors retain the relevant setting hint.

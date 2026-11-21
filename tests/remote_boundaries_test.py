@@ -352,3 +352,26 @@ def test_remote_json_refusal_preserves_generation(
         (store.podcast_dir / p).read_bytes() == data for p, data in previous.items()
     )
     assert stream.closed
+
+
+def test_remote_requests_replace_all_accept_encoding_spellings(monkeypatch):
+    headers = {
+        "accept-encoding": "gzip",
+        "AcCePt-EnCoDiNg": "br",
+        "X-Synthetic": "preserved",
+    }
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"segments": []})
+
+    transport(monkeypatch, handler)
+    backends.remote_response(
+        "Voxhelm", "https://example.test/transcribe", headers=headers
+    )
+
+    [request] = requests
+    assert request.headers.get_list("Accept-Encoding") == ["identity"]
+    assert request.headers["X-Synthetic"] == "preserved"
+    assert headers["accept-encoding"] == "gzip"

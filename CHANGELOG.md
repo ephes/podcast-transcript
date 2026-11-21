@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Send exactly one identity Accept-Encoding value on remote transcription requests, regardless of caller header casing.
+
 - Preserve transcript copy failures when closing staged output also fails and report the close failure separately.
 - Close staged text and binary transcript descriptors when stream construction fails.
 - Reject negative whisper-cli seek offsets before publishing native or converted transcripts.
