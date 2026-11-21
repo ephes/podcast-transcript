@@ -530,6 +530,9 @@ decimal nearest-millisecond rounding
 with ties to even, matching cumulative chunk offsets.
 Invalid backend results never replace raw transcript caches, so a corrected response can be retried.
 
+Raw Whisper JSON and DOTe files must be stable, regular UTF-8 files without symlinks and at
+most 64 MiB each, counted during reading. This limit applies before JSON parsing, including
+cached chunks and DOTe inputs to multi-chunk combination or export.
 Cached raw chunks are validated before reuse. If an older or edited raw chunk is rejected, remove
 that `chunks/chunk_NNN.json` and its derived `chunk_NNN.dote.json`, plus the combined episode
 outputs, then rerun to retranscribe that chunk. Valid prepared audio and other raw chunks are reused.
