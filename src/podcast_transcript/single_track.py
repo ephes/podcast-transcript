@@ -377,12 +377,10 @@ def combine_dote_chunks(
 
 
 def convert_dote_to_podlove(dote_path: Path, podlove_path: Path) -> None:
-    dote_data = load_dote(dote_path)
+    cues = _load_dote_cues(dote_path)
 
     transcripts = []
-    for line in dote_data.get("lines", []):
-        start_ms = parse_dote_timecode(line["startTime"])
-        end_ms = parse_dote_timecode(line["endTime"])
+    for line, start_ms, end_ms in cues:
         transcript = {
             "start": line["startTime"].replace(",", "."),
             "start_ms": start_ms,

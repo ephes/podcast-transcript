@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Reuse validated DOTe cue times when rendering Podlove JSON, preserving export bytes.
+
 - Reuse validated DOTe cue times when rendering WebVTT, preserving export bytes.
 
 - Refuse an empty DOTe chunk inventory before replacing the combined transcript. A valid silent chunk remains supported.

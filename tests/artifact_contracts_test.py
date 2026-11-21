@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from podcast_transcript import backends, single_track as track
+from podcast_transcript import backends, single_track as track, transcript_validation
 
 
 INVALID_ENVELOPES = [
@@ -207,6 +207,49 @@ def test_multiday_timecodes_supported_by_all_exports(tmp_path, exporter):
     exporter(source, out)
     assert out.exists()
     assert "hello" in out.read_text()
+
+
+def test_podlove_reuses_validated_cue_times(tmp_path, monkeypatch, mocker):
+    lines = []
+    transcripts = []
+    for index in range(512):
+        start = f"000125:00:00,{index:03}"
+        end = f"000125:00:00,{index + index % 2:03}"
+        line = {"startTime": start, "endTime": end, "text": "Café &", "note": "ignored"}
+        if index % 2:
+            line["speakerDesignation"] = "Speaker A"
+        lines.append(line)
+        transcripts.append(
+            {
+                "start": start.replace(",", "."),
+                "start_ms": 450_000_000 + index,
+                "end": end.replace(",", "."),
+                "end_ms": 450_000_000 + index + index % 2,
+                "speaker": line.get("speakerDesignation", ""),
+                "voice": "",
+                "text": "Café &",
+            }
+        )
+    source = tmp_path / "chunk.dote.json"
+    source.write_text(json.dumps({"lines": lines}))
+    out = tmp_path / "out.podlove.json"
+    parse = mocker.Mock(wraps=transcript_validation.parse_dote_timecode)
+    monkeypatch.setattr(transcript_validation, "parse_dote_timecode", parse)
+    monkeypatch.setattr(track, "parse_dote_timecode", parse)
+
+    track.convert_dote_to_podlove(source, out)
+
+    expected = json.dumps({"transcripts": transcripts}).encode("utf-8")
+    assert out.read_bytes() == expected
+    assert parse.call_count == 2 * len(lines)
+
+    lines[-1]["endTime"] = "invalid"
+    source.write_text(json.dumps({"lines": lines}))
+    write = mocker.spy(track, "write_text_atomic")
+    with pytest.raises(ValueError, match=r"chunk\.dote\.json.*Invalid DOTe"):
+        track.convert_dote_to_podlove(source, out)
+    write.assert_not_called()
+    assert out.read_bytes() == expected
 
 
 @pytest.mark.parametrize("exporter", EXPORTERS)

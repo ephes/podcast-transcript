@@ -561,6 +561,9 @@ mapping in `audio.py`.
 
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.
+  The entire DOTe file is validated before publication. The export reuses the validated integer
+  milliseconds, keeps equal cue endpoints, and preserves the original timestamp spelling apart
+  from changing the decimal separator to a period.
 - **WebVTT (*.webvtt)**: A subtitle format that can be used for captioning in media players.
   Cue text treats `&`, `<` and `>` as literal text, escaping them as entities. CRLF and CR
   become LF; consecutive blank or whitespace-only lines collapse to one line break, and leading
