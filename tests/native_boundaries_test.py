@@ -86,16 +86,19 @@ def test_native_invalid_timestamp_preserves_output(tmp_path, timestamp):
     assert target.read_bytes() == b"previous"
 
 
-@pytest.mark.parametrize("seek", [True, 1.5, 1.0, "1"])
+@pytest.mark.parametrize("seek", [True, 1.5, 1.0, "1", -1])
 def test_native_invalid_seek_preserves_output(tmp_path, seek):
     source = tmp_path / "native.json"
     source.write_text(json.dumps(native("00:00:00,000", seek=seek)))
     target = tmp_path / "transcript.json"
     target.write_bytes(b"previous")
 
-    with pytest.raises(ValueError, match="Invalid native transcript.*integer seek"):
+    with pytest.raises(
+        ValueError, match="Invalid native transcript.*integer seek"
+    ) as error:
         backends.WhisperCpp().convert_output_format(source, target)
 
+    assert "private-synthetic-text" not in str(error.value)
     assert target.read_bytes() == b"previous"
 
 

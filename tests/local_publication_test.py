@@ -1,5 +1,6 @@
 """Synthetic local admission and durable completion publication regressions."""
 
+import errno
 import hashlib
 import json
 import os
@@ -152,6 +153,89 @@ def test_atomic_output_syncs_data_then_rename_then_directory(tmp_path, monkeypat
     assert events[0] == ("file", None)
     assert events[1] == ("replace", "result.json")
     assert events[2][0] == "directory"
+
+
+@pytest.mark.parametrize(
+    ("writer", "data"),
+    [
+        (safe_io.write_text_atomic, "replacement"),
+        (safe_io.write_bytes_atomic, b"replacement"),
+    ],
+)
+def test_atomic_writer_closes_descriptor_when_stream_construction_fails(
+    tmp_path, monkeypatch, writer, data
+):
+    target = tmp_path / "transcript.json"
+    target.write_bytes(b"previous")
+    error = OSError("synthetic stream construction failure")
+    descriptors = []
+
+    def fail_adoption(fd, *args, **kwargs):
+        assert stat.S_ISREG(os.fstat(fd).st_mode)
+        descriptors.append(fd)
+        raise error
+
+    monkeypatch.setattr(os, "fdopen", fail_adoption)
+    with pytest.raises(OSError) as raised:
+        writer(target, data)
+
+    [descriptor] = descriptors
+    try:
+        os.fstat(descriptor)
+    except OSError as exc:
+        assert exc.errno == errno.EBADF
+    else:
+        os.close(descriptor)
+        pytest.fail("staged output descriptor leaked")
+    assert raised.value is error
+    assert target.read_bytes() == b"previous"
+    assert not list(tmp_path.glob(".output-*"))
+
+
+@pytest.mark.parametrize("exhaust_budget", [True, False])
+def test_atomic_copy_output_close_failure_preserves_destination(
+    tmp_path, monkeypatch, caplog, exhaust_budget
+):
+    source, target = tmp_path / "source.json", tmp_path / "target.json"
+    source.write_bytes(b"replacement")
+    target.write_bytes(b"previous")
+    budget = safe_io.TranscriptWorkBudget()
+    if exhaust_budget:
+        budget.remaining = 1
+    output_descriptor = None
+    close_attempts = 0
+    open_descriptor, close_descriptor = os.open, os.close
+    close_error = OSError(errno.EIO, "synthetic output close failure")
+
+    def remember_output(path, flags, *args, **kwargs):
+        nonlocal output_descriptor
+        descriptor = open_descriptor(path, flags, *args, **kwargs)
+        if flags & os.O_EXCL:
+            output_descriptor = descriptor
+        return descriptor
+
+    def fail_output_close(descriptor):
+        nonlocal output_descriptor, close_attempts
+        close_descriptor(descriptor)
+        if descriptor == output_descriptor:
+            output_descriptor = None
+            close_attempts += 1
+            raise close_error
+
+    monkeypatch.setattr(os, "open", remember_output)
+    monkeypatch.setattr(os, "close", fail_output_close)
+    if exhaust_budget:
+        with pytest.raises(RuntimeError, match="Transcript work exceeded byte limit"):
+            safe_io.copy_file_atomic(source, target, budget=budget)
+        assert "Could not close the staged transcript output descriptor" in caplog.text
+    else:
+        with pytest.raises(OSError) as raised:
+            safe_io.copy_file_atomic(source, target, budget=budget)
+        assert raised.value is close_error
+
+    assert close_attempts == 1
+    assert target.read_bytes() == b"previous"
+    assert not list(tmp_path.glob(".output-*"))
 
 
 @pytest.mark.parametrize("failed_parent", ["destination", "staging"])

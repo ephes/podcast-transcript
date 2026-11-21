@@ -327,9 +327,10 @@ changed identities and unrelated matching-prefix directories are left untouched.
 remove them manually only when no invocation is active; the prefix alone does not prove ownership.
 Ordinary transcript reuse also records each prepared MP3 chunk's SHA-256 in `cache.json`,
 binding raw chunks and all derived exports to their admitted MP3 bytes. whisper-cpp's cached
-`chunk_NNN.wav` conversions are not hashed and are reused while they pass the WAV format check;
-delete them if you edit them directly. Each invocation hashes
-these bytes before reuse, including the owned short-audio symlink target. Hashing streams
+`chunk_NNN.wav` conversions are not hashed. Reuse requires a valid WAV and a cache path that
+still resolves to the inspected generation after the frame read. A replacement detected during
+inspection triggers reconversion. Delete cached WAVs if you edit them directly. Each invocation hashes
+the prepared MP3 bytes before reuse, including the owned short-audio symlink target. Hashing streams
 1 MiB blocks with a shared 64 GiB and one-hour budget per pass. New inference is checked
 again before publishing its raw chunk and before exports. Same-name, same-size edits are
 refused before inference or transcript retirement, even if backend settings changed; the
@@ -501,8 +502,8 @@ Admitted multi-chunk output is serialized directly to staging without another ep
 ### Transcript and cached-artifact validation
 
 Native whisper-cpp timestamps require the same full `HH:MM:SS,mmm` grammar as DOTe below,
-including component ranges and multi-day hours. Each segment's `offsets.from` must be a JSON
-integer and is copied unchanged to `seek`. Boolean, floating-point and quoted offsets are
+including component ranges and multi-day hours. Each segment's `offsets.from` must be a nonnegative
+JSON integer and is copied unchanged to `seek`. Negative, boolean, floating-point and quoted offsets are
 rejected. Malformed native schemas and JSON raise a
 controlled error without transcript text and preserve previous native and converted raw caches.
 
@@ -662,6 +663,10 @@ audio is reused. Invalid manifests remain in place until transcript cleanup fini
 ### Output durability errors
 
 When writing fails before an atomic replacement, the destination retains its prior contents.
+If a staged text or binary output stream cannot be opened, the writer closes its file descriptor
+and reports the stream error.
+A transcript copy retains its original failure if closing the staged output descriptor also fails.
+The close failure is logged separately. A close failure after a successful copy stops publication.
 If syncing either parent directory fails after the rename, the command reports that the
 replacement is visible with uncertain durability and identifies the directory whose sync
 failed. Cache completion markers are written after their required artifacts are synced.
