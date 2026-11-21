@@ -192,6 +192,52 @@ def test_atomic_writer_closes_descriptor_when_stream_construction_fails(
     assert not list(tmp_path.glob(".output-*"))
 
 
+@pytest.mark.parametrize("exhaust_budget", [True, False])
+def test_atomic_copy_output_close_failure_preserves_destination(
+    tmp_path, monkeypatch, caplog, exhaust_budget
+):
+    source, target = tmp_path / "source.json", tmp_path / "target.json"
+    source.write_bytes(b"replacement")
+    target.write_bytes(b"previous")
+    budget = safe_io.TranscriptWorkBudget()
+    if exhaust_budget:
+        budget.remaining = 1
+    output_descriptor = None
+    close_attempts = 0
+    open_descriptor, close_descriptor = os.open, os.close
+    close_error = OSError(errno.EIO, "synthetic output close failure")
+
+    def remember_output(path, flags, *args, **kwargs):
+        nonlocal output_descriptor
+        descriptor = open_descriptor(path, flags, *args, **kwargs)
+        if flags & os.O_EXCL:
+            output_descriptor = descriptor
+        return descriptor
+
+    def fail_output_close(descriptor):
+        nonlocal output_descriptor, close_attempts
+        close_descriptor(descriptor)
+        if descriptor == output_descriptor:
+            output_descriptor = None
+            close_attempts += 1
+            raise close_error
+
+    monkeypatch.setattr(os, "open", remember_output)
+    monkeypatch.setattr(os, "close", fail_output_close)
+    if exhaust_budget:
+        with pytest.raises(RuntimeError, match="Transcript work exceeded byte limit"):
+            safe_io.copy_file_atomic(source, target, budget=budget)
+        assert "Could not close the staged transcript output descriptor" in caplog.text
+    else:
+        with pytest.raises(OSError) as raised:
+            safe_io.copy_file_atomic(source, target, budget=budget)
+        assert raised.value is close_error
+
+    assert close_attempts == 1
+    assert target.read_bytes() == b"previous"
+    assert not list(tmp_path.glob(".output-*"))
+
+
 @pytest.mark.parametrize("failed_parent", ["destination", "staging"])
 def test_atomic_output_reports_visible_output_after_directory_sync_failure(
     tmp_path, monkeypatch, failed_parent

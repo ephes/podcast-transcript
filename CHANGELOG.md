@@ -3,6 +3,7 @@ Unreleased
 
 ### Fixes
 
+- Preserve transcript copy failures when closing staged output also fails and report the close failure separately.
 - Close staged text and binary transcript descriptors when stream construction fails.
 - Reject negative whisper-cli seek offsets before publishing native or converted transcripts.
 - Rebuild cached whisper-cpp WAVs whose path no longer names the inspected file after validation.

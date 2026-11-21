@@ -238,8 +238,7 @@ def copy_file_atomic(
 ) -> None:
     """Copy exact bytes with bounded memory into the owned durable writer."""
     with atomic_output(target) as temporary:
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
+        with _output_descriptor(temporary) as descriptor:
             with closing(regular_file_blocks(source, budget=budget)) as blocks:
                 for block in blocks:
                     remaining = memoryview(block)
@@ -252,8 +251,6 @@ def copy_file_atomic(
                         if written <= 0:
                             raise OSError("Transcript copy made no write progress.")
                         remaining = remaining[written:]
-        finally:
-            os.close(descriptor)
         if budget is not None:
             budget.check()
 
