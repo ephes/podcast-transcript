@@ -533,10 +533,12 @@ Invalid backend results never replace raw transcript caches, so a corrected resp
 Raw Whisper JSON and DOTe files must be stable, regular UTF-8 files without symlinks and at
 most 64 MiB each, counted during reading. This limit applies before JSON parsing, including
 cached chunks and DOTe inputs to multi-chunk combination or export.
-Cached raw chunks are validated before reuse. If an older or edited raw chunk is rejected, remove
-that `chunks/chunk_NNN.json` and its derived `chunk_NNN.dote.json`, plus the combined episode
-outputs, then rerun to retranscribe that chunk. Valid prepared audio and other raw chunks are reused.
-Errors identify the cached filename and segment position without including transcript text.
+Cached raw chunks are validated before reuse. Whisper segment text and optional top-level `text`
+must contain only Unicode scalar values, so an escaped unpaired surrogate is rejected.
+If an older or edited raw chunk is rejected, remove that `chunks/chunk_NNN.json` and its
+derived `chunk_NNN.dote.json`, plus the combined episode outputs, then rerun to retranscribe
+that chunk. Valid prepared audio and other raw chunks are reused. Surrogate errors identify
+the cached filename and the top-level field or segment position without including transcript text.
 
 DOTe cue text and optional `speakerDesignation` must be strings containing only Unicode scalar
 values. An unpaired surrogate is rejected before combining or exporting. The error identifies the

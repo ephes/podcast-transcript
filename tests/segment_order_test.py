@@ -119,3 +119,28 @@ def test_raw_segment_text_keeps_paired_non_bmp_characters():
     segments = raw([0])
     segments[0]["text"] = "hello \U0001f30d"
     validate_segments(segments)
+
+
+def test_cached_whisper_rejects_unpaired_surrogate_in_top_level_text(tmp_path):
+    chunk = tmp_path / "chunk_000.json"
+    chunk.write_text(json.dumps({"segments": raw([0]), "text": "synthetic\ud800"}))
+
+    with pytest.raises(
+        ValueError, match=r"^chunk_000\.json: .*top-level text.*Unicode scalar values"
+    ) as error:
+        load_whisper_transcript(chunk)
+
+    assert "synthetic" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "optional_fields", [{}, {"text": ""}, {"text": "hello \U0001f30d"}]
+)
+def test_cached_whisper_accepts_valid_optional_top_level_text(
+    tmp_path, optional_fields
+):
+    chunk = tmp_path / "chunk_000.json"
+    data = {"segments": raw([0]), **optional_fields}
+    chunk.write_text(json.dumps(data))
+
+    assert load_whisper_transcript(chunk) == data
