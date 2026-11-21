@@ -35,6 +35,7 @@ from .transcript_validation import (
     seconds_to_milliseconds,
     load_whisper_transcript,
     load_dote,
+    _load_dote_cues,
     parse_dote_timecode,
     format_dote_timecode,
 )
@@ -313,6 +314,8 @@ def combine_dote_chunks(
         raise ValueError(
             f"Got {len(dote_chunks)} DOTe chunks but {len(chunk_durations)} chunk durations"
         )
+    if not dote_chunks:
+        raise ValueError("Require at least one DOTe chunk to combine.")
     durations = []
     for position, duration in enumerate(chunk_durations, 1):
         try:
@@ -396,12 +399,12 @@ def convert_dote_to_podlove(dote_path: Path, podlove_path: Path) -> None:
 
 def convert_to_webvtt(dote_path: Path, vtt_path: Path) -> None:
     """Converts DOTe format to WebVTT format."""
-    dote_data = load_dote(dote_path)
+    cues = _load_dote_cues(dote_path)
 
     with atomic_output(vtt_path) as temporary:
         with temporary.open("x", encoding="utf-8") as target:
             target.write("WEBVTT\n")
-            for line in dote_data.get("lines", []):
+            for line, start_ms, end_ms in cues:
                 start_time = line["startTime"].replace(",", ".")
                 end_time = line["endTime"].replace(",", ".")
                 text = line["text"].replace("\0", "\ufffd")
@@ -409,8 +412,6 @@ def convert_to_webvtt(dote_path: Path, vtt_path: Path) -> None:
                 text = re.sub(r"\n(?:[ \t]*\n)+", "\n", text).strip("\n")
                 if not text.strip():
                     continue
-                start_ms = parse_dote_timecode(line["startTime"])
-                end_ms = parse_dote_timecode(line["endTime"])
                 if end_ms == start_ms:
                     # Quantization can collapse an admitted span. Extend only this
                     # rendered cue; source and DOTe timing evidence stays unchanged.

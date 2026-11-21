@@ -492,6 +492,10 @@ with stable prepared audio to rebuild a completed generation; a subsequent succe
 replacement writes a version 2 backup. Restore never invokes inference to upgrade a backup. Source-audio
 changes retain their separate preparation semantics; keep external backups for older audio/transcripts.
 
+Combination requires at least one DOTe chunk. An empty chunk inventory raises an error
+and preserves any existing combined transcript. A validated silent chunk with an empty
+`lines` list is accepted.
+
 Combined episodes admit at most 250,000 DOTe lines and 64 MiB of serialized UTF-8 DOTe
 JSON, including escaped text, speaker labels, unknown line fields, separators and timestamps.
 Both budgets are charged while assembling chunks, before retaining another line or publishing
@@ -567,6 +571,8 @@ mapping in `audio.py`.
   nearest-millisecond rounding (including equal source endpoints) render with an end one millisecond
   after the start. Other timings, overlaps and cue order are preserved. This display policy changes
   only WebVTT: raw source times and DOTe's existing rounded timestamps remain unchanged.
+  WebVTT reuses the milliseconds parsed during DOTe validation and keeps the original
+  timestamp spelling apart from the decimal separator and any one-millisecond extension.
   Cues are written as UTF-8 to a private staging file, then the export is published after writing succeeds.
 - **Plaintext**: UTF-8 transcript text, written one DOTe entry at a time to a private staging file.
   Entries are separated by newlines, with embedded line breaks preserved. An empty transcript

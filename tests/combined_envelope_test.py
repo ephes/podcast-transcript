@@ -66,6 +66,26 @@ def test_exact_episode_limits_preserve_bytes_and_timestamps(tmp_path, monkeypatc
     assert output.read_bytes() == expected_bytes
 
 
+def test_empty_chunk_inventory_preserves_existing_output(tmp_path):
+    output = tmp_path / "combined.json"
+    output.write_bytes(b'{"lines": [], "extra": true}')
+
+    with pytest.raises(ValueError, match="Require at least one DOTe chunk"):
+        single_track.combine_dote_chunks([], output, [])
+
+    assert output.read_bytes() == b'{"lines": [], "extra": true}'
+
+
+def test_single_silent_chunk_publishes_original_bytes(tmp_path):
+    source = tmp_path / "chunk.json"
+    source.write_bytes(b'{\n  "lines": []\n}\n')
+    output = tmp_path / "combined.json"
+
+    single_track.combine_dote_chunks([source], output, [1])
+
+    assert output.read_bytes() == source.read_bytes()
+
+
 def test_single_chunk_budget_preserves_original_bytes(tmp_path, monkeypatch):
     source = chunk(tmp_path / "chunk.json")
     source.write_text(json.dumps(json.loads(source.read_text()), indent=2))

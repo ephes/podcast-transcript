@@ -3,6 +3,10 @@ Unreleased
 
 ### Fixes
 
+- Reuse validated DOTe cue times when rendering WebVTT, preserving export bytes.
+
+- Refuse an empty DOTe chunk inventory before replacing the combined transcript. A valid silent chunk remains supported.
+
 - Preserve transcript copy refusals when closing the source descriptor also fails.
 
 - Reject unpaired surrogates in optional top-level Whisper text before caching or reuse.
