@@ -37,7 +37,7 @@ def test_model_generation_never_certifies_unchecked_chunks(
         return chunks
 
     monkeypatch.setattr(audio.Audio, "prepare_audio_for_transcription", prepare)
-    monkeypatch.setattr(single_track, "get_audio_duration", lambda _: 1.0)
+    monkeypatch.setattr(audio, "get_audio_duration", lambda _: 1.0)
     source = "https://example.test/episode.mp3"
     store = audio.Audio(base_dir=single_track.settings.transcript_dir, url=source)
     first_identity = single_track.backend_cache_metadata(backend)["local_model_sha256"]
@@ -99,7 +99,7 @@ def test_interrupted_run_with_unchanged_model_resumes_completed_chunks(
         return chunks
 
     monkeypatch.setattr(audio.Audio, "prepare_audio_for_transcription", prepare)
-    monkeypatch.setattr(single_track, "get_audio_duration", lambda _: 1.0)
+    monkeypatch.setattr(audio, "get_audio_duration", lambda _: 1.0)
     calls = []
 
     def infer(self, chunk, target):

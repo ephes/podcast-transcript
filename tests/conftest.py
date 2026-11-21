@@ -74,7 +74,7 @@ def episode(tmp_path, monkeypatch):
         return chunks
 
     monkeypatch.setattr(audio.Audio, "prepare_audio_for_transcription", prepare)
-    monkeypatch.setattr(single_track, "get_audio_duration", lambda _: 1.0006)
+    monkeypatch.setattr(audio, "get_audio_duration", lambda _: 1.0006)
     source = "https://example.test/audio.mp3"
     store = audio.Audio(base_dir=tmp_path, url=source)
     paths = single_track.transcribe(source, RecordingBackend("old", "old transcript"))

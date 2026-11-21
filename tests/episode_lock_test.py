@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+from podcast_transcript import audio as audio_module
 from podcast_transcript.audio import Audio
 from podcast_transcript.single_track import transcribe
 from single_track_test import RecordingBackend, _fake_prepare
@@ -20,6 +21,7 @@ def test_episode_generation_has_one_process_writer(tmp_path, monkeypatch, fail):
 import json
 import sys
 from pathlib import Path
+from podcast_transcript import audio as audio_module
 from podcast_transcript.audio import Audio
 from podcast_transcript.single_track import transcribe, settings
 settings.transcript_dir = Path(sys.argv[1])
@@ -31,6 +33,7 @@ def prepare(self):
     self.chunks_manifest_path.write_text('["chunk_000.mp3"]')
     return [chunk]
 Audio.prepare_audio_for_transcription = prepare
+audio_module.get_audio_duration = lambda _: 1.0
 class SyntheticBackend:
     model_name = "first"
     def transcribe(self, audio_file, transcript_path):
@@ -48,6 +51,7 @@ except RuntimeError:
         "podcast_transcript.single_track.settings.transcript_dir", cache
     )
     monkeypatch.setattr(Audio, "prepare_audio_for_transcription", _fake_prepare)
+    monkeypatch.setattr(audio_module, "get_audio_duration", lambda _: 1.0)
     child = subprocess.Popen(
         [
             sys.executable,
@@ -96,6 +100,7 @@ except RuntimeError:
 @pytest.mark.parametrize("stage", ["preparation", "export"])
 def test_episode_lock_released_on_pipeline_failure(mocker, tmp_path, stage):
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
+    mocker.patch.object(audio_module, "get_audio_duration", return_value=1.0)
     prepare = mocker.patch.object(
         Audio, "prepare_audio_for_transcription", _fake_prepare
     )

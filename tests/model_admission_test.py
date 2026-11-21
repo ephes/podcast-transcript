@@ -18,6 +18,7 @@ def test_model_swapped_at_open_refused_before_inference(
     backend = backends.WhisperCpp(model_name=str(model))
     monkeypatch.setattr(single_track.settings, "transcript_dir", tmp_path / "cache")
     monkeypatch.setattr(audio.Audio, "prepare_audio_for_transcription", _fake_prepare)
+    monkeypatch.setattr(audio, "get_audio_duration", lambda _: 1.0)
     store = audio.Audio(
         base_dir=tmp_path / "cache", url="https://example.test/audio.mp3"
     )

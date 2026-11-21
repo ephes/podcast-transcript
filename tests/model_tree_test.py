@@ -75,6 +75,7 @@ def test_tree_refusal_starts_no_inference(tmp_path, monkeypatch):
     store.cache_metadata_path.write_bytes(b'{"backend":"previous"}')
     monkeypatch.setattr(single_track.settings, "transcript_dir", store.base_dir)
     monkeypatch.setattr(audio.Audio, "prepare_audio_for_transcription", _fake_prepare)
+    monkeypatch.setattr(audio, "get_audio_duration", lambda _: 1.0)
     monkeypatch.setattr(audio, "MODEL_MAX_BYTES", 6)
     monkeypatch.setattr(
         MLX, "transcribe", lambda *a: pytest.fail("refused model reached inference")

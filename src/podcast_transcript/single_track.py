@@ -20,7 +20,6 @@ from rich import print as rprint
 from .audio import (
     Audio,
     ModelBudget,
-    get_audio_duration,
     GENERATED_TRANSCRIPT_RE,
     TRANSCRIPT_OUTPUT_SUFFIXES,
 )
@@ -777,11 +776,7 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
     audio_chunks = audio.prepare_audio_for_transcription()
     # Probe before transcription or invalidating outputs, so malformed audio
     # cannot publish transcripts or discard the previous run's combined files.
-    chunk_durations = (
-        [get_audio_duration(chunk) for chunk in audio_chunks]
-        if len(audio_chunks) > 1
-        else [0.0]
-    )
+    chunk_durations = [audio.chunk_duration(chunk) for chunk in audio_chunks]
     metadata = backend_cache_metadata(backend)
     try:
         cached = load_control_json(audio.cache_metadata_path)

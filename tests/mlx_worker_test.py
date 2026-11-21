@@ -149,6 +149,7 @@ def test_hung_worker_releases_episode_lock_and_retry_succeeds(
         return [chunk]
 
     monkeypatch.setattr(audio.Audio, "prepare_audio_for_transcription", prepare)
+    monkeypatch.setattr(audio, "get_audio_duration", lambda _: 1.0)
     source = "https://example.test/episode.mp3"
     store = audio.Audio(base_dir=single_track.settings.transcript_dir, url=source)
     backend = backends.MLX(model_name=None, prompt="retry")

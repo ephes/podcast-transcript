@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Check cached chunk durations before transcription and reuse valid probes for unchanged newly prepared audio.
+- Rebuild chunk caches containing empty files and refuse to publish new chunks with empty audio or zero duration.
 - Require integer whisper-cli seek offsets before publishing converted segments.
 - Handle excessively nested Groq 429 bodies as rate limits without a usable wait, preserving prior transcripts.
 - Accept a leading UTF-8 BOM in dotenv files so the first setting is read.
