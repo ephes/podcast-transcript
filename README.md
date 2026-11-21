@@ -502,8 +502,8 @@ Admitted multi-chunk output is serialized directly to staging without another ep
 ### Transcript and cached-artifact validation
 
 Native whisper-cpp timestamps require the same full `HH:MM:SS,mmm` grammar as DOTe below,
-including component ranges and multi-day hours. Each segment's `offsets.from` must be a JSON
-integer and is copied unchanged to `seek`. Boolean, floating-point and quoted offsets are
+including component ranges and multi-day hours. Each segment's `offsets.from` must be a nonnegative
+JSON integer and is copied unchanged to `seek`. Negative, boolean, floating-point and quoted offsets are
 rejected. Malformed native schemas and JSON raise a
 controlled error without transcript text and preserve previous native and converted raw caches.
 
