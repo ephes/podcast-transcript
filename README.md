@@ -182,7 +182,8 @@ You can also set the following environment variables or specify them in the .env
   A timeout stops the run with an error naming the backend. The Groq backend retries rate-limited (429) requests
   at most 10 times in total. Rate-limit waits (including a two-second buffer) must be finite,
   positive and fit a cumulative wait budget equal to this setting. Waiting uses a monotonic clock;
-  unusable delays stop with a retry-later error.
+  unusable delays stop with a retry-later error. A 429 body that cannot be decoded, including
+  excessively nested JSON, provides no usable delay and stops the run without another request.
 
 Remote Groq and Voxhelm responses (success and error) are streamed with a 32 MiB body limit,
 independent of Content-Length. Requests send `Accept-Encoding: identity`; a response with any
@@ -497,7 +498,9 @@ Admitted multi-chunk output is serialized directly to staging without another ep
 ### Transcript and cached-artifact validation
 
 Native whisper-cpp timestamps require the same full `HH:MM:SS,mmm` grammar as DOTe below,
-including component ranges and multi-day hours. Malformed native schemas and JSON raise a
+including component ranges and multi-day hours. Each segment's `offsets.from` must be a JSON
+integer and is copied unchanged to `seek`. Boolean, floating-point and quoted offsets are
+rejected. Malformed native schemas and JSON raise a
 controlled error without transcript text and preserve previous native and converted raw caches.
 
 Successful Groq/Voxhelm responses, raw, DOTe, native/MLX output and cache-control JSON reject
