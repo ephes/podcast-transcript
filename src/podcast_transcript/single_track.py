@@ -313,6 +313,8 @@ def combine_dote_chunks(
         raise ValueError(
             f"Got {len(dote_chunks)} DOTe chunks but {len(chunk_durations)} chunk durations"
         )
+    if not dote_chunks:
+        raise ValueError("Require at least one DOTe chunk to combine.")
     durations = []
     for position, duration in enumerate(chunk_durations, 1):
         try:

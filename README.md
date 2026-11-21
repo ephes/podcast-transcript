@@ -492,6 +492,10 @@ with stable prepared audio to rebuild a completed generation; a subsequent succe
 replacement writes a version 2 backup. Restore never invokes inference to upgrade a backup. Source-audio
 changes retain their separate preparation semantics; keep external backups for older audio/transcripts.
 
+Combination requires at least one DOTe chunk. An empty chunk inventory raises an error
+and preserves any existing combined transcript. A validated silent chunk with an empty
+`lines` list is accepted.
+
 Combined episodes admit at most 250,000 DOTe lines and 64 MiB of serialized UTF-8 DOTe
 JSON, including escaped text, speaker labels, unknown line fields, separators and timestamps.
 Both budgets are charged while assembling chunks, before retaining another line or publishing
