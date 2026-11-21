@@ -17,6 +17,7 @@ from urllib.parse import unquote, urlparse
 from rich import print as rprint
 
 from .config import private_mkdir, settings
+from .input_admission import file_generation
 from .json_input import load_control_json
 from .safe_io import (
     atomic_output,
@@ -304,10 +305,12 @@ def resample_audio(input_path: Path, output_path: Path) -> None:
 
 # 25MB max bytes are allowed
 MAX_SIZE_IN_BYTES = 25 * 1024 * 1024
+MAX_CHUNK_DURATION = 7200
 
 
 class Audio:
     def __init__(self, *, base_dir: Path, url: str, title: str | None = None):
+        self._probed_durations: dict[tuple[int, ...], float] = {}
         self.base_dir = base_dir
         self.url = url
         self._is_http_url = is_url(url)
@@ -428,15 +431,51 @@ class Audio:
         if self.resampled_episode_path.stat().st_size >= RESAMPLED_MAX_BYTES:
             raise RuntimeError("Resampled audio reached output byte limit (2 GiB).")
 
+    def _probe_duration(self, path: Path) -> float:
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode):
+            raise RuntimeError("Prepared audio must be a regular file.")
+        generation = file_generation(info)
+        if generation in self._probed_durations:
+            return self._probed_durations[generation]
+        duration = get_audio_duration(path)
+        if generation != file_generation(path.stat()):
+            raise RuntimeError("Prepared audio changed during its duration probe.")
+        self._probed_durations[generation] = duration
+        return duration
+
+    def chunk_duration(self, path: Path) -> float:
+        """Admit a prepared chunk for transcription and return its timing."""
+        duration = self._probe_duration(path)
+        if not 0 < duration <= MAX_CHUNK_DURATION:
+            raise RuntimeError(
+                f"Prepared chunk {path.name} has a duration outside the allowed "
+                f"range (greater than zero and at most {MAX_CHUNK_DURATION} seconds). "
+                "Previous transcripts were preserved."
+            )
+        return duration
+
+    def _publish_prepared_file(self, source: Path, target: Path) -> None:
+        # Read the link itself, since only its regular target was probed.
+        original = file_generation(source.lstat())
+        duration = self._probed_durations.pop(original, None)
+        durable_replace(source, target)
+        if duration is not None:
+            published = file_generation(target.stat())
+            # Renaming an owned file can change its ctime. Transfer the probe
+            # only if the inode, size and mtime still match across publication.
+            if original[:-1] == published[:-1]:
+                self._probed_durations[published] = duration
+
     @property
     def exceeds_size_limit(self) -> bool:
         size = self.resampled_episode_path.stat().st_size
         if size == 0:
             raise RuntimeError("Resampled audio is empty.")
-        duration = get_audio_duration(self.resampled_episode_path)
+        duration = self._probe_duration(self.resampled_episode_path)
         if duration <= 0:
             raise RuntimeError("Resampled audio has zero duration.")
-        return size > MAX_SIZE_IN_BYTES or duration > 7200
+        return size > MAX_SIZE_IN_BYTES or duration > MAX_CHUNK_DURATION
 
     def split_into_chunks(self) -> list[Path]:
         """
@@ -525,7 +564,7 @@ class Audio:
         move the chunks into place once ffmpeg succeeded. Returns the chunk
         file names; the caller records them in the manifest.
         """
-        duration = get_audio_duration(self.resampled_episode_path)
+        duration = self._probe_duration(self.resampled_episode_path)
         if duration <= 0:
             raise RuntimeError(
                 "Cannot split audio with zero duration to the upload limit"
@@ -533,7 +572,9 @@ class Audio:
         size = self.resampled_episode_path.stat().st_size
         # Estimate a byte-safe segment duration; leave headroom for MP3 frames,
         # headers and VBR variation. Actual output limits are checked below.
-        segment_seconds = 0.9 * min(7200, duration * MAX_SIZE_IN_BYTES / max(size, 1))
+        segment_seconds = 0.9 * min(
+            MAX_CHUNK_DURATION, duration * MAX_SIZE_IN_BYTES / max(size, 1)
+        )
         split_dir = self.episode_chunks_dir / f".split-{uuid.uuid4().hex}"
         private_mkdir(split_dir)
         try:
@@ -565,17 +606,17 @@ class Audio:
                 size = chunk.stat().st_size
                 if size == 0:
                     raise RuntimeError("Split chunk is empty.")
-                chunk_duration = get_audio_duration(chunk)
+                chunk.chmod(0o600)
+                chunk_duration = self._probe_duration(chunk)
                 if chunk_duration <= 0:
                     raise RuntimeError("Split chunk has zero duration.")
-                if chunk_duration > 7200 or size > MAX_SIZE_IN_BYTES:
+                if chunk_duration > MAX_CHUNK_DURATION or size > MAX_SIZE_IN_BYTES:
                     raise RuntimeError(
                         "Split chunk exceeds the upload limit (25 MiB / 7200 seconds); "
                         "split the source into shorter files and retry. No chunk manifest was published."
                     )
             for chunk in produced:
-                chunk.chmod(0o600)
-                durable_replace(chunk, self.episode_chunks_dir / chunk.name)
+                self._publish_prepared_file(chunk, self.episode_chunks_dir / chunk.name)
             return [chunk.name for chunk in produced]
         finally:
             shutil.rmtree(split_dir, ignore_errors=True)
@@ -703,10 +744,11 @@ class Audio:
                 *chunks,
                 staged.chunks_manifest_path,
             ]:
-                durable_replace(path, self.episode_chunks_dir / path.name)
+                staged._publish_prepared_file(path, self.episode_chunks_dir / path.name)
             write_text_atomic(
                 self.source_metadata_path, json.dumps({"sha256": fingerprint})
             )
+            self._probed_durations.update(staged._probed_durations)
             return [self.episode_chunks_dir / chunk.name for chunk in chunks]
 
     def validate_control_files(self) -> None:
@@ -728,6 +770,7 @@ class Audio:
             - Resample the audio file to 16khz
             - Split the audio file into smaller chunks if needed
         """
+        self._probed_durations.clear()
         self.validate_storage_roles()
         self.validate_control_files()
         private_mkdir(self.podcast_dir)

@@ -602,6 +602,9 @@ publication. A chunk that is empty, has zero duration or exceeds either limit fa
 without a completion manifest. For a limit error, provide shorter source files and retry.
 Cached chunks with zero bytes or exceeding the byte limit are rebuilt automatically. Short
 files with positive size and duration within both limits use a symlink without re-encoding.
+Before transcription, cached chunks must also pass the duration check, including single-chunk
+episodes. Invalid durations stop the run and preserve previous transcripts. A fresh chunk's
+probe result also supplies its timing for the same preparation run, while its file is unchanged.
 
 Local commands also have finite budgets (positive finite seconds, environment or `.env`):
 
@@ -631,12 +634,12 @@ converted transcript and prepared audio.
 ### Invalid audio duration or a stalled probe
 
 Each `ffprobe` process has a 60-second limit and is killed and reaped on timeout. Duration metadata
-must contain a finite, nonnegative number (zero is valid). Missing/malformed metadata and process
-failures stop the pipeline with a bounded stderr diagnostic before transcription. Newly split chunks
-are probed before publishing chunk/source completion markers. A failed probe on an already cached
-chunk preserves existing combined outputs; delete `chunks/chunks.json` to regenerate the chunks
-from cached resampled audio, or delete the episode directory to download a corrected URL source.
-Fix a failing ffprobe installation before rerunning.
+must contain a finite, nonnegative number. Chunks require a positive duration. Missing or malformed
+metadata and process failures stop the pipeline with a bounded diagnostic before transcription.
+Newly split chunks are probed before publishing chunk/source completion markers. An invalid duration
+or a failed probe on an already cached chunk preserves existing combined outputs. Delete
+`chunks/chunks.json` to regenerate the chunks from cached resampled audio, or delete the episode
+directory to download a corrected URL source. Fix a failing ffprobe installation before rerunning.
 
 ### Recovering an invalid chunk manifest
 

@@ -213,11 +213,11 @@ def test_killed_promotion_restores_last_success_without_backend(
     script = """
 import os, signal, sys, json
 from pathlib import Path
-from podcast_transcript import single_track
+from podcast_transcript import audio, single_track
 from podcast_transcript.backends import TranscriptionBackend
 single_track.settings.transcript_dir = Path(sys.argv[1])
 single_track.Audio.prepare_audio_for_transcription = lambda self: sorted(self.episode_chunks_dir.glob("chunk_*.mp3"))
-single_track.get_audio_duration = lambda _: 1.0006
+audio.get_audio_duration = lambda _: 1.0006
 class Replacement(TranscriptionBackend):
     model_name = "new"
     def transcribe(self, chunk, target):

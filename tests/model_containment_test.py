@@ -81,6 +81,7 @@ def test_model_directory_exchange_is_refused_before_inference(
     backend = backends.MLX(model_name=str(model))
     monkeypatch.setattr(single_track.settings, "transcript_dir", store.base_dir)
     monkeypatch.setattr(audio.Audio, "prepare_audio_for_transcription", _fake_prepare)
+    monkeypatch.setattr(audio, "get_audio_duration", lambda _: 1.0)
     monkeypatch.setattr(os, "scandir", ExchangeAfterEnumeration)
     monkeypatch.setattr(
         audio.Audio, "_read_local_source", staticmethod(exchange_at_leaf)

@@ -271,9 +271,9 @@ def test_transcribe_uses_ffprobe_chunk_durations(mocker, tmp_path):
         "podcast_transcript.single_track.Audio.prepare_audio_for_transcription",
         return_value=chunks,
     )
-    durations = {chunks[0]: 7200.25, chunks[1]: 100.0}
+    durations = {chunks[0]: 7199.25, chunks[1]: 100.0}
     get_duration = mocker.patch(
-        "podcast_transcript.single_track.get_audio_duration",
+        "podcast_transcript.audio.get_audio_duration",
         side_effect=lambda path: durations[path],
     )
 
@@ -287,7 +287,7 @@ def test_transcribe_uses_ffprobe_chunk_durations(mocker, tmp_path):
 
     assert get_duration.call_count == 2
     lines = json.loads(paths["DOTe"].read_text())["lines"]
-    assert [line["startTime"] for line in lines] == ["00:00:01,000", "02:00:01,250"]
+    assert [line["startTime"] for line in lines] == ["00:00:01,000", "02:00:00,250"]
 
 
 def test_transcribe_fails_when_backend_writes_nothing(mocker, tmp_path):
@@ -299,6 +299,7 @@ def test_transcribe_fails_when_backend_writes_nothing(mocker, tmp_path):
         "podcast_transcript.single_track.Audio.prepare_audio_for_transcription",
         return_value=[chunks_dir / "chunk_000.mp3"],
     )
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
 
     class SilentBackend:
         def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
@@ -461,6 +462,7 @@ def _fake_prepare(self):
 def test_two_episodes_with_same_basename_get_their_own_transcripts(mocker, tmp_path):
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
     mocker.patch.object(Audio, "prepare_audio_for_transcription", _fake_prepare)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
 
     first = transcribe(
         "https://example.com/123/audio.mp3", RecordingBackend("m", "episode 123")
@@ -477,6 +479,7 @@ def test_two_episodes_with_same_basename_get_their_own_transcripts(mocker, tmp_p
 def test_backend_change_retranscribes(mocker, tmp_path):
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
     mocker.patch.object(Audio, "prepare_audio_for_transcription", _fake_prepare)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
     url = "https://example.com/test.mp3"
 
     old_backend = RecordingBackend("old-model", "old transcript")
@@ -505,6 +508,7 @@ def test_backend_change_retranscribes(mocker, tmp_path):
 def test_backend_class_change_retranscribes(mocker, tmp_path):
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
     mocker.patch.object(Audio, "prepare_audio_for_transcription", _fake_prepare)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
     url = "https://example.com/test.mp3"
     transcribe(url, RecordingBackend("m", "first"))
 
@@ -839,7 +843,6 @@ def test_unchanged_local_source_only_hashes_original(mocker, tmp_path):
 def test_invalid_chunk_manifest_rebuilds_before_backend(mocker, tmp_path, entries):
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
     mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
-    mocker.patch("podcast_transcript.single_track.get_audio_duration", return_value=1.0)
     url = "https://example.test/episode.mp3"
     audio = Audio(base_dir=tmp_path, url=url)
     audio.episode_chunks_dir.mkdir(parents=True)
@@ -897,6 +900,7 @@ def test_voxhelm_service_identity_controls_cache(mocker, tmp_path, capsys):
 
     mocker.patch("podcast_transcript.single_track.settings.transcript_dir", tmp_path)
     mocker.patch.object(Audio, "prepare_audio_for_transcription", _fake_prepare)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
     calls = []
 
     def record(self, audio_file, transcript_path):
@@ -1164,6 +1168,109 @@ def test_empty_short_audio_is_not_linked(mocker, audio, content, duration):
         audio.split_into_chunks()
     assert not audio.chunks_manifest_path.exists()
     assert not list(audio.episode_chunks_dir.glob("chunk_*.mp3"))
+
+
+@pytest.mark.parametrize("duration", [0.0, 7200.0, 7200.25])
+@pytest.mark.parametrize("count", [1, 2])
+def test_cached_chunks_are_checked_before_backend(mocker, audio, duration, count):
+    mocker.patch(
+        "podcast_transcript.single_track.settings.transcript_dir", audio.base_dir
+    )
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.episode_path.write_bytes(b"source")
+    audio.resampled_episode_path.write_bytes(b"resampled")
+    chunks = [audio.episode_chunks_dir / f"chunk_{i:03d}.mp3" for i in range(count)]
+    for chunk in chunks:
+        chunk.write_bytes(b"cached audio")
+    audio.chunks_manifest_path.write_text(json.dumps([chunk.name for chunk in chunks]))
+    audio.output_path(".txt").write_text("previous")
+    probe = mocker.patch(
+        "podcast_transcript.audio.capture_checked",
+        side_effect=lambda cmd, **kwargs: json.dumps(
+            {"format": {"duration": duration if cmd[-1] == chunks[-1] else 10.0}}
+        ),
+    )
+    backend = RecordingBackend("m", "admitted")
+
+    if duration == 7200.0:
+        transcribe(audio.url, backend)
+        assert backend.calls == chunks
+    else:
+        with pytest.raises(RuntimeError, match="chunk.*duration"):
+            transcribe(audio.url, backend)
+        assert not backend.calls
+        assert audio.output_path(".txt").read_text() == "previous"
+    assert [call.args[0][-1] for call in probe.call_args_list] == chunks
+
+
+@pytest.mark.parametrize("local_source", [False, True])
+@pytest.mark.parametrize("split", [False, True])
+def test_fresh_chunks_are_probed_once(mocker, audio, local_source, split):
+    mocker.patch(
+        "podcast_transcript.single_track.settings.transcript_dir", audio.base_dir
+    )
+    mocker.patch("podcast_transcript.audio.MAX_SIZE_IN_BYTES", 100)
+    if local_source:
+        source = audio.base_dir / "local.mp3"
+        source.write_bytes(b"source")
+        audio = Audio(base_dir=audio.base_dir, url=str(source))
+    else:
+        audio.episode_chunks_dir.mkdir(parents=True)
+        audio.episode_path.write_bytes(b"source")
+
+    def run(cmd, **kwargs):
+        target = Path(cmd[-1])
+        if "-segment_time" in cmd:
+            for i in range(2):
+                (target.parent / (target.name % i)).write_bytes(b"chunk")
+        else:
+            target.write_bytes(b"x" * (300 if split else 10))
+
+    mocker.patch("podcast_transcript.audio.run_checked", side_effect=run)
+    probe = mocker.patch(
+        "podcast_transcript.audio.capture_checked",
+        return_value='{"format": {"duration": 10.0}}',
+    )
+    backend = RecordingBackend("m", "fresh")
+    transcribe(audio.url, backend)
+    expected_names = ["chunk_000.mp3", "chunk_001.mp3"] if split else ["chunk_000.mp3"]
+    assert [path.name for path in backend.calls] == expected_names
+    assert [call.args[0][-1].name for call in probe.call_args_list] == [
+        audio.resampled_episode_path.name,
+        *(expected_names if split else []),
+    ]
+
+
+def test_preparation_probe_is_not_reused_for_replaced_chunk(mocker, audio):
+    mocker.patch(
+        "podcast_transcript.single_track.settings.transcript_dir", audio.base_dir
+    )
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.episode_path.write_bytes(b"source")
+    audio.resampled_episode_path.write_bytes(b"short")
+    prepare = Audio.prepare_audio_for_transcription
+
+    def prepare_and_replace(store):
+        chunks = prepare(store)
+        replacement = chunks[0].with_suffix(".replacement")
+        replacement.write_bytes(b"long!")
+        replacement.replace(chunks[0])
+        return chunks
+
+    mocker.patch.object(Audio, "prepare_audio_for_transcription", prepare_and_replace)
+    probe = mocker.patch(
+        "podcast_transcript.audio.get_audio_duration",
+        side_effect=lambda path: 10.0 if path.read_bytes() == b"short" else 7200.25,
+    )
+    backend = RecordingBackend("m", "fresh")
+
+    with pytest.raises(RuntimeError, match="chunk.*duration"):
+        transcribe(audio.url, backend)
+    assert not backend.calls
+    assert [call.args[0].name for call in probe.call_args_list] == [
+        audio.resampled_episode_path.name,
+        "chunk_000.mp3",
+    ]
 
 
 def test_oversized_zero_duration_audio_fails_without_chunk_manifest(mocker, audio):

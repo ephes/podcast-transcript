@@ -255,12 +255,13 @@ def test_remote_trickle_deadline_preserves_outputs_and_releases_lock(
     monkeypatch, tmp_path, name
 ):
     from podcast_transcript.audio import Audio
-    from podcast_transcript import single_track
+    from podcast_transcript import audio, single_track
     from single_track_test import _fake_prepare
 
     monkeypatch.setattr(backends.settings, "transcript_http_read_timeout", "0.05")
     monkeypatch.setattr(single_track.settings, "transcript_dir", tmp_path)
     monkeypatch.setattr(Audio, "prepare_audio_for_transcription", _fake_prepare)
+    monkeypatch.setattr(audio, "get_audio_duration", lambda _: 1.0)
 
     class Trickle(Blocks):
         received = 0

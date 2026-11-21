@@ -14,6 +14,7 @@ from single_track_test import _fake_prepare
 def test_model_bytes_control_transcript_cache_only(monkeypatch, tmp_path, backend_name):
     monkeypatch.setattr(single_track.settings, "transcript_dir", tmp_path / "cache")
     monkeypatch.setattr(audio.Audio, "prepare_audio_for_transcription", _fake_prepare)
+    monkeypatch.setattr(audio, "get_audio_duration", lambda _: 1.0)
     model = tmp_path / "model.bin"
     if backend_name == "mlx-dir":
         directory = tmp_path / "model-dir"
