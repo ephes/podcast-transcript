@@ -597,10 +597,11 @@ long sources into separate inputs rather than raising the chunk upload limit.
 
 Chunks must be at most 25 MiB (26,214,400 bytes) and 7,200 seconds. Stream-copy splitting estimates
 segment duration from the resampled file's size and duration, with 10% headroom for frame/header
-and bitrate variation. Every new chunk is checked before any is published. If a variable-bitrate
-chunk still exceeds either limit, the run fails clearly without a completion manifest; provide
-shorter source files and retry. Cached chunks exceeding the byte limit are rebuilt automatically.
-Short files within both limits still use a symlink without re-encoding.
+and bitrate variation. Each newly prepared chunk must have positive size and duration before
+publication. A chunk that is empty, has zero duration or exceeds either limit fails preparation
+without a completion manifest. For a limit error, provide shorter source files and retry.
+Cached chunks with zero bytes or exceeding the byte limit are rebuilt automatically. Short
+files with positive size and duration within both limits use a symlink without re-encoding.
 
 Local commands also have finite budgets (positive finite seconds, environment or `.env`):
 

@@ -430,9 +430,13 @@ class Audio:
 
     @property
     def exceeds_size_limit(self) -> bool:
-        too_many_bytes = self.resampled_episode_path.stat().st_size > MAX_SIZE_IN_BYTES
-        too_long_duration = get_audio_duration(self.resampled_episode_path) > 7200
-        return too_many_bytes or too_long_duration
+        size = self.resampled_episode_path.stat().st_size
+        if size == 0:
+            raise RuntimeError("Resampled audio is empty.")
+        duration = get_audio_duration(self.resampled_episode_path)
+        if duration <= 0:
+            raise RuntimeError("Resampled audio has zero duration.")
+        return size > MAX_SIZE_IN_BYTES or duration > 7200
 
     def split_into_chunks(self) -> list[Path]:
         """
@@ -498,7 +502,10 @@ class Audio:
         chunk_paths = [self.episode_chunks_dir / name for name in chunk_names]
         try:
             for path in chunk_paths:
-                if not path.is_file() or path.stat().st_size > MAX_SIZE_IN_BYTES:
+                if (
+                    not path.is_file()
+                    or not 0 < path.stat().st_size <= MAX_SIZE_IN_BYTES
+                ):
                     return None
                 if path.is_symlink():
                     # Only the short-episode link to our own resampled audio is valid.
@@ -555,8 +562,13 @@ class Audio:
                 )
             # Validate every new chunk before publishing audio or completion markers.
             for chunk in produced:
+                size = chunk.stat().st_size
+                if size == 0:
+                    raise RuntimeError("Split chunk is empty.")
                 chunk_duration = get_audio_duration(chunk)
-                if chunk_duration > 7200 or chunk.stat().st_size > MAX_SIZE_IN_BYTES:
+                if chunk_duration <= 0:
+                    raise RuntimeError("Split chunk has zero duration.")
+                if chunk_duration > 7200 or size > MAX_SIZE_IN_BYTES:
                     raise RuntimeError(
                         "Split chunk exceeds the upload limit (25 MiB / 7200 seconds); "
                         "split the source into shorter files and retry. No chunk manifest was published."

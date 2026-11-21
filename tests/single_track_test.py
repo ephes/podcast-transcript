@@ -1105,8 +1105,18 @@ def test_split_duration_respects_byte_budget(mocker, audio, duration):
     assert audio.chunks_manifest_path.exists()
 
 
-@pytest.mark.parametrize("size,duration", [(101, 1), (10, 7201)])
-def test_split_rejects_invalid_chunk_before_publication(mocker, audio, size, duration):
+@pytest.mark.parametrize(
+    "size,duration,error",
+    [
+        (101, 1, "chunk.*limit"),
+        (10, 7201, "chunk.*limit"),
+        (0, 1, "empty"),
+        (10, 0, "zero duration"),
+    ],
+)
+def test_split_rejects_invalid_chunk_before_publication(
+    mocker, audio, size, duration, error
+):
     mocker.patch("podcast_transcript.audio.MAX_SIZE_IN_BYTES", 100)
     audio.episode_chunks_dir.mkdir(parents=True)
     audio.resampled_episode_path.write_bytes(b"x" * 300)
@@ -1121,26 +1131,39 @@ def test_split_rejects_invalid_chunk_before_publication(mocker, audio, size, dur
         return subprocess.CompletedProcess(cmd, 0)
 
     mocker.patch("podcast_transcript.audio.run_checked", side_effect=segment)
-    with pytest.raises(RuntimeError, match="chunk.*limit"):
+    with pytest.raises(RuntimeError, match=error):
         audio.split_into_chunks()
     assert not audio.chunks_manifest_path.exists()
     assert not list(audio.episode_chunks_dir.glob("chunk_*.mp3"))
     assert not list(audio.episode_chunks_dir.glob(".split-*"))
 
 
-def test_cached_oversized_chunk_is_rebuilt(mocker, audio):
+@pytest.mark.parametrize("size", [0, 101])
+def test_cached_chunk_with_invalid_size_is_rebuilt(mocker, audio, size):
     mocker.patch("podcast_transcript.audio.MAX_SIZE_IN_BYTES", 100)
     mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=10)
     audio.episode_chunks_dir.mkdir(parents=True)
     audio.resampled_episode_path.write_bytes(b"short")
     chunk = audio.episode_chunks_dir / "chunk_000.mp3"
-    chunk.write_bytes(b"x" * 101)
+    chunk.write_bytes(b"x" * size)
     audio.chunks_manifest_path.write_text('["chunk_000.mp3"]')
     audio.output_path(".txt").write_text("stale")
     assert audio.split_into_chunks() == [chunk]
     assert chunk.is_symlink()
     assert chunk.read_bytes() == b"short"
     assert not audio.output_path(".txt").exists()
+
+
+@pytest.mark.parametrize("content,duration", [(b"", 1.0), (b"short", 0.0)])
+def test_empty_short_audio_is_not_linked(mocker, audio, content, duration):
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.resampled_episode_path.write_bytes(content)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=duration)
+
+    with pytest.raises(RuntimeError, match="empty|zero duration"):
+        audio.split_into_chunks()
+    assert not audio.chunks_manifest_path.exists()
+    assert not list(audio.episode_chunks_dir.glob("chunk_*.mp3"))
 
 
 def test_oversized_zero_duration_audio_fails_without_chunk_manifest(mocker, audio):
