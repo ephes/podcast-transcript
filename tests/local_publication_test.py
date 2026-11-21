@@ -1,5 +1,6 @@
 """Synthetic local admission and durable completion publication regressions."""
 
+import errno
 import hashlib
 import json
 import os
@@ -152,6 +153,43 @@ def test_atomic_output_syncs_data_then_rename_then_directory(tmp_path, monkeypat
     assert events[0] == ("file", None)
     assert events[1] == ("replace", "result.json")
     assert events[2][0] == "directory"
+
+
+@pytest.mark.parametrize(
+    ("writer", "data"),
+    [
+        (safe_io.write_text_atomic, "replacement"),
+        (safe_io.write_bytes_atomic, b"replacement"),
+    ],
+)
+def test_atomic_writer_closes_descriptor_when_stream_construction_fails(
+    tmp_path, monkeypatch, writer, data
+):
+    target = tmp_path / "transcript.json"
+    target.write_bytes(b"previous")
+    error = OSError("synthetic stream construction failure")
+    descriptors = []
+
+    def fail_adoption(fd, *args, **kwargs):
+        assert stat.S_ISREG(os.fstat(fd).st_mode)
+        descriptors.append(fd)
+        raise error
+
+    monkeypatch.setattr(os, "fdopen", fail_adoption)
+    with pytest.raises(OSError) as raised:
+        writer(target, data)
+
+    [descriptor] = descriptors
+    try:
+        os.fstat(descriptor)
+    except OSError as exc:
+        assert exc.errno == errno.EBADF
+    else:
+        os.close(descriptor)
+        pytest.fail("staged output descriptor leaked")
+    assert raised.value is error
+    assert target.read_bytes() == b"previous"
+    assert not list(tmp_path.glob(".output-*"))
 
 
 @pytest.mark.parametrize("failed_parent", ["destination", "staging"])

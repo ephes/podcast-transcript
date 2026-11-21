@@ -9,6 +9,7 @@ subprocesses raise exceptions that carry the tool's stderr.
 
 import math
 import errno
+import logging
 import select
 import os
 import signal
@@ -24,6 +25,8 @@ from time import monotonic
 from .config import private_mkdir, settings
 from .input_admission import file_generation
 from .input_admission import read_regular_bounded as read_regular_bounded
+
+logger = logging.getLogger(__name__)
 
 STDERR_TAIL_LINES = 20
 STDERR_TAIL_CHARS = 2000
@@ -117,19 +120,33 @@ def durable_unlink(path: Path) -> None:
 LOCAL_TRANSCRIPT_MAX_BYTES = 64 * 1024 * 1024
 
 
+@contextmanager
+def _output_descriptor(path: Path) -> Iterator[int]:
+    """Own a staged output descriptor until writing and cleanup finish."""
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        yield descriptor
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            logger.warning("Could not close the staged transcript output descriptor.")
+        raise
+    else:
+        os.close(descriptor)
+
+
 def write_text_atomic(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` so that a crash never leaves a partial file."""
-    with atomic_output(path) as tmp_path:
-        descriptor = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w") as file:
+    with atomic_output(path) as tmp_path, _output_descriptor(tmp_path) as descriptor:
+        with os.fdopen(descriptor, "w", closefd=False) as file:
             file.write(text)
 
 
 def write_bytes_atomic(path: Path, data: bytes) -> None:
     """Write ``data`` exactly to ``path`` so that a crash never leaves a partial file."""
-    with atomic_output(path) as tmp_path:
-        descriptor = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "wb") as file:
+    with atomic_output(path) as tmp_path, _output_descriptor(tmp_path) as descriptor:
+        with os.fdopen(descriptor, "wb", closefd=False) as file:
             file.write(data)
 
 

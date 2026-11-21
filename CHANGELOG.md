@@ -3,6 +3,7 @@ Unreleased
 
 ### Fixes
 
+- Close staged text and binary transcript descriptors when stream construction fails.
 - Reject negative whisper-cli seek offsets before publishing native or converted transcripts.
 - Rebuild cached whisper-cpp WAVs whose path no longer names the inspected file after validation.
 - Recheck the short-audio chunk link during recovery fingerprinting and refuse redirected links before publication.
