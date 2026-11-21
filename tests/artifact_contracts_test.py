@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from podcast_transcript import backends, single_track as track
+from podcast_transcript import backends, single_track as track, transcript_validation
 
 
 INVALID_ENVELOPES = [
@@ -207,6 +207,100 @@ def test_multiday_timecodes_supported_by_all_exports(tmp_path, exporter):
     exporter(source, out)
     assert out.exists()
     assert "hello" in out.read_text()
+
+
+def test_podlove_reuses_validated_cue_times(tmp_path, monkeypatch, mocker):
+    lines = []
+    transcripts = []
+    for index in range(512):
+        start = f"000125:00:00,{index:03}"
+        end = f"000125:00:00,{index + index % 2:03}"
+        line = {"startTime": start, "endTime": end, "text": "Café &", "note": "ignored"}
+        if index % 2:
+            line["speakerDesignation"] = "Speaker A"
+        lines.append(line)
+        transcripts.append(
+            {
+                "start": start.replace(",", "."),
+                "start_ms": 450_000_000 + index,
+                "end": end.replace(",", "."),
+                "end_ms": 450_000_000 + index + index % 2,
+                "speaker": line.get("speakerDesignation", ""),
+                "voice": "",
+                "text": "Café &",
+            }
+        )
+    source = tmp_path / "chunk.dote.json"
+    source.write_text(json.dumps({"lines": lines}))
+    out = tmp_path / "out.podlove.json"
+    parse = mocker.Mock(wraps=transcript_validation.parse_dote_timecode)
+    monkeypatch.setattr(transcript_validation, "parse_dote_timecode", parse)
+    monkeypatch.setattr(track, "parse_dote_timecode", parse)
+
+    track.convert_dote_to_podlove(source, out)
+
+    expected = json.dumps({"transcripts": transcripts}).encode("utf-8")
+    assert out.read_bytes() == expected
+    assert parse.call_count == 2 * len(lines)
+
+    lines[-1]["endTime"] = "invalid"
+    source.write_text(json.dumps({"lines": lines}))
+    write = mocker.spy(track, "write_text_atomic")
+    with pytest.raises(ValueError, match=r"chunk\.dote\.json.*Invalid DOTe"):
+        track.convert_dote_to_podlove(source, out)
+    write.assert_not_called()
+    assert out.read_bytes() == expected
+
+
+@pytest.mark.parametrize(
+    "end",
+    ["2501999792:59:00,992", "2501999793:00:00,000", "9" * 4300 + ":00:00,000"],
+    ids=["one-millisecond-over", "next-hour", "4300-digit-hours"],
+)
+def test_dote_refuses_out_of_range_cue_before_podlove_export(tmp_path, end, mocker):
+    source = dote(tmp_path / "chunk.dote.json", "00:00:00,000", end)
+    out = tmp_path / "out.podlove.json"
+    out.write_bytes(b"previous")
+    write = mocker.spy(track, "write_text_atomic")
+    error = r"^chunk\.dote\.json: Invalid DOTe line 1: .*9007199254740991"
+
+    with pytest.raises(ValueError, match=error):
+        track.load_dote(source)
+    with pytest.raises(ValueError, match=error):
+        track.convert_dote_to_podlove(source, out)
+    write.assert_not_called()
+    assert out.read_bytes() == b"previous"
+
+
+@pytest.mark.parametrize(
+    "timestamp,milliseconds",
+    [
+        ("125:00:00,001", 450_000_001),
+        ("0002501999792:59:00,991", 2**53 - 1),
+    ],
+)
+def test_podlove_exports_in_range_millisecond_integers(
+    tmp_path, timestamp, milliseconds
+):
+    source = dote(tmp_path / "chunk.dote.json", timestamp, timestamp)
+    out = tmp_path / "out.podlove.json"
+
+    track.convert_dote_to_podlove(source, out)
+
+    [cue] = json.loads(out.read_bytes())["transcripts"]
+    assert cue["start_ms"] == cue["end_ms"] == milliseconds
+    assert cue["start"] == cue["end"] == timestamp.replace(",", ".")
+
+
+def test_raw_conversion_refuses_to_publish_out_of_range_dote_chunk(tmp_path):
+    raw = tmp_path / "chunk.json"
+    raw.write_text(
+        json.dumps({"segments": [{"start": 0, "end": 10**13, "text": "synthetic"}]})
+    )
+
+    with pytest.raises(ValueError, match=r"Invalid DOTe line 1: .*9007199254740991"):
+        track.whisper_text_chunks_to_dote([raw])
+    assert not raw.with_suffix(".dote.json").exists()
 
 
 @pytest.mark.parametrize("exporter", EXPORTERS)

@@ -14,6 +14,10 @@ from .safe_io import LOCAL_TRANSCRIPT_MAX_BYTES
 
 _SURROGATE = re.compile(r"[\ud800-\udfff]")
 
+# Largest integer that JSON consumers using IEEE 754 doubles can represent safely.
+DOTE_MAX_MILLISECONDS = 2**53 - 1
+_DOTE_MAX_HOUR_DIGITS = len(str(DOTE_MAX_MILLISECONDS // 3_600_000))
+
 
 def exact_seconds(value: object) -> Fraction:
     """Admit millisecond-representable seconds as an exact decimal fraction."""
@@ -105,19 +109,24 @@ def load_whisper_transcript(path: Path) -> dict:
 
 
 def parse_dote_timecode(value: object) -> int:
-    """Parse full HH:MM:SS,mmm with unbounded hours; return integer milliseconds."""
+    """Parse full HH:MM:SS,mmm into a JSON-safe integer millisecond count."""
     match = (
         re.fullmatch(r"([0-9]{2,}):([0-9]{2}):([0-9]{2}),([0-9]{3})", value)
         if isinstance(value, str)
         else None
     )
     if match:
-        try:
-            hours, minutes, seconds, millis = map(int, match.groups())
-            if minutes < 60 and seconds < 60:
-                return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis
-        except ValueError:
-            pass
+        hours = match[1].lstrip("0")
+        minutes, seconds, millis = map(int, match.groups()[1:])
+        if minutes < 60 and seconds < 60:
+            if len(hours) <= _DOTE_MAX_HOUR_DIGITS:
+                whole_seconds = int(hours or "0") * 3600 + minutes * 60 + seconds
+                milliseconds = whole_seconds * 1000 + millis
+                if milliseconds <= DOTE_MAX_MILLISECONDS:
+                    return milliseconds
+            raise ValueError(
+                f"DOTe timecode exceeds {DOTE_MAX_MILLISECONDS} milliseconds."
+            )
     raise ValueError(
         "Invalid DOTe timecode: require HH:MM:SS,mmm with minutes/seconds 00–59."
     )
@@ -184,8 +193,11 @@ def _iter_validated_dote_cues(data: object) -> Iterator[tuple[dict, int, int]]:
             raise ValueError(
                 f"Invalid DOTe line {position}: speakerDesignation must contain only Unicode scalar values."
             )
-        start = parse_dote_timecode(line.get("startTime"))
-        end = parse_dote_timecode(line.get("endTime"))
+        try:
+            start = parse_dote_timecode(line.get("startTime"))
+            end = parse_dote_timecode(line.get("endTime"))
+        except ValueError as exc:
+            raise ValueError(f"Invalid DOTe line {position}: {exc}") from None
         if end < start:
             raise ValueError(f"Invalid DOTe line {position}: end precedes start.")
         if start < previous_start:

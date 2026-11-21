@@ -508,8 +508,8 @@ Admitted multi-chunk output is serialized directly to staging without another ep
 
 ### Transcript and cached-artifact validation
 
-Native whisper-cpp timestamps require the same full `HH:MM:SS,mmm` grammar as DOTe below,
-including component ranges and multi-day hours. Each segment's `offsets.from` must be a nonnegative
+Native whisper-cpp timestamps use the same full `HH:MM:SS,mmm` grammar and upper limit as DOTe
+below. Each segment's `offsets.from` must be a nonnegative
 JSON integer and is copied unchanged to `seek`. Negative, boolean, floating-point and quoted offsets are
 rejected. Malformed native schemas and JSON raise a
 controlled error without transcript text and preserve previous native and converted raw caches.
@@ -548,10 +548,13 @@ DOTe cue text and optional `speakerDesignation` must be strings containing only 
 values. An unpaired surrogate is rejected before combining or exporting. The error identifies the
 cached filename and line number. A missing `speakerDesignation` defaults to an empty speaker in
 Podlove. Cached DOTe cues use full `HH:MM:SS,mmm` strings: at least two hour digits, exactly two
-minute/second digits (00–59), and exactly three millisecond digits. Hours may exceed 24. Suffixes,
-malformed widths and reversed cues are rejected consistently before combining (including single-chunk
-copies) or writing any export. Existing output bytes are preserved on validation failure. Correct or
-remove the invalid DOTe cache and regenerate its combined exports before retrying.
+minute/second digits (00–59), and exactly three millisecond digits. Multi-day times are supported
+up to 9,007,199,254,740,991 milliseconds (`2501999792:59:00,991`), the largest safe integer for
+JSON consumers using double-precision numbers. The same limit applies when generating DOTe chunks
+from raw Whisper. Out-of-range times, suffixes, malformed widths and reversed cues are rejected
+before combining (including single-chunk copies) or writing any export. Existing output bytes
+are preserved on validation failure. Correct or remove the invalid DOTe cache and regenerate its
+combined exports before retrying.
 
 ## Output Formats
 
@@ -561,6 +564,9 @@ mapping in `audio.py`.
 
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.
+  The entire DOTe file is validated before publication. The export reuses the validated integer
+  milliseconds, keeps equal cue endpoints, and preserves the original timestamp spelling apart
+  from changing the decimal separator to a period.
 - **WebVTT (*.webvtt)**: A subtitle format that can be used for captioning in media players.
   Cue text treats `&`, `<` and `>` as literal text, escaping them as entities. CRLF and CR
   become LF; consecutive blank or whitespace-only lines collapse to one line break, and leading
