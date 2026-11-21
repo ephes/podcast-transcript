@@ -69,6 +69,10 @@ def validate_whisper_transcript(data: object) -> None:
         "text" in data and not isinstance(data["text"], str)
     ):
         raise ValueError("Invalid transcript: require a Whisper object with segments.")
+    if "text" in data and _SURROGATE.search(data["text"]):
+        raise ValueError(
+            "Invalid transcript: top-level text must contain only Unicode scalar values."
+        )
     validate_segments(data.get("segments"))
 
 

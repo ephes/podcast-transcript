@@ -229,7 +229,13 @@ def regular_file_blocks(
             or consumed != before.st_size
         ):
             raise OSError("Transcript source changed during read.")
-    finally:
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            logger.warning("Could not close the transcript input descriptor.")
+        raise
+    else:
         os.close(descriptor)
 
 

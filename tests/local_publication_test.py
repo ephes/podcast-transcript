@@ -238,6 +238,52 @@ def test_atomic_copy_output_close_failure_preserves_destination(
     assert not list(tmp_path.glob(".output-*"))
 
 
+@pytest.mark.parametrize("exhaust_budget", [True, False])
+def test_atomic_copy_input_close_failure_preserves_destination(
+    tmp_path, monkeypatch, caplog, exhaust_budget
+):
+    source, target = tmp_path / "source.json", tmp_path / "target.json"
+    source.write_bytes(b"replacement")
+    target.write_bytes(b"previous")
+    budget = safe_io.TranscriptWorkBudget()
+    if exhaust_budget:
+        budget.remaining = 1
+    input_descriptor = None
+    close_attempts = 0
+    open_descriptor, close_descriptor = os.open, os.close
+    close_error = OSError(errno.EIO, "synthetic input close failure")
+
+    def remember_input(path, flags, *args, **kwargs):
+        nonlocal input_descriptor
+        descriptor = open_descriptor(path, flags, *args, **kwargs)
+        if path == source:
+            input_descriptor = descriptor
+        return descriptor
+
+    def fail_input_close(descriptor):
+        nonlocal close_attempts
+        if descriptor == input_descriptor:
+            close_attempts += 1
+            close_descriptor(descriptor)
+            raise close_error
+        close_descriptor(descriptor)
+
+    monkeypatch.setattr(os, "open", remember_input)
+    monkeypatch.setattr(os, "close", fail_input_close)
+    if exhaust_budget:
+        with pytest.raises(RuntimeError, match="Transcript work exceeded byte limit"):
+            safe_io.copy_file_atomic(source, target, budget=budget)
+        assert "Could not close the transcript input descriptor" in caplog.text
+    else:
+        with pytest.raises(OSError) as raised:
+            safe_io.copy_file_atomic(source, target, budget=budget)
+        assert raised.value is close_error
+
+    assert close_attempts == 1
+    assert target.read_bytes() == b"previous"
+    assert not list(tmp_path.glob(".output-*"))
+
+
 @pytest.mark.parametrize("failed_parent", ["destination", "staging"])
 def test_atomic_output_reports_visible_output_after_directory_sync_failure(
     tmp_path, monkeypatch, failed_parent
