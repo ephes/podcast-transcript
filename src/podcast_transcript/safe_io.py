@@ -173,9 +173,12 @@ class TranscriptWorkBudget:
 
 
 def regular_file_blocks(
-    path: Path, *, budget: TranscriptWorkBudget | None = None
+    path: Path,
+    *,
+    budget: TranscriptWorkBudget | None = None,
+    expected_generation: tuple[int, ...] | None = None,
 ) -> Generator[bytes, None, None]:
-    """Read bounded blocks and verify the opened regular file at EOF."""
+    """Read bounded blocks from a stable regular file of the expected generation."""
     descriptor = os.open(
         path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     )
@@ -183,6 +186,11 @@ def regular_file_blocks(
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
             raise OSError("Transcript copy requires a regular file.")
+        if (
+            expected_generation is not None
+            and file_generation(before) != expected_generation
+        ):
+            raise OSError("Transcript source changed before read.")
         consumed = 0
         while True:
             if budget is not None:
