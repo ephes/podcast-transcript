@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Preserve transcript copy refusals when closing the source descriptor also fails.
+
 - Reject unpaired surrogates in optional top-level Whisper text before caching or reuse.
 
 - Derive transcription and restore receipts from the published output suffix-to-label mapping.

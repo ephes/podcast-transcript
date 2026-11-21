@@ -677,8 +677,9 @@ audio is reused. Invalid manifests remain in place until transcript cleanup fini
 When writing fails before an atomic replacement, the destination retains its prior contents.
 If a staged text or binary output stream cannot be opened, the writer closes its file descriptor
 and reports the stream error.
-A transcript copy retains its original failure if closing the staged output descriptor also fails.
-The close failure is logged separately. A close failure after a successful copy stops publication.
+A transcript copy retains its original failure if closing the source or staged output descriptor
+also fails. The close failure is logged separately. A close failure after a successful read or
+write stops publication.
 If syncing either parent directory fails after the rename, the command reports that the
 replacement is visible with uncertain durability and identifies the directory whose sync
 failed. Cache completion markers are written after their required artifacts are synced.
