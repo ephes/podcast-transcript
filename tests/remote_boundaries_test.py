@@ -375,3 +375,38 @@ def test_remote_requests_replace_all_accept_encoding_spellings(monkeypatch):
     assert request.headers.get_list("Accept-Encoding") == ["identity"]
     assert request.headers["X-Synthetic"] == "preserved"
     assert headers["accept-encoding"] == "gzip"
+
+
+@pytest.mark.parametrize("name", ["groq", "voxhelm"])
+@pytest.mark.parametrize(
+    "status,headers",
+    [(201, {}), (204, {}), (206, {}), (200, {"Content-Range": "bytes 0-15/32"})],
+)
+def test_remote_requires_complete_representation(
+    monkeypatch, mocker, tmp_path, name, status, headers
+):
+    payload = {"segments": [{"start": 0, "end": 1, "text": "synthetic"}]}
+    partial = Blocks([json.dumps(payload).encode()])
+    responses = iter(
+        [
+            httpx.Response(status, headers=headers, stream=partial),
+            httpx.Response(200, json=payload),
+        ]
+    )
+    transport(monkeypatch, lambda request: next(responses))
+    chunk = tmp_path / "audio.mp3"
+    chunk.write_bytes(b"synthetic audio")
+    output = chunk.with_suffix(".json")
+    output.write_bytes(b"previous")
+    write = mocker.spy(backends, "write_text_atomic")
+
+    backend = remote(name)
+    with pytest.raises(RuntimeError, match="HTTP 200 without Content-Range"):
+        backend.transcribe(chunk, output)
+    assert partial.closed
+    assert output.read_bytes() == b"previous"
+    write.assert_not_called()
+
+    backend.transcribe(chunk, output)
+    assert json.loads(output.read_bytes()) == payload
+    assert write.call_count == 1

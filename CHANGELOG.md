@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Require HTTP 200 without Content-Range for remote transcript results before caching.
+
 - Send exactly one identity Accept-Encoding value on remote transcription requests, regardless of caller header casing.
 
 - Preserve transcript copy failures when closing staged output also fails and report the close failure separately.

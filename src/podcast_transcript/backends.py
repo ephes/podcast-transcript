@@ -62,6 +62,14 @@ def remote_response(backend: str, url: str, **kwargs) -> httpx.Response:
             async with client.stream(
                 "POST", url, headers=headers, **kwargs
             ) as response:
+                if response.is_success and (
+                    response.status_code != httpx.codes.OK
+                    or "Content-Range" in response.headers
+                ):
+                    raise RuntimeError(
+                        f"{backend} transcription requires HTTP 200 without Content-Range "
+                        f"(received status {response.status_code})."
+                    )
                 encoding = response.headers.get("Content-Encoding", "identity")
                 if encoding.strip().lower() not in {"", "identity"}:
                     raise RuntimeError(
