@@ -3,6 +3,7 @@ Unreleased
 
 ### Fixes
 
+- Rebuild cached whisper-cpp WAVs whose path no longer names the inspected file after validation.
 - Recheck the short-audio chunk link during recovery fingerprinting and refuse redirected links before publication.
 - Hash the short-audio link target once per recovery pass while preserving both manifest entries and their digest.
 - Check cached chunk durations before transcription and reuse valid probes for unchanged newly prepared audio.

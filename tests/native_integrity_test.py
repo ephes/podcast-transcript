@@ -23,21 +23,40 @@ def wav_bytes(*, channels=1, rate=16000, width=2, frames=80):
     return stream.getvalue()
 
 
-def test_wav_size_check_uses_opened_generation(monkeypatch, tmp_path):
+def test_cached_wav_replaced_during_frame_read_is_rebuilt(monkeypatch, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
+    audio = cache / "chunk.mp3"
+    audio.write_bytes(b"original-audio")
     wav = cache / "chunk.wav"
-    wav.write_bytes(wav_bytes())
-    getnframes = wave.Wave_read.getnframes
+    original = wav_bytes()
+    rebuilt = wav_bytes(frames=40)
+    wav.write_bytes(original)
+    readframes = wave.Wave_read.readframes
 
-    def replace_path_after_header(source):
+    def replace_path_after_read(source, count):
+        frames = readframes(source, count)
+        monkeypatch.setattr(wave.Wave_read, "readframes", readframes)
+        # Replace the containing directory to keep the opened inode unchanged.
         cache.rename(tmp_path / "old-cache")
         cache.mkdir()
-        wav.write_bytes(b"")
-        return getnframes(source)
+        audio.write_bytes(b"original-audio")
+        wav.write_bytes(b"invalid replacement")
+        return frames
 
-    monkeypatch.setattr(wave.Wave_read, "getnframes", replace_path_after_header)
-    assert backends.WhisperCpp.valid_wav(wav)
+    def convert(cmd, **kwargs):
+        assert cmd[0] == "ffmpeg"
+        Path(cmd[-1]).write_bytes(rebuilt)
+
+    def infer(self, source, target):
+        assert source.read_bytes() == rebuilt
+        target.with_suffix(".json").write_text(json.dumps({"transcription": []}))
+
+    monkeypatch.setattr(wave.Wave_read, "readframes", replace_path_after_read)
+    monkeypatch.setattr(backends, "run_checked", convert)
+    monkeypatch.setattr(backends.WhisperCpp, "run_whisper_cli", infer)
+    backends.WhisperCpp().transcribe(audio, cache / "transcript.json")
+    assert (tmp_path / "old-cache" / wav.name).read_bytes() == original
 
 
 def test_wav_changed_in_place_during_frame_read_is_refused(monkeypatch, tmp_path):

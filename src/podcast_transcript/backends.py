@@ -506,7 +506,7 @@ class WhisperCpp:
 
     @staticmethod
     def valid_wav(path: Path) -> bool:
-        """Validate cached PCM from one regular file using bounded reads."""
+        """Validate cached PCM and verify that the path still names that file."""
         try:
             with open(
                 path,
@@ -535,7 +535,10 @@ class WhisperCpp:
                         if not block or len(block) % 2:
                             return False
                         remaining -= len(block)
-                return file_generation(before) == file_generation(os.fstat(descriptor))
+                generation = file_generation(before)
+                return generation == file_generation(
+                    os.fstat(descriptor)
+                ) and generation == file_generation(path.stat())
         except (OSError, EOFError, wave.Error):
             return False
 
