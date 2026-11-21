@@ -5,7 +5,9 @@ import re
 from pathlib import Path
 from fractions import Fraction
 
+from .input_admission import read_regular_bounded
 from .json_input import loads_unique
+from .safe_io import LOCAL_TRANSCRIPT_MAX_BYTES
 
 
 _SURROGATE = re.compile(r"[\ud800-\udfff]")
@@ -70,9 +72,21 @@ def validate_whisper_transcript(data: object) -> None:
     validate_segments(data.get("segments"))
 
 
-def load_whisper_transcript(path: Path) -> dict:
+def _read_transcript(path: Path, kind: str) -> bytes:
     try:
-        data = loads_unique(path.read_text())
+        return read_regular_bounded(
+            path,
+            limit=LOCAL_TRANSCRIPT_MAX_BYTES,
+            description=f"{kind} ({path.name})",
+        )
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from None
+
+
+def load_whisper_transcript(path: Path) -> dict:
+    raw = _read_transcript(path, "Raw transcript")
+    try:
+        data = loads_unique(raw.decode("utf-8"))
     except (ValueError, UnicodeError, RecursionError):
         raise ValueError(
             f"Invalid transcript JSON in {path.name}; remove the cached raw chunk and retry."
@@ -112,10 +126,10 @@ def format_dote_timecode(milliseconds: int) -> str:
 
 def load_dote(path: Path, *, snapshot: bytes | None = None) -> dict:
     """Validate DOTe JSON, using the path for diagnostics with a supplied snapshot."""
+    if snapshot is None:
+        snapshot = _read_transcript(path, "DOTe transcript")
     try:
-        data = loads_unique(
-            path.read_text() if snapshot is None else snapshot.decode("utf-8")
-        )
+        data = loads_unique(snapshot.decode("utf-8"))
     except (ValueError, UnicodeError, RecursionError):
         raise ValueError(f"Invalid DOTe JSON in {path.name}.") from None
     try:

@@ -186,8 +186,11 @@ You can also set the following environment variables or specify them in the .env
   excessively nested JSON, provides no usable delay and stops the run without another request.
 
 Remote Groq and Voxhelm responses (success and error) are streamed with a 32 MiB body limit,
-independent of Content-Length. Requests send `Accept-Encoding: identity`; a response with any
-other `Content-Encoding` (gzip, deflate, br, ...) is refused before decoding, so a small compressed
+independent of Content-Length. Requests replace any supplied spelling of `Accept-Encoding`
+with a single `identity` value and preserve other headers. A successful transcript response
+must use HTTP 200 without `Content-Range`. Other 2xx statuses (including 206) and HTTP 200
+with `Content-Range` are refused before reading or caching the transcript. A response with
+any other `Content-Encoding` (gzip, deflate, br, ...) is refused before decoding, so a small compressed
 block cannot expand past the limit. Overflow or refusal closes the response, fails the run
 and preserves previous transcript files. Remote failures report status or category without response bodies, prompts, URLs or exception
 messages. Timeout errors retain the relevant setting hint.
@@ -527,6 +530,9 @@ decimal nearest-millisecond rounding
 with ties to even, matching cumulative chunk offsets.
 Invalid backend results never replace raw transcript caches, so a corrected response can be retried.
 
+Raw Whisper JSON and DOTe files must be stable, regular UTF-8 files without symlinks and at
+most 64 MiB each, counted during reading. This limit applies before JSON parsing, including
+cached chunks and DOTe inputs to multi-chunk combination or export.
 Cached raw chunks are validated before reuse. If an older or edited raw chunk is rejected, remove
 that `chunks/chunk_NNN.json` and its derived `chunk_NNN.dote.json`, plus the combined episode
 outputs, then rerun to retranscribe that chunk. Valid prepared audio and other raw chunks are reused.
@@ -542,6 +548,10 @@ copies) or writing any export. Existing output bytes are preserved on validation
 remove the invalid DOTe cache and regenerate its combined exports before retrying.
 
 ## Output Formats
+
+Transcription and `--restore-last-success` report one path per published format using the same
+labels and file suffixes. The output inventory and both receipts share one suffix-to-label
+mapping in `audio.py`.
 
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.

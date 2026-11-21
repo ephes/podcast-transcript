@@ -316,3 +316,45 @@ def test_malformed_cache_errors_name_files(tmp_path):
         path.write_text("{")
         with pytest.raises(ValueError, match=name):
             load(path)
+
+
+def test_cached_raw_transcript_refuses_symlink(tmp_path):
+    target = tmp_path / "other.json"
+    target.write_bytes(b'{"segments":[]}')
+    raw = tmp_path / "chunk_000.json"
+    raw.symlink_to(target)
+    output = tmp_path / "episode.dote.json"
+    output.write_bytes(b"previous")
+
+    def unexpected(*args):
+        pytest.fail("a refused raw cache must stop before transcription")
+
+    with pytest.raises(ValueError, match=r"chunk_000\.json.*regular file"):
+        track.audio_chunks_to_text(
+            SimpleNamespace(transcribe=unexpected), [raw.with_suffix(".mp3")]
+        )
+
+    assert output.read_bytes() == b"previous"
+    assert target.read_bytes() == b'{"segments":[]}'
+
+
+def test_multichunk_dote_admits_bounded_files_before_json(tmp_path, monkeypatch):
+    from podcast_transcript import transcript_validation
+
+    first = tmp_path / "chunk_000.dote.json"
+    second = tmp_path / "chunk_001.dote.json"
+    output = tmp_path / "episode.dote.json"
+    data = b'{ "lines": [] }\n'
+    first.write_bytes(data)
+    second.write_bytes(data + b" ")
+    output.write_bytes(b"previous")
+    monkeypatch.setattr(
+        transcript_validation, "LOCAL_TRANSCRIPT_MAX_BYTES", len(data), raising=False
+    )
+
+    with pytest.raises(ValueError, match=r"chunk_001\.dote\.json.*byte limit"):
+        track.combine_dote_chunks([first, second], output, [1, 1])
+    assert output.read_bytes() == b"previous"
+
+    track.combine_dote_chunks([first], output, [1])
+    assert output.read_bytes() == data

@@ -481,3 +481,32 @@ def test_restore_requires_prepared_audio_byte_provenance(episode, monkeypatch, c
         single_track.restore_last_success(store.url)
     assert all(p.read_bytes() == value for p, value in before.items())
     assert all((recovery / p).read_bytes() == value for p, value in backup.items())
+
+
+def test_generation_and_restore_receipts_follow_output_inventory(episode, monkeypatch):
+    store, previous = episode
+    suffixes = tuple(reversed(single_track.TRANSCRIPT_OUTPUT_SUFFIXES))
+    monkeypatch.setattr(single_track, "TRANSCRIPT_OUTPUT_SUFFIXES", suffixes)
+    monkeypatch.setattr(audio, "TRANSCRIPT_OUTPUT_SUFFIXES", suffixes)
+    expected = {
+        "DOTe": store.output_path(".dote.json"),
+        "podlove": store.output_path(".podlove.json"),
+        "WebVTT": store.output_path(".webvtt"),
+        "plain text": store.output_path(".txt"),
+    }
+
+    generated = single_track.transcribe(store.url, RecordingBackend("new", "new"))
+    assert generated == expected
+    assert generated["plain text"].read_text() == "new\nnew"
+
+    restored = single_track.restore_last_success(store.url)
+    assert restored == expected
+    for receipt in (generated, restored):
+        assert len(receipt) == len(set(receipt.values())) == len(suffixes)
+        assert set(receipt.values()) == {
+            store.output_path(suffix) for suffix in suffixes
+        }
+    assert all(
+        path.read_bytes() == previous[path.relative_to(store.podcast_dir)]
+        for path in restored.values()
+    )
