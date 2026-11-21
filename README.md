@@ -471,8 +471,11 @@ metadata rename may leave a fully copied generation visible; the recovery copy s
 legacy backups are refused before publication. Such backups remain available for manual inspection
 and copying individual exports out. Version 2 recovery manifests also bind the resampled MP3,
 every admitted MP3 chunk (including the short-audio link's owned target), and any cached chunk WAVs
-to streamed SHA-256 byte evidence. Names, additions and removals affect that identity. Hashing uses
-at most 1 MiB reads, a shared 64 GiB byte ceiling and a one-hour elapsed budget per pass; growth is
+to streamed SHA-256 byte evidence. The short-audio link is checked again during fingerprinting.
+A link redirected away from the episode's own resampled file stops recovery before publication.
+Each pass hashes the resampled file once and checks its file generation before reusing the digest
+for the link. Both names remain in the fingerprint. Additions and removals affect that identity.
+Hashing uses at most 1 MiB reads, a shared 64 GiB byte ceiling and a one-hour elapsed budget per pass; growth is
 counted and filesystem I/O must return for time checks. A settings replacement hashes prepared
 audio before any inference, so an unhashable inventory fails without spending inference work, and
 refuses promotion when the prepared audio changed during transcription. Restore rechecks audio after snapshot

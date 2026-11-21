@@ -481,11 +481,7 @@ def _chunk_byte_provenance(audio: Audio, chunks: list[Path]) -> dict[str, str]:
     for chunk in chunks:
         source = chunk
         if chunk.is_symlink():
-            if (
-                len(chunks) != 1
-                or audio.resampled_episode_path.is_symlink()
-                or chunk.resolve() != audio.resampled_episode_path.resolve()
-            ):
+            if not audio._is_owned_short_chunk_link(chunk, chunk_count=len(chunks)):
                 raise RuntimeError("Prepared chunk link is not owned resampled audio.")
             source = audio.resampled_episode_path
         digest = hashlib.sha256()
@@ -515,24 +511,22 @@ def _prepared_audio_digest(audio: Audio) -> str:
     if chunks is None:
         raise RuntimeError("Recovery requires a valid prepared audio inventory.")
     chunk_set = set(chunks)
-    paths = [audio.resampled_episode_path, *chunks]
+    resampled = audio.resampled_episode_path
+    paths = [resampled, *chunks]
     for chunk in chunks:
         wav = chunk.with_suffix(".wav")
         if wav.exists() or wav.is_symlink():
             paths.append(wav)
     remaining = PREPARED_AUDIO_MAX_BYTES
-    inventory = hashlib.sha256()
-    for path in paths:
-        check_time()
-        # Only the single-chunk link already admitted by the chunk manifest may
-        # reference our regular resampled file. All actual reads refuse symlinks.
-        source = (
-            audio.resampled_episode_path
-            if path in chunk_set and path.is_symlink()
-            else path
-        )
+
+    def hash_audio(
+        path: Path, *, expected_generation: tuple[int, ...] | None = None
+    ) -> str:
+        nonlocal remaining
         digest = hashlib.sha256()
-        with closing(regular_file_blocks(source)) as blocks:
+        with closing(
+            regular_file_blocks(path, expected_generation=expected_generation)
+        ) as blocks:
             for block in blocks:
                 check_time()
                 remaining -= len(block)
@@ -540,9 +534,30 @@ def _prepared_audio_digest(audio: Audio) -> str:
                     raise RuntimeError("Prepared audio hashing exceeded byte limit.")
                 digest.update(block)
         check_time()
+        return digest.hexdigest()
+
+    check_time()
+    resampled_generation = file_generation(resampled.lstat())
+    resampled_digest = hash_audio(resampled, expected_generation=resampled_generation)
+    inventory = hashlib.sha256()
+    for path in paths:
+        check_time()
+        if path == resampled:
+            digest = resampled_digest
+        elif path in chunk_set and path.is_symlink():
+            if not audio._is_owned_short_chunk_link(path, chunk_count=len(chunks)):
+                raise RuntimeError("Recovery requires an owned short chunk link.")
+            if file_generation(resampled.lstat()) != resampled_generation:
+                raise RuntimeError(
+                    "Prepared audio changed before short chunk digest reuse."
+                )
+            check_time()
+            digest = resampled_digest
+        else:
+            digest = hash_audio(path)
         inventory.update(
             json.dumps(
-                (path.relative_to(audio.podcast_dir).as_posix(), digest.hexdigest())
+                (path.relative_to(audio.podcast_dir).as_posix(), digest)
             ).encode()
         )
         inventory.update(b"\n")

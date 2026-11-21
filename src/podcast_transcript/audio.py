@@ -525,6 +525,18 @@ class Audio:
     def chunks_manifest_path(self) -> Path:
         return self.episode_chunks_dir / "chunks.json"
 
+    def _is_owned_short_chunk_link(self, path: Path, *, chunk_count: int) -> bool:
+        resampled = self.resampled_episode_path
+        try:
+            return (
+                chunk_count == 1
+                and path.is_symlink()
+                and not resampled.is_symlink()
+                and path.resolve() == resampled.resolve()
+            )
+        except (OSError, RuntimeError):
+            return False
+
     def _load_chunk_manifest(self) -> list[Path] | None:
         """Return the cached chunk paths if a complete chunk set exists."""
         try:
@@ -546,14 +558,10 @@ class Audio:
                     or not 0 < path.stat().st_size <= MAX_SIZE_IN_BYTES
                 ):
                     return None
-                if path.is_symlink():
-                    # Only the short-episode link to our own resampled audio is valid.
-                    if (
-                        len(chunk_paths) != 1
-                        or self.resampled_episode_path.is_symlink()
-                        or path.resolve() != self.resampled_episode_path.resolve()
-                    ):
-                        return None
+                if path.is_symlink() and not self._is_owned_short_chunk_link(
+                    path, chunk_count=len(chunk_paths)
+                ):
+                    return None
         except (OSError, RuntimeError):
             return None
         return chunk_paths
