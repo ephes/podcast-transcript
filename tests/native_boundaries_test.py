@@ -192,6 +192,40 @@ def test_probe_capture_requires_finite_timeout(timeout):
         )
 
 
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+@pytest.mark.parametrize("limit", [0, -1, True, 2.5, "8"])
+def test_capture_limits_are_validated_before_launch(mocker, stream, limit):
+    launch = mocker.patch.object(
+        subprocess, "Popen", side_effect=AssertionError("unexpected process launch")
+    )
+    with pytest.raises(ValueError, match=rf"{stream} limit.*positive integer"):
+        safe_io.capture_checked(
+            ["never-started"],
+            description="synthetic",
+            timeout=10,
+            stderr_tail=True,
+            **{f"{stream}_limit": limit},
+        )
+    launch.assert_not_called()
+
+
+def test_capture_discards_stdout_and_keeps_small_stderr_tail():
+    with pytest.raises(RuntimeError, match=r"exit code 7: \[stderr truncated\]\ntail$"):
+        safe_io.capture_checked(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.buffer.write(b'x' * 100_000); "
+                "sys.stderr.write('discard this tail'); sys.exit(7)",
+            ],
+            description="synthetic",
+            timeout=10,
+            stdout_limit=None,
+            stderr_limit=4,
+            stderr_tail=True,
+        )
+
+
 @pytest.mark.parametrize("capture", [True, False])
 def test_probe_parent_exit_keeps_identity_until_pipe_cleanup(monkeypatch, capture):
     import threading

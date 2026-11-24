@@ -270,7 +270,9 @@ transcribe --backend=voxhelm https://d2mmy4gxasde9x.cloudfront.net/cast_audio/pp
 The transcription process involves the following steps:
 
 1. Download the audio file from the provided URL or copy it from the file path if one was given.
-2. Convert the audio to mp3 and resample to 16kHz mono for optimal transcription.
+2. Convert the first audio stream in container order to a 16 kHz mono MP3. Stream
+   default flags do not affect selection. Existing resamples and transcripts stay
+   eligible for cache reuse under the normal cache rules.
 3. Split the audio into chunks if it exceeds 25 MiB or 7,200 seconds; enforce both limits before publishing the chunk manifest.
 4. Transcribe each audio chunk using either whisper-cpp (converts mp3 to wav first), mlx-whisper, the Groq API, or Voxhelm.
 5. Combine the transcribed chunks into a single transcript.
@@ -643,6 +645,11 @@ Increase these for unusually slow processing. On timeout or interruption the own
 killed and the direct subprocess reaped (Unix process group; Windows `taskkill /T`). Partial outputs
 are removed and previous final outputs preserved. Timeouts raise an error naming the operation;
 failed commands report a bounded stderr tail. Retrying reruns the unfinished step.
+
+The internal subprocess capture helper requires positive integer byte limits for
+stdout and stderr before launching a command. Pass `None` for the stdout limit
+to discard stdout. In stderr-tail mode, only the last bytes within the stderr
+budget are retained.
 
 MLX inference runs in a separate worker process owned by the CLI, so the CLI process never imports
 `mlx_whisper`. The worker loads only the standard library and `mlx_whisper` (not the CLI settings),

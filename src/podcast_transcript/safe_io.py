@@ -323,12 +323,18 @@ def capture_checked(
     stderr_tail: bool = False,
     output_limit: tuple[Path, int] | None = None,
 ) -> bytes:
-    """Capture small tool results, killing/reaping the owned tree on overflow."""
+    """Capture tool results with positive byte caps, or discard stdout with None."""
     import threading
     import time
 
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("Command timeout must be positive finite seconds")
+    if stdout_limit is not None and (
+        type(stdout_limit) is not int or stdout_limit <= 0
+    ):
+        raise ValueError("Command stdout limit must be positive integer bytes")
+    if type(stderr_limit) is not int or stderr_limit <= 0:
+        raise ValueError("Command stderr limit must be positive integer bytes")
     if output_limit is not None and (
         type(output_limit[1]) is not int or output_limit[1] <= 0
     ):

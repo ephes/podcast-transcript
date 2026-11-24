@@ -53,7 +53,7 @@ def test_resample_audio(mocker, audio):
         "-ac",
         "1",
         "-map",
-        "0:a:",
+        "0:a:0",
         "-fs",
         str(2 * 1024**3),
     ]
@@ -87,6 +87,62 @@ def test_resample_audio_failure_raises_and_leaves_no_output(mocker, audio):
 
     assert not output_path.exists()
     assert [p.name for p in output_path.parent.iterdir()] == [input_path.name]
+
+
+def test_normalized_cache_uses_first_audio_stream(tmp_path):
+    source = tmp_path / "two-tracks.mka"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=0.25",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:duration=1",
+            "-map",
+            "0:a",
+            "-map",
+            "1:a",
+            "-disposition:a:0",
+            "0",
+            "-disposition:a:1",
+            "default",
+            "-c:a",
+            "pcm_s16le",
+            str(source),
+        ],
+        check=True,
+        timeout=10,
+    )
+    audio = Audio(base_dir=tmp_path / "cache", url=str(source))
+
+    audio.prepare_audio_for_transcription()
+
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,sample_rate,channels,duration",
+            "-of",
+            "json",
+            str(audio.resampled_episode_path),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
+    (stream,) = json.loads(probe.stdout)["streams"]
+    assert stream["codec_type"] == "audio"
+    assert stream["sample_rate"] == "16000"
+    assert stream["channels"] == 1
+    assert float(stream["duration"]) == pytest.approx(0.25, abs=0.12)
 
 
 def test_split_into_chunks_exceeds_limit(mocker, audio):
