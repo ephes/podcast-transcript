@@ -115,12 +115,29 @@ def test_out_of_range_raw_cue_is_not_cached_and_retry_exports(tmp_path, monkeypa
         )
 
     monkeypatch.setattr(backend, "transcribe", out_of_range)
-    with pytest.raises(ValueError, match="exceeds 9007199254740991 milliseconds"):
+    with pytest.raises(
+        ValueError,
+        match=r"^chunk_000\.json: Invalid transcript segment 1: end exceeds "
+        r"9007199254740991 milliseconds\.$",
+    ):
         single_track.transcribe(store.url, backend)
     assert not (store.episode_chunks_dir / "chunk_000.json").exists()
     assert not store.output_path(".dote.json").exists()
 
+    def malformed(chunk, target):
+        valid(chunk, target)
+        target.write_text("{not json")
+
+    monkeypatch.setattr(backend, "transcribe", malformed)
+    with pytest.raises(ValueError) as error:
+        single_track.transcribe(store.url, backend)
+    assert str(error.value) == (
+        "Invalid transcript JSON in chunk_000.json; it was not cached, "
+        "so retry once the backend response is corrected."
+    )
+    assert not (store.episode_chunks_dir / "chunk_000.json").exists()
+
     monkeypatch.setattr(backend, "transcribe", valid)
     paths = single_track.transcribe(store.url, backend)
-    assert len(backend.calls) == 2
+    assert len(backend.calls) == 3
     assert paths["plain text"].read_text() == "corrected"

@@ -85,29 +85,36 @@ def validate_whisper_transcript(data: object) -> None:
     validate_segments(data.get("segments"))
 
 
-def _read_transcript(path: Path, kind: str) -> bytes:
+def _read_transcript(path: Path, kind: str, *, name: str | None = None) -> bytes:
     try:
         return read_regular_bounded(
             path,
             limit=LOCAL_TRANSCRIPT_MAX_BYTES,
-            description=f"{kind} ({path.name})",
+            description=f"{kind} ({name or path.name})",
         )
     except RuntimeError as exc:
         raise ValueError(str(exc)) from None
 
 
-def load_whisper_transcript(path: Path) -> dict:
-    raw = _read_transcript(path, "Raw transcript")
+def load_whisper_transcript(
+    path: Path, *, name: str | None = None, cached: bool = True
+) -> dict:
+    """Load raw Whisper JSON; ``name`` labels errors and ``cached`` picks the hint."""
+    name = name or path.name
+    raw = _read_transcript(path, "Raw transcript", name=name)
+    hint = (
+        "remove the cached raw chunk and retry"
+        if cached
+        else "it was not cached, so retry once the backend response is corrected"
+    )
     try:
         data = loads_unique(raw.decode("utf-8"))
     except (ValueError, UnicodeError, RecursionError):
-        raise ValueError(
-            f"Invalid transcript JSON in {path.name}; remove the cached raw chunk and retry."
-        ) from None
+        raise ValueError(f"Invalid transcript JSON in {name}; {hint}.") from None
     try:
         validate_whisper_transcript(data)
     except ValueError as exc:
-        raise ValueError(f"{path.name}: {exc}") from None
+        raise ValueError(f"{name}: {exc}") from None
     return data
 
 

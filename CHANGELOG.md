@@ -7,6 +7,8 @@ Unreleased
 
 - Reject raw Whisper cue times outside the rounded DOTe millisecond range before caching or reuse.
 
+- Name the raw chunk, not its staging file, when a new backend result is rejected. Malformed backend JSON no longer asks to remove a cached raw chunk that was never written.
+
 - Split dotenv files on LF and CRLF, preserving Unicode separators and bare CR within values.
 
 - Require a positive integer or integer string for the source byte limit.

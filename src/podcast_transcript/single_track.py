@@ -229,10 +229,7 @@ def audio_chunks_to_text(
                     raise RuntimeError(
                         f"Transcription backend did not produce {transcript_path}"
                     )
-                try:
-                    load_whisper_transcript(target)
-                except ValueError as exc:
-                    raise ValueError(f"{transcript_name}: {exc}") from None
+                load_whisper_transcript(target, name=transcript_name, cached=False)
         raw_transcripts.append(transcript_path)
     return raw_transcripts
 
