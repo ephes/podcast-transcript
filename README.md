@@ -543,7 +543,9 @@ combined chunk starts are checked again after offsets. Older out-of-order caches
 correction or removal following the cache repair instructions below. Valid fractional seconds use
 decimal nearest-millisecond rounding
 with ties to even, matching cumulative chunk offsets.
-Invalid backend results never replace raw transcript caches, so a corrected response can be retried.
+Each raw endpoint must round to at most 9,007,199,254,740,991 milliseconds. This check
+applies before publishing a new raw chunk and when reading an existing one. A corrected
+backend response can be retried using the same prepared audio.
 
 Raw Whisper JSON and DOTe files must be stable, regular UTF-8 files without symlinks and at
 most 64 MiB each, counted during reading. This limit applies before JSON parsing, including

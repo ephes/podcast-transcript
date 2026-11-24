@@ -7,7 +7,7 @@ import stat
 import os
 import tempfile
 from collections.abc import Callable
-from contextlib import nullcontext, contextmanager, closing
+from contextlib import contextmanager, closing
 from fractions import Fraction
 from html import escape
 
@@ -214,38 +214,24 @@ def audio_chunks_to_text(
         chunk_name = chunk.name.split(".")[0]
         transcript_name = f"{chunk_name}.json"
         transcript_path = chunk.parent / transcript_name
-        cached = transcript_path.exists()
-        if not cached:
-            # A local inference result is published only after the model is
-            # rechecked against the identity recorded in cache.json, so a chunk
-            # produced by a replaced model never becomes reusable under it.
-            staging = (
-                atomic_output(transcript_path)
-                if validate_model is not None or validate_chunk is not None
-                else nullcontext(transcript_path)
-            )
-            with staging as target:
-                service.transcribe(chunk, target)
-                if validate_model is not None or validate_chunk is not None:
-                    if validate_model is not None:
-                        validate_model()
-                    if validate_chunk is not None:
-                        validate_chunk(chunk)
-                    if not target.exists():
-                        raise RuntimeError(
-                            f"Transcription backend did not produce {transcript_path}"
-                        )
-                    load_whisper_transcript(target)
-            if not transcript_path.exists():
-                raise RuntimeError(
-                    f"Transcription backend did not produce {transcript_path}"
-                )
-        try:
+        if transcript_path.exists():
             load_whisper_transcript(transcript_path)
-        except ValueError:
-            if not cached:
-                transcript_path.unlink(missing_ok=True)
-            raise
+        else:
+            # Admit the result and recheck inputs before making the chunk reusable.
+            with atomic_output(transcript_path) as target:
+                service.transcribe(chunk, target)
+                if validate_model is not None:
+                    validate_model()
+                if validate_chunk is not None:
+                    validate_chunk(chunk)
+                if not target.exists():
+                    raise RuntimeError(
+                        f"Transcription backend did not produce {transcript_path}"
+                    )
+                try:
+                    load_whisper_transcript(target)
+                except ValueError as exc:
+                    raise ValueError(f"{transcript_name}: {exc}") from None
         raw_transcripts.append(transcript_path)
     return raw_transcripts
 
@@ -255,13 +241,9 @@ def whisper_to_dote(input_data):
 
     validate_segments(input_data)
     output_data = {"lines": []}
-    for position, item in enumerate(input_data, 1):
+    for item in input_data:
         start_ms = seconds_to_milliseconds(item["start"])
         end_ms = seconds_to_milliseconds(item["end"])
-        if end_ms > DOTE_MAX_MILLISECONDS:
-            raise ValueError(
-                f"Invalid DOTe line {position}: timecode exceeds {DOTE_MAX_MILLISECONDS} milliseconds."
-            )
         line = {
             "startTime": format_dote_timecode(start_ms),
             "endTime": format_dote_timecode(end_ms),

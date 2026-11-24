@@ -55,11 +55,14 @@ def validate_segments(segments: object) -> None:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError(message)
             try:
-                valid = value >= 0 and math.isfinite(value * 1000)
-            except OverflowError:
-                valid = False
-            if not valid:
-                raise ValueError(message)
+                milliseconds = seconds_to_milliseconds(value)
+            except ValueError:
+                raise ValueError(message) from None
+            if milliseconds > DOTE_MAX_MILLISECONDS:
+                raise ValueError(
+                    f"Invalid transcript segment {position}: {key} exceeds "
+                    f"{DOTE_MAX_MILLISECONDS} milliseconds."
+                )
             times.append(value)
         if times[1] < times[0]:
             raise ValueError(message)

@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Reject raw Whisper cue times outside the rounded DOTe millisecond range before caching or reuse.
+
 - Split dotenv files on LF and CRLF, preserving Unicode separators and bare CR within values.
 
 - Require a positive integer or integer string for the source byte limit.
