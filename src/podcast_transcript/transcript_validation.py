@@ -161,11 +161,11 @@ def load_dote(path: Path, *, snapshot: bytes | None = None) -> dict:
     return cast(dict, data)
 
 
-def _load_dote_cues(path: Path) -> list[tuple[dict, int, int]]:
-    """Admit the full DOTe file and retain the parsed cue times for rendering."""
+def _iter_dote_file_cues(path: Path) -> Iterator[tuple[dict, int, int]]:
+    """Yield validated cues from one admitted DOTe file."""
     data = _read_dote_json(path)
     try:
-        return list(_iter_validated_dote_cues(data))
+        yield from _iter_validated_dote_cues(data)
     except ValueError as exc:
         raise ValueError(f"{path.name}: {exc}") from None
 

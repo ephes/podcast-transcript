@@ -573,7 +573,9 @@ combined exports before retrying.
 
 Transcription and `--restore-last-success` report one path per published format using the same
 labels and file suffixes. The output inventory and both receipts share one suffix-to-label
-mapping in `audio.py`.
+mapping in `audio.py`. During a transcription run, missing Podlove, WebVTT, and plaintext
+exports are generated from one validated snapshot of the combined DOTe. An edit after
+that snapshot does not affect these exports. Existing exports are reused.
 
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.

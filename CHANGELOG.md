@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Generate missing Podlove, WebVTT, and plaintext exports from one validated DOTe snapshot per run.
+
 - Reject raw Whisper cue times outside the rounded DOTe millisecond range before caching or reuse.
 
 - Split dotenv files on LF and CRLF, preserving Unicode separators and bare CR within values.

@@ -13,6 +13,7 @@ from html import escape
 
 from pathlib import Path
 from time import monotonic
+from typing import NamedTuple
 
 from filelock import FileLock, Timeout
 from rich import print as rprint
@@ -36,7 +37,7 @@ from .transcript_validation import (
     seconds_to_milliseconds,
     load_whisper_transcript,
     load_dote,
-    _load_dote_cues,
+    _iter_dote_file_cues,
     format_dote_timecode,
 )
 from .safe_io import (
@@ -344,7 +345,7 @@ def combine_dote_chunks(
             raise ValueError(
                 f"DOTe chunk offset at position {position} exceeds {DOTE_MAX_MILLISECONDS} milliseconds."
             )
-        for line, start_ms, end_ms in _load_dote_cues(filename):
+        for line, start_ms, end_ms in list(_iter_dote_file_cues(filename)):
             new_line = dict(line)
             new_line["startTime"] = format_dote_timecode(start_ms + offset_ms)
             new_line["endTime"] = format_dote_timecode(end_ms + offset_ms)
@@ -363,19 +364,44 @@ def combine_dote_chunks(
             json.dump(combined, target)
 
 
-def convert_dote_to_podlove(dote_path: Path, podlove_path: Path) -> None:
-    cues = _load_dote_cues(dote_path)
+class _ExportCue(NamedTuple):
+    start_time: str
+    end_time: str
+    start_ms: int
+    end_ms: int
+    speaker: str
+    text: str
 
+
+def _load_export_cues(dote_path: Path) -> tuple[_ExportCue, ...]:
+    return tuple(
+        _ExportCue(
+            line["startTime"].replace(",", "."),
+            line["endTime"].replace(",", "."),
+            start_ms,
+            end_ms,
+            line.get("speakerDesignation", ""),
+            line["text"],
+        )
+        for line, start_ms, end_ms in _iter_dote_file_cues(dote_path)
+    )
+
+
+def convert_dote_to_podlove(dote_path: Path, podlove_path: Path) -> None:
+    _write_podlove(_load_export_cues(dote_path), podlove_path)
+
+
+def _write_podlove(cues: tuple[_ExportCue, ...], podlove_path: Path) -> None:
     transcripts = []
-    for line, start_ms, end_ms in cues:
+    for cue in cues:
         transcript = {
-            "start": line["startTime"].replace(",", "."),
-            "start_ms": start_ms,
-            "end": line["endTime"].replace(",", "."),
-            "end_ms": end_ms,
-            "speaker": line.get("speakerDesignation", ""),
+            "start": cue.start_time,
+            "start_ms": cue.start_ms,
+            "end": cue.end_time,
+            "end_ms": cue.end_ms,
+            "speaker": cue.speaker,
             "voice": "",  # assuming no voice data is available
-            "text": line["text"],
+            "text": cue.text,
         }
         transcripts.append(transcript)
 
@@ -384,37 +410,40 @@ def convert_dote_to_podlove(dote_path: Path, podlove_path: Path) -> None:
 
 def convert_to_webvtt(dote_path: Path, vtt_path: Path) -> None:
     """Converts DOTe format to WebVTT format."""
-    cues = _load_dote_cues(dote_path)
+    _write_webvtt(_load_export_cues(dote_path), vtt_path)
 
+
+def _write_webvtt(cues: tuple[_ExportCue, ...], vtt_path: Path) -> None:
     with atomic_output(vtt_path) as temporary:
         with temporary.open("x", encoding="utf-8") as target:
             target.write("WEBVTT\n")
-            for line, start_ms, end_ms in cues:
-                start_time = line["startTime"].replace(",", ".")
-                end_time = line["endTime"].replace(",", ".")
-                text = line["text"].replace("\0", "\ufffd")
+            for cue in cues:
+                end_time = cue.end_time
+                text = cue.text.replace("\0", "\ufffd")
                 text = text.replace("\r\n", "\n").replace("\r", "\n")
                 text = re.sub(r"\n(?:[ \t]*\n)+", "\n", text).strip("\n")
                 if not text.strip():
                     continue
-                if end_ms == start_ms:
+                if cue.end_ms == cue.start_ms:
                     # Quantization can collapse an admitted span. Extend only this
                     # rendered cue; source and DOTe timing evidence stays unchanged.
-                    end_time = format_dote_timecode(start_ms + 1).replace(",", ".")
+                    end_time = format_dote_timecode(cue.start_ms + 1).replace(",", ".")
                 text = escape(text, quote=False)
-                target.write(f"\n{start_time} --> {end_time}\n{text}\n")
+                target.write(f"\n{cue.start_time} --> {end_time}\n{text}\n")
 
 
 def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
     """Converts DOTe format to plain text."""
-    dote_data = load_dote(dote_path)
+    _write_plaintext(_load_export_cues(dote_path), plaintext_path)
 
+
+def _write_plaintext(cues: tuple[_ExportCue, ...], plaintext_path: Path) -> None:
     with atomic_output(plaintext_path) as temporary:
         with temporary.open("x", encoding="utf-8") as target:
-            for index, line in enumerate(dote_data.get("lines", [])):
+            for index, cue in enumerate(cues):
                 if index:
                     target.write("\n")
-                target.write(line["text"])
+                target.write(cue.text)
 
 
 @contextmanager
@@ -989,13 +1018,16 @@ def _transcribe_prepared(
     dote_path = audio.output_path(".dote.json")
     if not dote_path.exists():
         combine_dote_chunks(dote_chunks, dote_path, chunk_durations)
-    podlove_path = audio.output_path(".podlove.json")
-    if not podlove_path.exists():
-        convert_dote_to_podlove(dote_path, podlove_path)
-    webvtt_path = audio.output_path(".webvtt")
-    if not webvtt_path.exists():
-        convert_to_webvtt(dote_path, webvtt_path)
-    plaintext_path = audio.output_path(".txt")
-    if not plaintext_path.exists():
-        convert_to_plaintext(dote_path, plaintext_path)
+    exports = (
+        (audio.output_path(".podlove.json"), _write_podlove),
+        (audio.output_path(".webvtt"), _write_webvtt),
+        (audio.output_path(".txt"), _write_plaintext),
+    )
+    cues = None
+    for path, write in exports:
+        if path.exists():
+            continue
+        if cues is None:
+            cues = _load_export_cues(dote_path)
+        write(cues, path)
     return _transcript_paths(audio)
