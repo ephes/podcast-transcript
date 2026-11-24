@@ -203,6 +203,8 @@ Source admission has separate budgets (environment or `.env`):
 - **TRANSCRIPT_SOURCE_MAX_BYTES**: Positive integer maximum for each source hash/copy or response body;
   default 2147483648 (2 GiB), suitable for long episodes. Declared oversized responses are rejected
   early; actual streamed bytes are always counted, including when Content-Length is absent.
+  Programmatic overrides must be positive integers or integer strings. Booleans, floats and
+  other types are rejected before opening a source.
 - **TRANSCRIPT_SOURCE_TOTAL_TIMEOUT**: Positive finite total seconds, default 3600 (one hour).
   Monotonic elapsed time is checked at each response (including redirects), streamed block and EOF.
   A blocked operation can take up to 60 seconds (30 for connecting), capped by this setting,

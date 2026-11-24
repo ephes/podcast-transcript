@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Require a positive integer or integer string for the source byte limit.
+
 - Reject unsafe cumulative DOTe offsets before reading the affected chunk, including silent chunks.
 
 - Reuse validated DOTe cue times and round the offset once per chunk during combination.

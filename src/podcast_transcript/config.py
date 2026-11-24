@@ -209,14 +209,17 @@ class Settings:
 
     @property
     def source_max_bytes(self) -> int:
+        raw = self.transcript_source_max_bytes
         try:
-            limit = int(self.transcript_source_max_bytes)
-        except (TypeError, ValueError, OverflowError):
+            if isinstance(raw, bool) or not isinstance(raw, (int, str)):
+                raise ValueError
+            limit = int(raw)
+            if limit <= 0:
+                raise ValueError
+        except (ValueError, OverflowError):
             raise ValueError(
                 "TRANSCRIPT_SOURCE_MAX_BYTES must be a positive integer."
             ) from None
-        if limit <= 0:
-            raise ValueError("TRANSCRIPT_SOURCE_MAX_BYTES must be a positive integer.")
         return limit
 
     @property
