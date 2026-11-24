@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Refuse cache and source controls with non-object JSON and chunk manifests with non-array JSON before preparing audio.
+
 - Generate missing Podlove, WebVTT, and plaintext exports from one validated DOTe snapshot per run.
 
 - Reject raw Whisper cue times outside the rounded DOTe millisecond range before caching or reuse.

@@ -389,7 +389,7 @@ class Audio:
         """
         self.validate_storage_roles()
         try:
-            cached = load_control_json(self.cache_metadata_path)
+            cached = load_control_json(self.cache_metadata_path, expected_type=dict)
         except FileNotFoundError:
             cached = None
         if cached == metadata:
@@ -546,10 +546,12 @@ class Audio:
     def _load_chunk_manifest(self) -> list[Path] | None:
         """Return the cached chunk paths if a complete chunk set exists."""
         try:
-            chunk_names = load_control_json(self.chunks_manifest_path)
+            chunk_names = load_control_json(
+                self.chunks_manifest_path, expected_type=list
+            )
         except FileNotFoundError:
             return None
-        if not isinstance(chunk_names, list) or not chunk_names:
+        if not chunk_names:
             return None
         # Exact generated names enforce type, containment, uniqueness and order.
         if chunk_names != [
@@ -724,7 +726,7 @@ class Audio:
                 "Restore the source file before reusing its cache."
             ) from exc
         try:
-            cached = load_control_json(self.source_metadata_path)
+            cached = load_control_json(self.source_metadata_path, expected_type=dict)
         except FileNotFoundError:
             cached = None
         if cached == {"sha256": fingerprint}:
@@ -767,13 +769,13 @@ class Audio:
 
     def validate_control_files(self) -> None:
         """Admit all present controls before preparation can retire a generation."""
-        for path in (
-            self.cache_metadata_path,
-            self.source_metadata_path,
-            self.chunks_manifest_path,
+        for path, expected_type in (
+            (self.cache_metadata_path, dict),
+            (self.source_metadata_path, dict),
+            (self.chunks_manifest_path, list),
         ):
             try:
-                load_control_json(path)
+                load_control_json(path, expected_type=expected_type)
             except FileNotFoundError:
                 pass
 

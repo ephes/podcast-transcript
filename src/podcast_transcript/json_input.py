@@ -21,7 +21,9 @@ def loads_unique(data: str | bytes):
     return json.loads(data, object_pairs_hook=_unique_object)
 
 
-def load_control_json(path: Path, *, dir_fd: int | None = None):
+def load_control_json(
+    path: Path, *, dir_fd: int | None = None, expected_type: type | None = None
+):
     try:
         raw = read_regular_bounded(
             path,
@@ -29,7 +31,10 @@ def load_control_json(path: Path, *, dir_fd: int | None = None):
             description="Cache control file",
             dir_fd=dir_fd,
         )
-        return loads_unique(raw.decode("utf-8"))
+        value = loads_unique(raw.decode("utf-8"))
+        if expected_type is not None and not isinstance(value, expected_type):
+            raise ValueError("Unexpected top-level JSON type.")
+        return value
     except FileNotFoundError:
         raise
     except (ValueError, UnicodeError, RecursionError, OSError, RuntimeError):

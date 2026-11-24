@@ -696,8 +696,10 @@ directory to download a corrected URL source. Fix a failing ffprobe installation
 chunk may be a symlink to the episode's own resampled file. Absolute paths, traversal, other
 symlinks and malformed manifests are rejected. All `cache.json`, `source.json` and `chunks.json`
 control documents must be regular, non-symlink UTF-8 JSON files of at most 64 KiB, counted while
-reading. Invalid JSON, duplicate members, excessive nesting, unreadable/special files and overflow
-stop the run before generation retirement and preserve existing audio/transcripts and markers.
+reading. The top-level value must be an object in `cache.json` and `source.json` and an array in
+`chunks.json`. Invalid JSON, wrong top-level types, duplicate members, excessive nesting,
+unreadable/special files and overflow stop the run before generation retirement and preserve
+existing audio/transcripts and markers.
 Missing markers remain distinct and trigger the existing recovery/rebuild path. Repair malformed
 control JSON or remove its marker deliberately before retrying; the error names the marker
 (`cache.json`, `source.json` or `chunks/chunks.json`) but never its values. Structurally valid JSON with invalid
