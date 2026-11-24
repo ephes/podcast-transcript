@@ -180,6 +180,30 @@ def test_dotenv_only_assigns_supported_keys(tmp_path, monkeypatch):
     assert settings.transcript_prompt == "synthetic prompt"
 
 
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\x85", "\v", "\r"])
+def test_dotenv_only_splits_physical_line_endings(tmp_path, separator):
+    env_file = tmp_path / ".env"
+    value = f"synthetic{separator}export TRANSCRIPT_LANGUAGE=embedded"
+    content = f'TRANSCRIPT_LANGUAGE=de\r\nTRANSCRIPT_PROMPT="{value}"\n'
+    env_file.write_bytes(content.encode("utf-8"))
+    settings = Settings.__new__(Settings)
+
+    settings.read_env_file(env_file)
+
+    assert settings.transcript_language == "de"
+    assert settings.transcript_prompt == value
+
+    previous = vars(settings).copy()
+    env_file.write_bytes(
+        (content + "  export TRANSCRIPT_LANGUAGE = en").encode("utf-8")
+    )
+    with pytest.raises(
+        RuntimeError, match=r"^Duplicate dotenv key: TRANSCRIPT_LANGUAGE\.$"
+    ):
+        settings.read_env_file(env_file)
+    assert vars(settings) == previous
+
+
 def test_dotenv_rejects_duplicate_recognized_keys_before_applying_settings(tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text(

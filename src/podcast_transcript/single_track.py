@@ -37,7 +37,6 @@ from .transcript_validation import (
     load_whisper_transcript,
     load_dote,
     _load_dote_cues,
-    parse_dote_timecode,
     format_dote_timecode,
 )
 from .safe_io import (
@@ -355,24 +354,23 @@ def combine_dote_chunks(
     # Keep decimal durations exact; round only the cumulative boundary.
     offset = Fraction(0)
 
-    for filename, chunk_duration in zip(dote_chunks, durations):
-        data = load_dote(filename)
-
-        for line in data["lines"]:
-            new_line = dict(line)
-            start_time = parse_dote_timecode(line["startTime"])
-            end_time = parse_dote_timecode(line["endTime"])
-
-            # Adjust times with offset
-            new_line["startTime"] = format_dote_timecode(
-                start_time + round(offset * 1000)
+    for position, (filename, chunk_duration) in enumerate(
+        zip(dote_chunks, durations), 1
+    ):
+        offset_ms = round(offset * 1000)
+        if offset_ms > DOTE_MAX_MILLISECONDS:
+            raise ValueError(
+                f"DOTe chunk offset at position {position} exceeds {DOTE_MAX_MILLISECONDS} milliseconds."
             )
-            new_line["endTime"] = format_dote_timecode(end_time + round(offset * 1000))
+        for line, start_ms, end_ms in _load_dote_cues(filename):
+            new_line = dict(line)
+            new_line["startTime"] = format_dote_timecode(start_ms + offset_ms)
+            new_line["endTime"] = format_dote_timecode(end_ms + offset_ms)
             size += _json_size(new_line) + (2 if combined_lines else 0)
             _check_combined_budget(len(combined_lines) + 1, size)
             combined_lines.append(new_line)
 
-        # The next chunk starts where this chunk's audio ends
+        # Only a following chunk uses this cumulative duration.
         offset += chunk_duration
 
     combined = {"lines": combined_lines}

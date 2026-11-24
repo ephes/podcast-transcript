@@ -3,6 +3,14 @@ Unreleased
 
 ### Fixes
 
+- Split dotenv files on LF and CRLF, preserving Unicode separators and bare CR within values.
+
+- Require a positive integer or integer string for the source byte limit.
+
+- Reject unsafe cumulative DOTe offsets before reading the affected chunk, including silent chunks.
+
+- Reuse validated DOTe cue times and round the offset once per chunk during combination.
+
 - Reject invalid stdout and stderr capture limits before launching local commands.
 
 - Normalize only the first audio stream in container order when creating an episode MP3.

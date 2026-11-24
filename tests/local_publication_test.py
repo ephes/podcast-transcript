@@ -39,6 +39,27 @@ def test_local_byte_budget_preserves_completed_files(tmp_path, monkeypatch, oper
     assert not store.episode_path.exists()
 
 
+@pytest.mark.parametrize("limit", [True, 4.5, 4.0, b"4"])
+def test_invalid_source_byte_limit_is_refused_before_open(tmp_path, monkeypatch, limit):
+    monkeypatch.setattr(settings, "transcript_source_max_bytes", limit)
+    with pytest.raises(ValueError, match="TRANSCRIPT_SOURCE_MAX_BYTES"):
+        audio.Audio._content_fingerprint(tmp_path / "missing.mp3")
+
+
+@pytest.mark.parametrize("limit", [4, " +4 "])
+def test_source_byte_limit_accepts_exact_number_of_bytes(tmp_path, monkeypatch, limit):
+    monkeypatch.setattr(settings, "transcript_source_max_bytes", limit)
+    source = tmp_path / "source.mp3"
+    source.write_bytes(b"abcd")
+    assert (
+        audio.Audio._content_fingerprint(source) == hashlib.sha256(b"abcd").hexdigest()
+    )
+
+    source.write_bytes(b"abcde")
+    with pytest.raises(RuntimeError, match="TRANSCRIPT_SOURCE_MAX_BYTES"):
+        audio.Audio._content_fingerprint(source)
+
+
 def test_local_descriptor_refuses_special_file_before_read(tmp_path, monkeypatch):
     source = tmp_path / "synthetic-special"
     source.write_bytes(b"unused")

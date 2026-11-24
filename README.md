@@ -105,7 +105,9 @@ GROQ_API_KEY=your_api_key_here
 The .env file has one `KEY=value` per line. Only the first `=` separates key and value, so values may
 contain `=`. Blank lines and lines starting with `#` are ignored, an optional `export ` prefix is
 allowed, and one pair of surrounding quotes is removed from the value. Comments after a value are not
-supported; a `#` there is part of the value.
+supported; a `#` there is part of the value. Lines end with LF or CRLF. A bare CR or
+Unicode line separator within a value is preserved, subject to the usual trimming of
+unquoted edge whitespace.
 
 Only `GROQ_API_KEY`, `VOXHELM_API_BASE`, `VOXHELM_API_KEY` and the options listed under
 Other Configuration Options, Source admission and Local commands are admitted (uppercase names).
@@ -203,6 +205,8 @@ Source admission has separate budgets (environment or `.env`):
 - **TRANSCRIPT_SOURCE_MAX_BYTES**: Positive integer maximum for each source hash/copy or response body;
   default 2147483648 (2 GiB), suitable for long episodes. Declared oversized responses are rejected
   early; actual streamed bytes are always counted, including when Content-Length is absent.
+  Programmatic overrides must be positive integers or integer strings. Booleans, floats and
+  other types are rejected before opening a source.
 - **TRANSCRIPT_SOURCE_TOTAL_TIMEOUT**: Positive finite total seconds, default 3600 (one hour).
   Monotonic elapsed time is checked at each response (including redirects), streamed block and EOF.
   A blocked operation can take up to 60 seconds (30 for connecting), capped by this setting,
@@ -496,7 +500,11 @@ changes retain their separate preparation semantics; keep external backups for o
 
 Combination requires at least one DOTe chunk. An empty chunk inventory raises an error
 and preserves any existing combined transcript. A validated silent chunk with an empty
-`lines` list is accepted.
+`lines` list is accepted. Before reading each chunk in a multi-chunk transcript,
+assembly checks that its rounded cumulative offset fits the DOTe limit of
+9,007,199,254,740,991 milliseconds. An overflow names the chunk position and
+preserves any previous combined transcript. The final chunk's duration must
+still be valid, but does not contribute to a checked offset.
 
 Combined episodes admit at most 250,000 DOTe lines and 64 MiB of serialized UTF-8 DOTe
 JSON, including escaped text, speaker labels, unknown line fields, separators and timestamps.
@@ -506,7 +514,8 @@ validates its JSON and line count, and publishes those exact bytes, including wh
 A source that changes during the read is refused. Exceeding either limit fails explicitly. Split
 unusually large episodes into separate inputs. A refused settings replacement preserves all previous
 completed exports.
-Admitted multi-chunk output is serialized directly to staging without another episode-sized join.
+Multi-chunk assembly reuses the validated cue times when shifting each chunk. It validates
+the combined cues before serializing directly to staging without another episode-sized join.
 
 ### Transcript and cached-artifact validation
 
