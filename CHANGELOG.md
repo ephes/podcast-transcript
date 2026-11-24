@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Normalize only the first audio stream in container order when creating an episode MP3.
+
 - Reject DOTe cue times beyond the safe JSON integer range before publishing caches or exports.
 
 - Reuse validated DOTe cue times when rendering Podlove JSON, preserving export bytes.

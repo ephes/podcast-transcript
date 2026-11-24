@@ -295,7 +295,7 @@ def resample_audio(input_path: Path, output_path: Path) -> None:
                 "-ac",
                 "1",
                 "-map",
-                "0:a:",
+                "0:a:0",
                 "-fs",
                 str(RESAMPLED_MAX_BYTES),
                 str(tmp_path),
