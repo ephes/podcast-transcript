@@ -354,8 +354,14 @@ def combine_dote_chunks(
     # Keep decimal durations exact; round only the cumulative boundary.
     offset = Fraction(0)
 
-    for filename, chunk_duration in zip(dote_chunks, durations):
+    for position, (filename, chunk_duration) in enumerate(
+        zip(dote_chunks, durations), 1
+    ):
         offset_ms = round(offset * 1000)
+        if offset_ms > DOTE_MAX_MILLISECONDS:
+            raise ValueError(
+                f"DOTe chunk offset at position {position} exceeds {DOTE_MAX_MILLISECONDS} milliseconds."
+            )
         for line, start_ms, end_ms in _load_dote_cues(filename):
             new_line = dict(line)
             new_line["startTime"] = format_dote_timecode(start_ms + offset_ms)
@@ -364,7 +370,7 @@ def combine_dote_chunks(
             _check_combined_budget(len(combined_lines) + 1, size)
             combined_lines.append(new_line)
 
-        # The next chunk starts where this chunk's audio ends
+        # Only a following chunk uses this cumulative duration.
         offset += chunk_duration
 
     combined = {"lines": combined_lines}

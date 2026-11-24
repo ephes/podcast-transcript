@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Reject unsafe cumulative DOTe offsets before reading the affected chunk, including silent chunks.
+
 - Reuse validated DOTe cue times and round the offset once per chunk during combination.
 
 - Reject invalid stdout and stderr capture limits before launching local commands.

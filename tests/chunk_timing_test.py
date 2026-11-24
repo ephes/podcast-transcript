@@ -115,6 +115,38 @@ def test_multichunk_reuses_admitted_times_and_preserves_output(tmp_path, monkeyp
     assert output.read_bytes() == expected_bytes
 
 
+@pytest.mark.parametrize("silent", [True, False])
+def test_overflowing_chunk_offset_is_refused_before_reading_successor(
+    tmp_path, mocker, silent
+):
+    paths = [chunk(tmp_path / f"{i}.json") for i in range(4)]
+    if silent:
+        paths[-1].write_text('{"lines":[]}')
+    reads = mocker.spy(transcript_validation, "_read_dote_json")
+    output = tmp_path / "output.json"
+    output.write_bytes(b"previous transcript")
+
+    with pytest.raises(ValueError, match=r"chunk offset at position 4.*milliseconds"):
+        combine_dote_chunks(paths, output, [3e12, 3e12, 3.1e12, 0])
+
+    assert [call.args[0] for call in reads.call_args_list] == paths[:-1]
+    assert output.read_bytes() == b"previous transcript"
+
+
+def test_maximum_chunk_offset_allows_unused_trailing_duration(tmp_path):
+    paths = [chunk(tmp_path / f"{i}.json") for i in range(3)]
+    last = json.loads(paths[-1].read_text())
+    last["lines"][0]["endTime"] = last["lines"][0]["startTime"]
+    paths[-1].write_text(json.dumps(last))
+    output = tmp_path / "output.json"
+
+    combine_dote_chunks(paths, output, [9_007_199_254_740, 0.991, 1e100])
+
+    final = json.loads(output.read_text())["lines"][-1]
+    assert parse_dote_timecode(final["startTime"]) == 2**53 - 1
+    assert final["startTime"] == final["endTime"]
+
+
 @pytest.mark.parametrize(
     "durations",
     [[0.0006] * 101, [0.0000006] * 1001, [0.0005, 0.001, 0.001], [0.1] * 37],

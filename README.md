@@ -496,7 +496,11 @@ changes retain their separate preparation semantics; keep external backups for o
 
 Combination requires at least one DOTe chunk. An empty chunk inventory raises an error
 and preserves any existing combined transcript. A validated silent chunk with an empty
-`lines` list is accepted.
+`lines` list is accepted. Before reading each chunk in a multi-chunk transcript,
+assembly checks that its rounded cumulative offset fits the DOTe limit of
+9,007,199,254,740,991 milliseconds. An overflow names the chunk position and
+preserves any previous combined transcript. The final chunk's duration must
+still be valid, but does not contribute to a checked offset.
 
 Combined episodes admit at most 250,000 DOTe lines and 64 MiB of serialized UTF-8 DOTe
 JSON, including escaped text, speaker labels, unknown line fields, separators and timestamps.
