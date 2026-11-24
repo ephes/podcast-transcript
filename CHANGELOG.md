@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Reject invalid stdout and stderr capture limits before launching local commands.
+
 - Normalize only the first audio stream in container order when creating an episode MP3.
 
 - Reject DOTe cue times beyond the safe JSON integer range before publishing caches or exports.

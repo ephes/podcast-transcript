@@ -646,6 +646,11 @@ killed and the direct subprocess reaped (Unix process group; Windows `taskkill /
 are removed and previous final outputs preserved. Timeouts raise an error naming the operation;
 failed commands report a bounded stderr tail. Retrying reruns the unfinished step.
 
+The internal subprocess capture helper requires positive integer byte limits for
+stdout and stderr before launching a command. Pass `None` for the stdout limit
+to discard stdout. In stderr-tail mode, only the last bytes within the stderr
+budget are retained.
+
 MLX inference runs in a separate worker process owned by the CLI, so the CLI process never imports
 `mlx_whisper`. The worker loads only the standard library and `mlx_whisper` (not the CLI settings),
 and the current directory is removed from its import path. Model, language and prompt are passed
