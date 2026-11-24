@@ -506,7 +506,8 @@ validates its JSON and line count, and publishes those exact bytes, including wh
 A source that changes during the read is refused. Exceeding either limit fails explicitly. Split
 unusually large episodes into separate inputs. A refused settings replacement preserves all previous
 completed exports.
-Admitted multi-chunk output is serialized directly to staging without another episode-sized join.
+Multi-chunk assembly reuses the validated cue times when shifting each chunk. It validates
+the combined cues before serializing directly to staging without another episode-sized join.
 
 ### Transcript and cached-artifact validation
 

@@ -37,7 +37,6 @@ from .transcript_validation import (
     load_whisper_transcript,
     load_dote,
     _load_dote_cues,
-    parse_dote_timecode,
     format_dote_timecode,
 )
 from .safe_io import (
@@ -356,18 +355,11 @@ def combine_dote_chunks(
     offset = Fraction(0)
 
     for filename, chunk_duration in zip(dote_chunks, durations):
-        data = load_dote(filename)
-
-        for line in data["lines"]:
+        offset_ms = round(offset * 1000)
+        for line, start_ms, end_ms in _load_dote_cues(filename):
             new_line = dict(line)
-            start_time = parse_dote_timecode(line["startTime"])
-            end_time = parse_dote_timecode(line["endTime"])
-
-            # Adjust times with offset
-            new_line["startTime"] = format_dote_timecode(
-                start_time + round(offset * 1000)
-            )
-            new_line["endTime"] = format_dote_timecode(end_time + round(offset * 1000))
+            new_line["startTime"] = format_dote_timecode(start_ms + offset_ms)
+            new_line["endTime"] = format_dote_timecode(end_ms + offset_ms)
             size += _json_size(new_line) + (2 if combined_lines else 0)
             _check_combined_budget(len(combined_lines) + 1, size)
             combined_lines.append(new_line)

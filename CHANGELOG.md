@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Reuse validated DOTe cue times and round the offset once per chunk during combination.
+
 - Reject invalid stdout and stderr capture limits before launching local commands.
 
 - Normalize only the first audio stream in container order when creating an episode MP3.

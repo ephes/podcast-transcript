@@ -1415,7 +1415,6 @@ def test_webvtt_parses_each_dote_endpoint_once(tmp_path, monkeypatch, mocker):
     output = tmp_path / "output.webvtt"
     parse = mocker.Mock(wraps=transcript_validation.parse_dote_timecode)
     monkeypatch.setattr(transcript_validation, "parse_dote_timecode", parse)
-    monkeypatch.setattr(single_track, "parse_dote_timecode", parse)
 
     single_track.convert_to_webvtt(source, output)
 

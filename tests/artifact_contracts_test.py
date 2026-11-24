@@ -235,7 +235,6 @@ def test_podlove_reuses_validated_cue_times(tmp_path, monkeypatch, mocker):
     out = tmp_path / "out.podlove.json"
     parse = mocker.Mock(wraps=transcript_validation.parse_dote_timecode)
     monkeypatch.setattr(transcript_validation, "parse_dote_timecode", parse)
-    monkeypatch.setattr(track, "parse_dote_timecode", parse)
 
     track.convert_dote_to_podlove(source, out)
 
