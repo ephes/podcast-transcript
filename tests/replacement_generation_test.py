@@ -38,11 +38,11 @@ def test_replacement_failure_leaves_previous_generation_current(
                 target.write_text('{"segments":false}')
 
     monkeypatch.setattr(replacement, "transcribe", infer)
-    export = single_track.convert_to_webvtt
+    export = single_track._write_webvtt
     if failure == "export":
         monkeypatch.setattr(
             single_track,
-            "convert_to_webvtt",
+            "_write_webvtt",
             lambda *a: (_ for _ in ()).throw(RuntimeError("synthetic export failure")),
         )
     with pytest.raises((RuntimeError, ValueError, KeyboardInterrupt)):
@@ -55,7 +55,7 @@ def test_replacement_failure_leaves_previous_generation_current(
     old = RecordingBackend("old", "unused")
     single_track.transcribe(store.url, old)
     assert old.calls == []
-    monkeypatch.setattr(single_track, "convert_to_webvtt", export)
+    monkeypatch.setattr(single_track, "_write_webvtt", export)
     monkeypatch.setattr(replacement, "transcribe", original)
     paths = single_track.transcribe(store.url, replacement)
     assert paths["plain text"].read_text() == "new transcript\nnew transcript"
@@ -510,3 +510,34 @@ def test_generation_and_restore_receipts_follow_output_inventory(episode, monkey
         path.read_bytes() == previous[path.relative_to(store.podcast_dir)]
         for path in restored.values()
     )
+
+
+def test_missing_exports_use_one_dote_snapshot(episode, monkeypatch):
+    store, _ = episode
+    dote = store.output_path(".dote.json")
+    podlove = store.output_path(".podlove.json")
+    webvtt = store.output_path(".webvtt")
+    plaintext = store.output_path(".txt")
+    expected = {path: path.read_bytes() for path in (podlove, webvtt, plaintext)}
+    for path in expected:
+        path.unlink()
+
+    updated = json.loads(dote.read_text())
+    updated["lines"][0]["text"] = "updated transcript"
+    replacement = dote.with_name("updated.dote.json")
+    replacement.write_text(json.dumps(updated))
+
+    write = single_track.write_text_atomic
+
+    def replace_dote_after_podlove(path, content):
+        write(path, content)
+        if path == podlove:
+            replacement.replace(dote)
+
+    monkeypatch.setattr(single_track, "write_text_atomic", replace_dote_after_podlove)
+    backend = RecordingBackend("old", "unused")
+    single_track.transcribe(store.url, backend)
+
+    assert not backend.calls
+    assert json.loads(dote.read_text()) == updated
+    assert {path: path.read_bytes() for path in expected} == expected

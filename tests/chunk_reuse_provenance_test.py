@@ -96,3 +96,48 @@ def test_chunk_mutation_during_first_inference_never_publishes_raw(
         single_track.transcribe(store.url, Mutating("model", "stale"))
     assert not (store.episode_chunks_dir / "chunk_000.json").exists()
     assert not store.output_path(".txt").exists()
+
+
+def test_out_of_range_raw_cue_is_not_cached_and_retry_exports(tmp_path, monkeypatch):
+    monkeypatch.setattr(single_track.settings, "transcript_dir", tmp_path / "cache")
+    monkeypatch.setattr(audio, "resample_audio", shutil.copyfile)
+    monkeypatch.setattr(audio, "get_audio_duration", lambda _: 1.0)
+    source = tmp_path / "synthetic.mp3"
+    source.write_bytes(b"AAAA")
+    store = audio.Audio(base_dir=single_track.settings.transcript_dir, url=str(source))
+    backend = RecordingBackend("model", "corrected")
+    valid = backend.transcribe
+
+    def out_of_range(chunk, target):
+        valid(chunk, target)
+        target.write_text(
+            '{"segments":[{"start":0,"end":9007199254740.992,"text":"bad cue"}]}'
+        )
+
+    monkeypatch.setattr(backend, "transcribe", out_of_range)
+    with pytest.raises(
+        ValueError,
+        match=r"^chunk_000\.json: Invalid transcript segment 1: end exceeds "
+        r"9007199254740991 milliseconds\.$",
+    ):
+        single_track.transcribe(store.url, backend)
+    assert not (store.episode_chunks_dir / "chunk_000.json").exists()
+    assert not store.output_path(".dote.json").exists()
+
+    def malformed(chunk, target):
+        valid(chunk, target)
+        target.write_text("{not json")
+
+    monkeypatch.setattr(backend, "transcribe", malformed)
+    with pytest.raises(ValueError) as error:
+        single_track.transcribe(store.url, backend)
+    assert str(error.value) == (
+        "Invalid transcript JSON in chunk_000.json; it was not cached, "
+        "so retry once the backend response is corrected."
+    )
+    assert not (store.episode_chunks_dir / "chunk_000.json").exists()
+
+    monkeypatch.setattr(backend, "transcribe", valid)
+    paths = single_track.transcribe(store.url, backend)
+    assert len(backend.calls) == 3
+    assert paths["plain text"].read_text() == "corrected"

@@ -297,7 +297,10 @@ def test_raw_conversion_refuses_to_publish_out_of_range_dote_chunk(tmp_path):
         json.dumps({"segments": [{"start": 0, "end": 10**13, "text": "synthetic"}]})
     )
 
-    with pytest.raises(ValueError, match=r"Invalid DOTe line 1: .*9007199254740991"):
+    with pytest.raises(
+        ValueError,
+        match=r"chunk\.json: Invalid transcript segment 1: .*9007199254740991",
+    ):
         track.whisper_text_chunks_to_dote([raw])
     assert not raw.with_suffix(".dote.json").exists()
 

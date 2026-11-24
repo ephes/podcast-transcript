@@ -543,7 +543,9 @@ combined chunk starts are checked again after offsets. Older out-of-order caches
 correction or removal following the cache repair instructions below. Valid fractional seconds use
 decimal nearest-millisecond rounding
 with ties to even, matching cumulative chunk offsets.
-Invalid backend results never replace raw transcript caches, so a corrected response can be retried.
+Each raw endpoint must round to at most 9,007,199,254,740,991 milliseconds. This check
+applies before publishing a new raw chunk and when reading an existing one. A corrected
+backend response can be retried using the same prepared audio.
 
 Raw Whisper JSON and DOTe files must be stable, regular UTF-8 files without symlinks and at
 most 64 MiB each, counted during reading. This limit applies before JSON parsing, including
@@ -571,7 +573,9 @@ combined exports before retrying.
 
 Transcription and `--restore-last-success` report one path per published format using the same
 labels and file suffixes. The output inventory and both receipts share one suffix-to-label
-mapping in `audio.py`.
+mapping in `audio.py`. During a transcription run, missing Podlove, WebVTT, and plaintext
+exports are generated from one validated snapshot of the combined DOTe. An edit after
+that snapshot does not affect these exports. Existing exports are reused.
 
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.

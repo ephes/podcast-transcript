@@ -112,7 +112,7 @@ def test_episode_lock_released_on_pipeline_failure(mocker, tmp_path, stage):
         )
     else:
         prepare = mocker.patch(
-            "podcast_transcript.single_track.convert_to_webvtt",
+            "podcast_transcript.single_track._write_webvtt",
             side_effect=RuntimeError("synthetic failure"),
         )
     with pytest.raises(RuntimeError, match="synthetic failure"):
