@@ -702,9 +702,15 @@ unreadable/special files and overflow stop the run before generation retirement 
 existing audio/transcripts and markers.
 Missing markers remain distinct and trigger the existing recovery/rebuild path. Repair malformed
 control JSON or remove its marker deliberately before retrying; the error names the marker
-(`cache.json`, `source.json` or `chunks/chunks.json`) but never its values. Structurally valid JSON with invalid
-chunk names still rebuilds the chunk set and its transcripts automatically; downloaded and resampled
-audio is reused. Invalid manifests remain in place until transcript cleanup finishes, so interrupted cleanup is retried.
+(`cache.json`, `source.json` or `chunks/chunks.json`) but never its values. Within the chunk limit,
+a manifest with invalid chunk names still rebuilds the chunk set and its transcripts automatically.
+The rebuild reuses downloaded and resampled audio. Invalid manifests remain in place until
+transcript cleanup finishes, so interrupted cleanup is retried.
+
+An episode may contain at most 512 chunks. Over-limit cached manifests are refused before
+preparing audio or looking up chunk files, preserving the existing cache. Newly split chunks
+are counted before validating or publishing them. For an over-limit episode, move any existing
+episode cache aside and process the source as separate, shorter files.
 
 ### Output durability errors
 
