@@ -807,7 +807,7 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
     chunk_durations = [audio.chunk_duration(chunk) for chunk in audio_chunks]
     metadata = backend_cache_metadata(backend)
     try:
-        cached = load_control_json(audio.cache_metadata_path)
+        cached = load_control_json(audio.cache_metadata_path, expected_type=dict)
     except FileNotFoundError:
         cached = None
     provenance = _chunk_byte_provenance(audio, audio_chunks)

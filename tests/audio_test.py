@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -291,6 +294,75 @@ def test_non_utf8_chunk_manifest_preserves_generation(mocker, audio):
         audio.split_into_chunks()
     assert audio.resampled_episode_path.read_bytes() == b"synthetic"
     assert audio.chunks_manifest_path.read_bytes() == b"\xff\xfe"
+
+
+@pytest.mark.parametrize(
+    "entrypoint", ["prepare_audio_for_transcription", "split_into_chunks"]
+)
+def test_oversized_chunk_inventory_refused_without_chunk_stats(
+    audio, mocker, monkeypatch, entrypoint
+):
+    monkeypatch.setattr(audio_module, "MAX_CHUNK_COUNT", 2, raising=False)
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.episode_path.write_bytes(b"source")
+    audio.resampled_episode_path.write_bytes(b"resampled")
+    output = audio.output_path(".txt")
+    output.write_bytes(b"previous transcript")
+    names = ["chunk_000.mp3", "chunk_001.mp3", "chunk_002.mp3"]
+    paths = [audio.episode_chunks_dir / name for name in names]
+    for path in reversed(paths):
+        path.write_bytes(b"chunk")
+    mocker.patch.object(audio_module, "get_audio_duration", return_value=1.0)
+    make_audio = mocker.spy(audio, "make_sure_audio_file_exists")
+    manifest = json.dumps(names)
+    audio.chunks_manifest_path.write_text(manifest)
+    probes = [mocker.spy(Path, method) for method in ("is_file", "stat", "is_symlink")]
+
+    def chunk_probes():
+        return {
+            call.args[0]
+            for probe in probes
+            for call in probe.call_args_list
+            if call.args[0] in paths
+        }
+
+    with pytest.raises(RuntimeError, match=r"chunks/chunks\.json.*2 chunks"):
+        getattr(audio, entrypoint)()
+
+    make_audio.assert_not_called()
+    assert not chunk_probes()
+    assert output.read_bytes() == b"previous transcript"
+    assert audio.chunks_manifest_path.read_text() == manifest
+
+    audio.chunks_manifest_path.write_text(json.dumps(names[:2]))
+    assert getattr(audio, entrypoint)() == paths[:2]
+    assert chunk_probes() == set(paths[:2])
+
+
+def test_generated_chunk_inventory_refused_before_validation(
+    audio, mocker, monkeypatch
+):
+    monkeypatch.setattr(audio_module, "MAX_CHUNK_COUNT", 2, raising=False)
+    audio.episode_chunks_dir.mkdir(parents=True)
+    resampled = audio.resampled_episode_path
+    resampled.write_bytes(b"resampled")
+    probed = []
+
+    def probe(path):
+        probed.append(path)
+        return 7201.0 if path == resampled else 1.0
+
+    def split(command, **kwargs):
+        for index in range(3):
+            Path(command[-1] % index).write_bytes(b"chunk")
+
+    mocker.patch.object(audio_module, "get_audio_duration", side_effect=probe)
+    mocker.patch.object(audio_module, "run_checked", side_effect=split)
+    with pytest.raises(RuntimeError, match="more than 2 chunks"):
+        audio.split_into_chunks()
+
+    assert probed == [resampled]
+    assert list(audio.episode_chunks_dir.iterdir()) == [resampled]
 
 
 @pytest.mark.parametrize("existing", [False, True])

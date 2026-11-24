@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 from contextlib import nullcontext
+from itertools import islice
 import os
 import re
 import httpx
@@ -312,6 +313,8 @@ def resample_audio(input_path: Path, output_path: Path) -> None:
 # 25MB max bytes are allowed
 MAX_SIZE_IN_BYTES = 25 * 1024 * 1024
 MAX_CHUNK_DURATION = 7200
+# Leave room for per-chunk SHA-256 digests in the 64 KiB cache control.
+MAX_CHUNK_COUNT = 512
 
 
 class Audio:
@@ -389,7 +392,7 @@ class Audio:
         """
         self.validate_storage_roles()
         try:
-            cached = load_control_json(self.cache_metadata_path)
+            cached = load_control_json(self.cache_metadata_path, expected_type=dict)
         except FileNotFoundError:
             cached = None
         if cached == metadata:
@@ -543,13 +546,24 @@ class Audio:
         except (OSError, RuntimeError):
             return False
 
-    def _load_chunk_manifest(self) -> list[Path] | None:
-        """Return the cached chunk paths if a complete chunk set exists."""
+    def _read_cached_chunk_names(self) -> list | None:
         try:
-            chunk_names = load_control_json(self.chunks_manifest_path)
+            chunk_names = load_control_json(
+                self.chunks_manifest_path, expected_type=list
+            )
         except FileNotFoundError:
             return None
-        if not isinstance(chunk_names, list) or not chunk_names:
+        if len(chunk_names) > MAX_CHUNK_COUNT:
+            raise RuntimeError(
+                f"Cache control chunks/chunks.json exceeds the limit of {MAX_CHUNK_COUNT} chunks; "
+                "move the episode cache aside and split the source into shorter files."
+            )
+        return chunk_names
+
+    def _load_chunk_manifest(self) -> list[Path] | None:
+        """Return the cached chunk paths if a complete chunk set exists."""
+        chunk_names = self._read_cached_chunk_names()
+        if not chunk_names:
             return None
         # Exact generated names enforce type, containment, uniqueness and order.
         if chunk_names != [
@@ -607,14 +621,17 @@ class Audio:
                 ],
                 description=f"Splitting {self.resampled_episode_path} into chunks",
             )
-            produced = sorted(
-                split_dir.glob("chunk_*.mp3"),
-                key=lambda path: int(path.stem.split("_")[1]),
-            )
+            produced = list(islice(split_dir.glob("chunk_*.mp3"), MAX_CHUNK_COUNT + 1))
+            if len(produced) > MAX_CHUNK_COUNT:
+                raise RuntimeError(
+                    f"Splitting produced more than {MAX_CHUNK_COUNT} chunks; "
+                    "split the source into shorter files and retry."
+                )
             if not produced:
                 raise RuntimeError(
                     f"Splitting {self.resampled_episode_path} produced no chunks"
                 )
+            produced.sort(key=lambda path: int(path.stem.split("_")[1]))
             # Validate every new chunk before publishing audio or completion markers.
             for chunk in produced:
                 size = chunk.stat().st_size
@@ -724,7 +741,7 @@ class Audio:
                 "Restore the source file before reusing its cache."
             ) from exc
         try:
-            cached = load_control_json(self.source_metadata_path)
+            cached = load_control_json(self.source_metadata_path, expected_type=dict)
         except FileNotFoundError:
             cached = None
         if cached == {"sha256": fingerprint}:
@@ -767,15 +784,12 @@ class Audio:
 
     def validate_control_files(self) -> None:
         """Admit all present controls before preparation can retire a generation."""
-        for path in (
-            self.cache_metadata_path,
-            self.source_metadata_path,
-            self.chunks_manifest_path,
-        ):
+        for path in (self.cache_metadata_path, self.source_metadata_path):
             try:
-                load_control_json(path)
+                load_control_json(path, expected_type=dict)
             except FileNotFoundError:
                 pass
+        self._read_cached_chunk_names()
 
     def prepare_audio_for_transcription(self) -> list[Path]:
         """

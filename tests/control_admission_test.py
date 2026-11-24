@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 
 import pytest
 
@@ -81,9 +82,18 @@ def test_missing_control_recovery_remains_deliberate(audio):
     assert json.loads(audio.cache_metadata_path.read_text()) == {"backend": "synthetic"}
 
 
-@pytest.mark.parametrize("marker", ["cache", "chunks"])
+@pytest.mark.parametrize(
+    ("marker", "payload"),
+    [
+        ("cache", "{"),
+        ("chunks", "{"),
+        ("cache", "[]"),
+        ("source", "false"),
+        ("chunks", "{}"),
+    ],
+)
 def test_control_preflight_precedes_changed_source_retirement(
-    audio, tmp_path, monkeypatch, marker
+    audio, tmp_path, monkeypatch, marker, payload
 ):
     from podcast_transcript import single_track
     from single_track_test import RecordingBackend
@@ -96,21 +106,43 @@ def test_control_preflight_precedes_changed_source_retirement(
     store.episode_path.write_bytes(b"old audio")
     output = store.output_path(".txt")
     output.write_bytes(b"old transcript")
-    path = (
-        store.cache_metadata_path if marker == "cache" else store.chunks_manifest_path
-    )
-    path.write_text("{")
+    path = {
+        "cache": store.cache_metadata_path,
+        "source": store.source_metadata_path,
+        "chunks": store.chunks_manifest_path,
+    }[marker]
+    path.write_text(payload)
     monkeypatch.setattr(single_track.settings, "transcript_dir", store.base_dir)
     monkeypatch.setattr(
         type(audio),
         "_prepare_changed_local_source",
         lambda *a: pytest.fail("retirement before control admission"),
     )
-    with pytest.raises(RuntimeError, match="control"):
+    with pytest.raises(RuntimeError, match=rf"control JSON in .*{marker}\.json"):
         single_track.transcribe(str(source), RecordingBackend("synthetic", "new"))
     assert output.read_bytes() == b"old transcript"
     assert store.episode_path.read_bytes() == b"old audio"
-    assert store.source_metadata_path.read_text() == '{"sha256":"previous"}'
+    assert path.read_text() == payload
+    if marker != "source":
+        assert store.source_metadata_path.read_text() == '{"sha256":"previous"}'
+
+
+def test_missing_source_control_rebuilds_prepared_audio(audio, tmp_path, mocker):
+    source = tmp_path / "changed.mp3"
+    source.write_bytes(b"new audio")
+    store = type(audio)(base_dir=audio.base_dir, url=str(source))
+    store.episode_chunks_dir.mkdir(parents=True)
+    store.episode_path.write_bytes(b"old audio")
+    assert not store.source_metadata_path.exists()
+    mocker.patch("podcast_transcript.audio.resample_audio", shutil.copyfile)
+    mocker.patch("podcast_transcript.audio.get_audio_duration", return_value=1.0)
+
+    (chunk,) = store.prepare_audio_for_transcription()
+
+    assert chunk.read_bytes() == store.episode_path.read_bytes() == b"new audio"
+    assert json.loads(store.source_metadata_path.read_text()) == {
+        "sha256": store._content_fingerprint(source)
+    }
 
 
 @pytest.mark.parametrize("change", ["rewrite", "truncate", "replace", "unlink"])
