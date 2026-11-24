@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Split dotenv files on LF and CRLF, preserving Unicode separators and bare CR within values.
+
 - Require a positive integer or integer string for the source byte limit.
 
 - Reject unsafe cumulative DOTe offsets before reading the affected chunk, including silent chunks.

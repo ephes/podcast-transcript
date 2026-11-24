@@ -105,7 +105,9 @@ GROQ_API_KEY=your_api_key_here
 The .env file has one `KEY=value` per line. Only the first `=` separates key and value, so values may
 contain `=`. Blank lines and lines starting with `#` are ignored, an optional `export ` prefix is
 allowed, and one pair of surrounding quotes is removed from the value. Comments after a value are not
-supported; a `#` there is part of the value.
+supported; a `#` there is part of the value. Lines end with LF or CRLF. A bare CR or
+Unicode line separator within a value is preserved, subject to the usual trimming of
+unquoted edge whitespace.
 
 Only `GROQ_API_KEY`, `VOXHELM_API_BASE`, `VOXHELM_API_KEY` and the options listed under
 Other Configuration Options, Source admission and Local commands are admitted (uppercase names).

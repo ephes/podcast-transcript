@@ -146,7 +146,7 @@ class Settings:
         except UnicodeError:
             raise RuntimeError("Invalid UTF-8 dotenv configuration.") from None
         admitted = {}
-        for line in text.splitlines():
+        for line in text.replace("\r\n", "\n").split("\n"):
             parsed = parse_env_line(line)
             if parsed is not None:
                 key, value = parsed
