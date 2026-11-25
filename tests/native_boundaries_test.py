@@ -1,8 +1,12 @@
 """Synthetic native tool admission tests."""
 
+import errno
 import json
 import subprocess
 import sys
+import time
+from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 
@@ -182,6 +186,131 @@ def test_failure_signals_group_before_reaping_leader(monkeypatch):
         )
     assert len(calls) == 1
     assert calls[0].returncode == 7
+
+
+@pytest.mark.parametrize("startup, exit_delay", [(10, 0), (6, 4), (6, 3)])
+def test_capture_shares_deadline_between_startup_and_exit(mocker, startup, exit_delay):
+    now = 100
+    process = mocker.MagicMock(pid=123, returncode=None)
+    process.__enter__.return_value = process
+    process.stdout = BytesIO(b"complete")
+    process.stderr = BytesIO()
+
+    def launch(*args, **kwargs):
+        nonlocal now
+        now += startup
+        return process
+
+    def observe_exit(*args):
+        nonlocal now
+        now += exit_delay
+        return object()
+
+    def retire(owned):
+        owned.returncode = 0
+
+    mocker.patch.object(time, "monotonic", side_effect=lambda: now)
+    mocker.patch.object(subprocess, "Popen", side_effect=launch)
+    mocker.patch.object(
+        safe_io,
+        "os",
+        SimpleNamespace(
+            name="posix", waitid=observe_exit, P_PID=1, WEXITED=2, WNOWAIT=4, WNOHANG=8
+        ),
+    )
+    cleanup = mocker.patch.object(safe_io, "_kill_owned_tree", side_effect=retire)
+
+    cmd = ["synthetic-probe"]
+    if startup + exit_delay >= 10:
+        with pytest.raises(RuntimeError, match="synthetic timed out after 10 seconds"):
+            safe_io.capture_checked(cmd, description="synthetic", timeout=10)
+    else:
+        assert (
+            safe_io.capture_checked(cmd, description="synthetic", timeout=10)
+            == b"complete"
+        )
+    cleanup.assert_called_once_with(process)
+
+
+@pytest.mark.parametrize(
+    "observation", ["exit", "registration-event", "registration-error", "late-esrch"]
+)
+def test_capture_requires_owned_kqueue_exit_observation(mocker, observation):
+    process = mocker.MagicMock(pid=123, returncode=None, stdout=None, stderr=None)
+    process.__enter__.return_value = process
+    mocker.patch.object(subprocess, "Popen", return_value=process)
+    mocker.patch.object(safe_io, "os", SimpleNamespace(name="posix"))
+    clock = mocker.patch.object(time, "monotonic", return_value=0.0)
+    queue = mocker.Mock()
+    registration = object()
+    kqueue = SimpleNamespace(
+        kqueue=lambda: queue,
+        kevent=mocker.Mock(return_value=registration),
+        KQ_FILTER_PROC=-5,
+        KQ_EV_ADD=1,
+        KQ_EV_ONESHOT=16,
+        KQ_EV_ERROR=16384,
+        KQ_NOTE_EXIT=1 << 31,
+    )
+    mocker.patch.object(safe_io, "select", kqueue)
+
+    def event(*, pid=123, filter_id=kqueue.KQ_FILTER_PROC, flags=0, fflags=0, data=0):
+        return SimpleNamespace(
+            ident=pid, filter=filter_id, flags=flags, fflags=fflags, data=data
+        )
+
+    esrch = event(flags=kqueue.KQ_EV_ERROR, data=errno.ESRCH)
+    if observation == "exit":
+        results = iter(
+            [
+                [event()],
+                [event(pid=456, fflags=kqueue.KQ_NOTE_EXIT)],
+                [event(filter_id=-1, fflags=kqueue.KQ_NOTE_EXIT)],
+                [event(fflags=kqueue.KQ_NOTE_EXIT)],
+            ]
+        )
+    elif observation == "registration-event":
+        results = iter([[esrch]])
+    elif observation == "registration-error":
+        results = iter([ProcessLookupError(errno.ESRCH, "synthetic")])
+    else:
+        results = iter([[], [esrch]])
+
+    def control(changes, max_events, timeout):
+        clock.return_value += 0.02
+        result = next(results)
+        if isinstance(result, OSError):
+            raise result
+        return result
+
+    def retire(owned):
+        assert owned.returncode is None
+        owned.returncode = 0
+
+    queue.control.side_effect = control
+    cleanup = mocker.patch.object(safe_io, "_kill_owned_tree", side_effect=retire)
+    cmd = ["synthetic-probe"]
+    if observation == "late-esrch":
+        with pytest.raises(RuntimeError, match="Could not observe owned command exit"):
+            safe_io.capture_checked(cmd, description="synthetic", timeout=0.09)
+    else:
+        assert (
+            safe_io.capture_checked(cmd, description="synthetic", timeout=0.09) == b""
+        )
+    waits = [call.args[2] for call in queue.control.call_args_list]
+    expected_waits = {
+        "exit": [0.05, 0.05, 0.05, 0.03],
+        "registration-event": [0.05],
+        "registration-error": [0.05],
+        "late-esrch": [0.05, 0.05],
+    }
+    assert waits == pytest.approx(expected_waits[observation])
+    assert [call.args[0] for call in queue.control.call_args_list] == [
+        [registration],
+        *([[]] * (len(waits) - 1)),
+    ]
+    queue.close.assert_called_once_with()
+    cleanup.assert_called_once_with(process)
 
 
 @pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])

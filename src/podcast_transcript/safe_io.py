@@ -387,6 +387,7 @@ def capture_checked(
         finally:
             stream.close()
 
+    deadline = time.monotonic() + timeout
     with subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,
@@ -408,8 +409,9 @@ def capture_checked(
             )
             if stream is not None
         ]
-        deadline = time.monotonic() + timeout
         try:
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(cmd, timeout)
             for thread in threads:
                 thread.start()
             # Keep the leader unreaped until pipe EOF. Its PID cannot be reused
@@ -461,16 +463,30 @@ def capture_checked(
                             remaining = deadline - time.monotonic()
                             if remaining <= 0:
                                 raise subprocess.TimeoutExpired(cmd, timeout)
-                            events = queue.control(changes, 1, min(0.05, remaining))
+                            registering = bool(changes)
+                            try:
+                                events = queue.control(changes, 1, min(0.05, remaining))
+                            except OSError as exc:
+                                if registering and exc.errno == errno.ESRCH:
+                                    break
+                                raise
                             changes = []
-                            if events:
+                            if not events:
+                                continue
+                            observed = events[0]
+                            if (
+                                observed.ident != process.pid
+                                or observed.filter != select.KQ_FILTER_PROC
+                            ):
+                                continue
+                            if observed.flags & select.KQ_EV_ERROR:
+                                if registering and observed.data == errno.ESRCH:
+                                    break
+                                raise RuntimeError(
+                                    "Could not observe owned command exit."
+                                )
+                            if observed.fflags & select.KQ_NOTE_EXIT:
                                 break
-                        observed = events[0]
-                        if (
-                            observed.flags & select.KQ_EV_ERROR
-                            and observed.data != errno.ESRCH
-                        ):
-                            raise RuntimeError("Could not observe owned command exit.")
                 _kill_owned_tree(process)
             else:
                 while True:
@@ -484,6 +500,8 @@ def capture_checked(
                     except subprocess.TimeoutExpired:
                         pass
             check_output_limit()
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(cmd, timeout)
         except BaseException as exc:
             stop.set()
             if process.returncode is None:
