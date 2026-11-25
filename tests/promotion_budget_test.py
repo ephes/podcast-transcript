@@ -183,6 +183,29 @@ def test_readability_scan_has_one_elapsed_deadline(episode, monkeypatch):
     )
 
 
+def test_readability_budget_refusal_preserves_published_transcripts(
+    episode, monkeypatch
+):
+    store, previous = episode
+    single_track.transcribe(store.url, RecordingBackend("second", "second"))
+    recovery = store.podcast_dir / ".previous-transcripts"
+    published_paths = [store.podcast_dir / name for name in previous]
+    published_paths.extend(path for path in recovery.rglob("*") if path.is_file())
+    published = {path: path.read_bytes() for path in published_paths}
+    replacement = RecordingBackend("third", "third")
+    monkeypatch.setattr(safe_io, "TRANSCRIPT_WORK_MAX_BYTES", 1)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Transcript work exceeded byte limit.*previous transcripts were preserved",
+    ):
+        single_track.transcribe(store.url, replacement)
+
+    assert not replacement.calls
+    assert not list(store.podcast_dir.glob(".replacement-*"))
+    assert all(path.read_bytes() == data for path, data in published.items())
+
+
 def test_backup_hash_and_copy_share_byte_budget(episode, monkeypatch):
     store, previous = episode
     size = sum(len(data) for data in previous.values())

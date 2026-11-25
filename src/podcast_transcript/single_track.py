@@ -42,6 +42,7 @@ from .transcript_validation import (
 )
 from .safe_io import (
     TranscriptWorkBudget,
+    TranscriptWorkBudgetError,
     atomic_output,
     durable_unlink,
     sync_directory,
@@ -830,16 +831,22 @@ def _transcribe_locked(audio: Audio, backend: TranscriptionBackend) -> dict[str,
                 "Prepared chunk bytes changed during transcription; retry."
             )
 
+    preserve_current = False
     if (
         isinstance(cached, dict)
         and cached != metadata
         and all(
             audio.output_path(suffix).is_file() for suffix in TRANSCRIPT_OUTPUT_SUFFIXES
         )
-        # An unreadable or corrupt generation is not worth retaining; replace it
-        # in place as before instead of failing every later run.
-        and _current_generation_readable(audio)
     ):
+        try:
+            preserve_current = _current_generation_readable(audio)
+        except TranscriptWorkBudgetError as exc:
+            raise TranscriptWorkBudgetError(
+                f"{exc} Readability check refused; previous transcripts were preserved."
+            ) from None
+
+    if preserve_current:
         # Bind the recovery copy to the prepared audio before inference, so an
         # unhashable inventory fails fast instead of after every replacement.
         audio_generation = _audio_generation(audio)

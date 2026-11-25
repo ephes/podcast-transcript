@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Report readability budget refusals before replacement and preserve the published transcripts and recovery copy.
+
 - Charge local command startup and completion to the same elapsed capture deadline.
 
 - Require an owned-child exit notification or registration-time ESRCH when observing local commands with kqueue.

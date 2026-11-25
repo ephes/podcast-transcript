@@ -158,6 +158,10 @@ TRANSCRIPT_WORK_MAX_BYTES = 64 * 1024**3
 TRANSCRIPT_WORK_TIMEOUT_SECONDS = 3600.0
 
 
+class TranscriptWorkBudgetError(RuntimeError):
+    """The transcript inventory could not be processed within its work limits."""
+
+
 class TranscriptWorkBudget:
     """Aggregate enumeration, hash and copy work for one promotion/restore pass."""
 
@@ -168,7 +172,7 @@ class TranscriptWorkBudget:
 
     def check(self) -> None:
         if monotonic() >= self.deadline:
-            raise RuntimeError(
+            raise TranscriptWorkBudgetError(
                 "Transcript work exceeded elapsed limit; split the episode."
             )
 
@@ -176,7 +180,7 @@ class TranscriptWorkBudget:
         self.check()
         self.entries += 1
         if self.entries > TRANSCRIPT_WORK_MAX_ENTRIES:
-            raise RuntimeError(
+            raise TranscriptWorkBudgetError(
                 "Transcript work exceeded directory entry limit; narrow the inventory."
             )
 
@@ -184,7 +188,7 @@ class TranscriptWorkBudget:
         self.check()
         self.remaining -= size
         if self.remaining < 0:
-            raise RuntimeError(
+            raise TranscriptWorkBudgetError(
                 "Transcript work exceeded byte limit; split the episode."
             )
 

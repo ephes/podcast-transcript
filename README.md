@@ -450,6 +450,9 @@ read at EOF. A changed source aborts the copy and leaves its destination intact.
 Each readability pass and each promotion/restore pass has a shared limit of 100,000
 visited directory entries (including unrelated entries and repeated scans), 64 GiB of
 aggregate transcript bytes read across hashing and copying, and one hour of elapsed time.
+If a readability check reaches any of these limits, the run reports the limit and stops
+before starting replacement inference. The published transcripts, cache marker and any
+existing recovery copy are preserved.
 Settings replacement scans the current and staged transcript inventories once for promotion
 and reuses those lists for publication. It checks both chunk directory identities and timestamps
 again before replacing recovery; detected name changes stop promotion and preserve the current
