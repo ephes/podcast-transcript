@@ -343,10 +343,16 @@ def combine_dote_chunks(
             raise ValueError(
                 f"DOTe chunk offset at position {position} exceeds {DOTE_MAX_MILLISECONDS} milliseconds."
             )
-        for line, start_ms, end_ms in list(_iter_dote_file_cues(filename)):
+        cues = list(_iter_dote_file_cues(filename))
+        for cue_position, (line, start_ms, end_ms) in enumerate(cues, 1):
             new_line = dict(line)
-            new_line["startTime"] = format_dote_timecode(start_ms + offset_ms)
-            new_line["endTime"] = format_dote_timecode(end_ms + offset_ms)
+            try:
+                new_line["startTime"] = format_dote_timecode(start_ms + offset_ms)
+                new_line["endTime"] = format_dote_timecode(end_ms + offset_ms)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{filename.name}: Invalid DOTe line {cue_position}: {exc}"
+                ) from None
             size += _json_size(new_line) + (2 if combined_lines else 0)
             _check_combined_budget(len(combined_lines) + 1, size)
             combined_lines.append(new_line)

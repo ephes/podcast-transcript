@@ -147,6 +147,23 @@ def test_maximum_chunk_offset_allows_unused_trailing_duration(tmp_path):
     assert final["startTime"] == final["endTime"]
 
 
+def test_shifted_cue_past_ceiling_names_chunk_and_line(tmp_path):
+    paths = [chunk(tmp_path / f"{i}.json") for i in range(3)]
+    last = json.loads(paths[-1].read_text())
+    last["lines"][0]["endTime"] = last["lines"][0]["startTime"]
+    last["lines"].append(dict(last["lines"][0], endTime="00:00:00,001"))
+    paths[-1].write_text(json.dumps(last))
+    output = tmp_path / "output.json"
+    output.write_bytes(b"previous transcript")
+
+    with pytest.raises(
+        ValueError, match=r"^2\.json: Invalid DOTe line 2: DOTe timecode exceeds"
+    ):
+        combine_dote_chunks(paths, output, [9_007_199_254_740, 0.991, 0])
+
+    assert output.read_bytes() == b"previous transcript"
+
+
 @pytest.mark.parametrize(
     "durations",
     [[0.0006] * 101, [0.0000006] * 1001, [0.0005, 0.001, 0.001], [0.1] * 37],

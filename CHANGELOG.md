@@ -3,7 +3,8 @@ Unreleased
 
 ### Fixes
 
-- Reject negative, non-integer and out-of-range DOTe timestamps at formatting time.
+- Reject negative, non-integer and out-of-range DOTe timestamps at formatting time. A chunk cue
+  shifted past the limit names its chunk file and line.
 
 - Check the single-chunk DOTe line limit before validating cues, preserving existing output on refusal.
 
