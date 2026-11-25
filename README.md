@@ -570,11 +570,12 @@ cached filename and line number. A missing `speakerDesignation` defaults to an e
 Podlove. Cached DOTe cues use full `HH:MM:SS,mmm` strings: at least two hour digits, exactly two
 minute/second digits (00–59), and exactly three millisecond digits. Multi-day times are supported
 up to 9,007,199,254,740,991 milliseconds (`2501999792:59:00,991`), the largest safe integer for
-JSON consumers using double-precision numbers. The same limit applies when generating DOTe chunks
-from raw Whisper. Out-of-range times, suffixes, malformed widths and reversed cues are rejected
-before combining (including single-chunk copies) or writing any export. Existing output bytes
-are preserved on validation failure. Correct or remove the invalid DOTe cache and regenerate its
-combined exports before retrying.
+JSON consumers using double-precision numbers. The DOTe formatter accepts only nonnegative integer
+millisecond counts up to this limit and raises `ValueError` for other values. This range also
+applies when generating DOTe chunks from raw Whisper. Out-of-range times, suffixes, malformed
+widths and reversed cues are rejected before combining (including single-chunk copies) or writing
+any export. Existing output bytes are preserved on validation failure. Correct or remove the
+invalid DOTe cache and regenerate its combined exports before retrying.
 
 ## Output Formats
 

@@ -37,6 +37,7 @@ from .transcript_validation import (
     seconds_to_milliseconds,
     load_whisper_transcript,
     load_dote,
+    _format_timecode,
     _iter_dote_file_cues,
     format_dote_timecode,
 )
@@ -423,8 +424,8 @@ def _write_webvtt(cues: tuple[_ExportCue, ...], vtt_path: Path) -> None:
                     continue
                 if cue.end_ms == cue.start_ms:
                     # Quantization can collapse an admitted span. Extend only this
-                    # rendered cue; source and DOTe timing evidence stays unchanged.
-                    end_time = format_dote_timecode(cue.start_ms + 1).replace(",", ".")
+                    # rendered cue, even if its end crosses the DOTe ceiling.
+                    end_time = _format_timecode(cue.start_ms + 1, separator=".")
                 text = escape(text, quote=False)
                 target.write(f"\n{cue.start_time} --> {end_time}\n{text}\n")
 

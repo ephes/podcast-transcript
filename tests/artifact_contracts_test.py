@@ -272,6 +272,36 @@ def test_dote_refuses_out_of_range_cue_before_podlove_export(tmp_path, end, mock
 
 
 @pytest.mark.parametrize(
+    "milliseconds,timestamp",
+    [
+        (0, "00:00:00,000"),
+        (450_000_001, "125:00:00,001"),
+        (2**53 - 1, "2501999792:59:00,991"),
+    ],
+)
+def test_format_dote_timecode_round_trips(milliseconds, timestamp):
+    formatted = transcript_validation.format_dote_timecode(milliseconds)
+    assert formatted == timestamp
+    assert transcript_validation.parse_dote_timecode(formatted) == milliseconds
+
+
+@pytest.mark.parametrize("milliseconds", [-1, True, 1.0, 2**53])
+def test_format_dote_timecode_refuses_unrepresentable_values(milliseconds):
+    with pytest.raises(ValueError, match="DOTe timecode"):
+        transcript_validation.format_dote_timecode(milliseconds)
+
+
+def test_webvtt_extends_zero_length_cue_at_dote_limit(tmp_path):
+    timestamp = "2501999792:59:00,991"
+    source = dote(tmp_path / "chunk.dote.json", timestamp, timestamp)
+    out = tmp_path / "out.webvtt"
+
+    track.convert_to_webvtt(source, out)
+
+    assert "2501999792:59:00.991 --> 2501999792:59:00.992\n" in out.read_text()
+
+
+@pytest.mark.parametrize(
     "timestamp,milliseconds",
     [
         ("125:00:00,001", 450_000_001),

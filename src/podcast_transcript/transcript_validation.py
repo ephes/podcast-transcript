@@ -143,10 +143,25 @@ def parse_dote_timecode(value: object) -> int:
 
 
 def format_dote_timecode(milliseconds: int) -> str:
+    """Serialize a nonnegative, JSON-safe integer millisecond count."""
+    if (
+        isinstance(milliseconds, bool)
+        or not isinstance(milliseconds, int)
+        or milliseconds < 0
+    ):
+        raise ValueError(
+            "Invalid DOTe timecode: require nonnegative integer milliseconds."
+        )
+    if milliseconds > DOTE_MAX_MILLISECONDS:
+        raise ValueError(f"DOTe timecode exceeds {DOTE_MAX_MILLISECONDS} milliseconds.")
+    return _format_timecode(milliseconds, separator=",")
+
+
+def _format_timecode(milliseconds: int, *, separator: str) -> str:
     hours, remainder = divmod(milliseconds, 3600000)
     minutes, remainder = divmod(remainder, 60000)
     seconds, millis = divmod(remainder, 1000)
-    return f"{hours:02}:{minutes:02}:{seconds:02},{millis:03}"
+    return f"{hours:02}:{minutes:02}:{seconds:02}{separator}{millis:03}"
 
 
 def _read_dote_json(path: Path, snapshot: bytes | None = None) -> object:
