@@ -95,10 +95,37 @@ class Blocks(httpx.SyncByteStream, httpx.AsyncByteStream):
         self.closed = True
 
 
+@pytest.mark.parametrize("status", [200, 429, 503])
+@pytest.mark.parametrize(
+    "length",
+    ["101", "0" * 5000 + "101", "9" * 5000],
+    ids=["decimal", "leading-zeroes", "huge-decimal"],
+)
+def test_remote_oversized_declared_length_skips_body(monkeypatch, status, length):
+    monkeypatch.setattr(backends, "REMOTE_RESPONSE_MAX_BYTES", 100)
+
+    class Unreadable(Blocks):
+        async def __aiter__(self):
+            pytest.fail("oversized response body was read")
+            yield b""
+
+    stream = Unreadable([])
+    transport(
+        monkeypatch,
+        lambda req: httpx.Response(
+            status, stream=stream, headers={"Content-Length": length}
+        ),
+    )
+    with pytest.raises(RuntimeError, match="response.*byte limit"):
+        backends.remote_response("Voxhelm", "https://example.test/transcribe")
+    assert stream.closed
+
+
 @pytest.mark.parametrize("name", ["groq", "voxhelm"])
 @pytest.mark.parametrize("status", [200, 503, 429])
 @pytest.mark.parametrize(
-    "encoding,length", [(None, None), (None, "1"), ("identity", "1")]
+    "encoding,length",
+    [(None, None), (None, "1"), ("identity", "1"), (None, "101, 1")],
 )
 def test_remote_decoded_budget_closes_and_preserves(
     monkeypatch, tmp_path, name, status, encoding, length
@@ -305,6 +332,59 @@ def test_remote_trickle_deadline_preserves_outputs_and_releases_lock(
     # The failed request released the episode lock: a valid response can retry.
     paths = single_track.transcribe(url, backend)
     assert paths["plain text"].read_text() == "previous completed transcript"
+
+
+@pytest.mark.parametrize("name", ["groq", "voxhelm"])
+@pytest.mark.parametrize(
+    "expires_at,expected_frames",
+    [("headers", 0), ("first_frame", 1), ("materialization", 2)],
+)
+def test_remote_elapsed_deadline_covers_synchronous_work(
+    monkeypatch, tmp_path, name, expires_at, expected_frames
+):
+    clock = 0.0
+    received = []
+    monkeypatch.setattr(backends, "monotonic", lambda: clock, raising=False)
+    monkeypatch.setattr(backends.settings, "transcript_http_read_timeout", "1")
+
+    class Ready(Blocks):
+        async def __aiter__(self):
+            nonlocal clock
+            for block in self.blocks:
+                received.append(block)
+                if expires_at == "first_frame":
+                    clock = 1.0
+                yield block
+
+    stream = Ready([b'{"segments":', b"[]}"])
+    response = httpx.Response(200, stream=stream)
+
+    def handler(request):
+        nonlocal clock
+        if expires_at == "headers":
+            clock = 1.0
+        return response
+
+    transport(monkeypatch, handler)
+    if expires_at == "materialization":
+        original_init = httpx.Response.__init__
+
+        def materialize(self, *args, **kwargs):
+            nonlocal clock
+            original_init(self, *args, **kwargs)
+            clock = 1.0
+
+        monkeypatch.setattr(httpx.Response, "__init__", materialize)
+
+    chunk = tmp_path / "chunk.mp3"
+    chunk.write_bytes(b"audio")
+    output = chunk.with_suffix(".json")
+    output.write_bytes(b"previous")
+    with pytest.raises(RuntimeError, match="timed out.*ReadTimeout"):
+        remote(name).transcribe(chunk, output)
+    assert received == stream.blocks[:expected_frames]
+    assert stream.closed
+    assert output.read_bytes() == b"previous"
 
 
 @pytest.mark.parametrize("name", ["groq", "voxhelm"])

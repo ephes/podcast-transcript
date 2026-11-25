@@ -178,7 +178,8 @@ You can also set the following environment variables or specify them in the .env
 - **TRANSCRIPT_PROMPT**: The prompt to use for the transcription (default is "podcast-transcript").
 - **TRANSCRIPT_LANGUAGE**: The language code for the transcription (default is en, you could set it to de for example).
 - **TRANSCRIPT_HTTP_READ_TIMEOUT**: Positive finite seconds for each complete Groq or Voxhelm request,
-  including upload, server computation and response transfer (default is 1800, 30 minutes).
+  including upload, server computation, response transfer and construction of the in-memory
+  response (default is 1800, 30 minutes).
   This elapsed deadline cancels slow trickle responses as well as stalled reads. Connecting is
   also limited to 10 seconds, each upload write to 300 seconds.
   A timeout stops the run with an error naming the backend. The Groq backend retries rate-limited (429) requests
@@ -188,7 +189,9 @@ You can also set the following environment variables or specify them in the .env
   excessively nested JSON, provides no usable delay and stops the run without another request.
 
 Remote Groq and Voxhelm responses (success and error) are streamed with a 32 MiB body limit,
-independent of Content-Length. Requests replace any supplied spelling of `Accept-Encoding`
+even when Content-Length is missing or ambiguous. An unambiguous Content-Length above the
+limit is refused before reading the body when Transfer-Encoding is absent. Requests replace
+any supplied spelling of `Accept-Encoding`
 with a single `identity` value and preserve other headers. A successful transcript response
 must use HTTP 200 without `Content-Range`. Other 2xx statuses (including 206) and HTTP 200
 with `Content-Range` are refused before reading or caching the transcript. A response with
@@ -521,6 +524,8 @@ the exact admitted bytes, including whitespace.
 A source that changes during the read is refused. Exceeding either limit fails explicitly. Split
 unusually large episodes into separate inputs. A refused settings replacement preserves all previous
 completed exports.
+If closing a bounded input also fails, the reader reports the original refusal. A close failure
+on its own also rejects the read.
 Multi-chunk assembly reuses the validated cue times when shifting each chunk. It validates
 the combined cues before serializing directly to staging without another episode-sized join.
 
@@ -730,6 +735,10 @@ episode cache aside and process the source as separate, shorter files.
 ### Output durability errors
 
 When writing fails before an atomic replacement, the destination retains its prior contents.
+Immediately before rename, the staged name is checked against the generation that was synced.
+A detected change refuses publication and leaves the destination intact.
+On POSIX the synced descriptor stays open through rename. On Windows the descriptor is
+closed before the final name check because an open descriptor blocks rename.
 If a staged text or binary output stream cannot be opened, the writer closes its file descriptor
 and reports the stream error.
 A transcript copy retains its original failure if closing the source or staged output descriptor
