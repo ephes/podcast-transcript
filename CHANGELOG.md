@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Enforce the Groq and Voxhelm request deadline through construction of the in-memory response.
+
 - Reject oversized Groq and Voxhelm responses before reading the body when Content-Length declares their size unambiguously.
 
 - Preserve transcript copy and command errors, including timeouts, when logging a cleanup failure also fails.

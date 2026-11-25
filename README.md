@@ -178,7 +178,8 @@ You can also set the following environment variables or specify them in the .env
 - **TRANSCRIPT_PROMPT**: The prompt to use for the transcription (default is "podcast-transcript").
 - **TRANSCRIPT_LANGUAGE**: The language code for the transcription (default is en, you could set it to de for example).
 - **TRANSCRIPT_HTTP_READ_TIMEOUT**: Positive finite seconds for each complete Groq or Voxhelm request,
-  including upload, server computation and response transfer (default is 1800, 30 minutes).
+  including upload, server computation, response transfer and construction of the in-memory
+  response (default is 1800, 30 minutes).
   This elapsed deadline cancels slow trickle responses as well as stalled reads. Connecting is
   also limited to 10 seconds, each upload write to 300 seconds.
   A timeout stops the run with an error naming the backend. The Groq backend retries rate-limited (429) requests

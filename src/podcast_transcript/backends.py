@@ -19,6 +19,7 @@ import time
 
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from time import monotonic
 from typing import Protocol, runtime_checkable
 
 import httpx
@@ -71,11 +72,16 @@ def remote_response(backend: str, url: str, **kwargs) -> httpx.Response:
     headers = httpx.Headers(kwargs.pop("headers", None))
     headers["Accept-Encoding"] = "identity"
 
-    async def receive() -> httpx.Response:
+    async def receive(deadline: float) -> httpx.Response:
+        def check_deadline() -> None:
+            if monotonic() >= deadline:
+                raise asyncio.TimeoutError
+
         async with httpx.AsyncClient() as client:
             async with client.stream(
                 "POST", url, headers=headers, **kwargs
             ) as response:
+                check_deadline()
                 if response.is_success and (
                     response.status_code != httpx.codes.OK
                     or "Content-Range" in response.headers
@@ -96,24 +102,30 @@ def remote_response(backend: str, url: str, **kwargs) -> httpx.Response:
                 if _declared_response_is_oversized(response.headers):
                     raise RuntimeError(overflow)
                 body = bytearray()
-                async for block in response.aiter_bytes(chunk_size=64 * 1024):
+                async for block in response.aiter_bytes():
+                    check_deadline()
                     if len(body) + len(block) > REMOTE_RESPONSE_MAX_BYTES:
                         raise RuntimeError(overflow)
                     body.extend(block)
+                check_deadline()
                 response_headers = dict(response.headers)
                 # Retain charset/rate-limit headers; the body is already complete.
                 response_headers.pop("content-encoding", None)
                 response_headers.pop("content-length", None)
-                return httpx.Response(
+                result = httpx.Response(
                     response.status_code,
                     headers=response_headers,
                     content=bytes(body),
                     request=response.request,
                 )
+        check_deadline()
+        return result
 
     async def bounded_receive() -> httpx.Response:
+        timeout = settings.http_read_timeout_seconds
+        deadline = monotonic() + timeout
         try:
-            return await asyncio.wait_for(receive(), settings.http_read_timeout_seconds)
+            return await asyncio.wait_for(receive(deadline), timeout)
         except asyncio.TimeoutError as exc:
             raise httpx.ReadTimeout(
                 "Elapsed request deadline exceeded TRANSCRIPT_HTTP_READ_TIMEOUT"
