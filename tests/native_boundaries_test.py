@@ -3,6 +3,9 @@
 import json
 import subprocess
 import sys
+import time
+from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 
@@ -182,6 +185,50 @@ def test_failure_signals_group_before_reaping_leader(monkeypatch):
         )
     assert len(calls) == 1
     assert calls[0].returncode == 7
+
+
+@pytest.mark.parametrize("startup, exit_delay", [(10, 0), (6, 4), (6, 3)])
+def test_capture_shares_deadline_between_startup_and_exit(mocker, startup, exit_delay):
+    now = 100
+    process = mocker.MagicMock(pid=123, returncode=None)
+    process.__enter__.return_value = process
+    process.stdout = BytesIO(b"complete")
+    process.stderr = BytesIO()
+
+    def launch(*args, **kwargs):
+        nonlocal now
+        now += startup
+        return process
+
+    def observe_exit(*args):
+        nonlocal now
+        now += exit_delay
+        return object()
+
+    def retire(owned):
+        owned.returncode = 0
+
+    mocker.patch.object(time, "monotonic", side_effect=lambda: now)
+    mocker.patch.object(subprocess, "Popen", side_effect=launch)
+    mocker.patch.object(
+        safe_io,
+        "os",
+        SimpleNamespace(
+            name="posix", waitid=observe_exit, P_PID=1, WEXITED=2, WNOWAIT=4, WNOHANG=8
+        ),
+    )
+    cleanup = mocker.patch.object(safe_io, "_kill_owned_tree", side_effect=retire)
+
+    cmd = ["synthetic-probe"]
+    if startup + exit_delay >= 10:
+        with pytest.raises(RuntimeError, match="synthetic timed out after 10 seconds"):
+            safe_io.capture_checked(cmd, description="synthetic", timeout=10)
+    else:
+        assert (
+            safe_io.capture_checked(cmd, description="synthetic", timeout=10)
+            == b"complete"
+        )
+    cleanup.assert_called_once_with(process)
 
 
 @pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])

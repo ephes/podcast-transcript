@@ -387,6 +387,7 @@ def capture_checked(
         finally:
             stream.close()
 
+    deadline = time.monotonic() + timeout
     with subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,
@@ -408,8 +409,9 @@ def capture_checked(
             )
             if stream is not None
         ]
-        deadline = time.monotonic() + timeout
         try:
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(cmd, timeout)
             for thread in threads:
                 thread.start()
             # Keep the leader unreaped until pipe EOF. Its PID cannot be reused
@@ -484,6 +486,8 @@ def capture_checked(
                     except subprocess.TimeoutExpired:
                         pass
             check_output_limit()
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(cmd, timeout)
         except BaseException as exc:
             stop.set()
             if process.returncode is None:

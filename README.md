@@ -662,7 +662,9 @@ failed commands report a bounded stderr tail. Retrying reruns the unfinished ste
 The internal subprocess capture helper requires positive integer byte limits for
 stdout and stderr before launching a command. Pass `None` for the stdout limit
 to discard stdout. In stderr-tail mode, only the last bytes within the stderr
-budget are retained.
+budget are retained. One elapsed deadline covers process startup, pipe reads and
+completion. A startup overrun is detected once process creation returns, and
+results are accepted only within the deadline.
 
 MLX inference runs in a separate worker process owned by the CLI, so the CLI process never imports
 `mlx_whisper`. The worker loads only the standard library and `mlx_whisper` (not the CLI settings),

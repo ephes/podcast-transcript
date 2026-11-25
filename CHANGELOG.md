@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Charge local command startup and completion to the same elapsed capture deadline.
+
 - Cap prepared audio at 512 chunks per episode and reject oversized cached inventories before looking up chunk files.
 
 - Refuse cache and source controls with non-object JSON and chunk manifests with non-array JSON before preparing audio.
