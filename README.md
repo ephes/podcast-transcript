@@ -516,7 +516,8 @@ Combined episodes admit at most 250,000 DOTe lines and 64 MiB of serialized UTF-
 JSON, including escaped text, speaker labels, unknown line fields, separators and timestamps.
 Both budgets are charged while assembling chunks, before retaining another line or publishing
 any combined export. Single-chunk assembly reads one byte-limited snapshot of a regular DOTe file,
-validates its JSON and line count, and publishes those exact bytes, including whitespace.
+checks the line count after JSON decoding and before validating individual cues, and publishes
+the exact admitted bytes, including whitespace.
 A source that changes during the read is refused. Exceeding either limit fails explicitly. Split
 unusually large episodes into separate inputs. A refused settings replacement preserves all previous
 completed exports.
@@ -569,11 +570,12 @@ cached filename and line number. A missing `speakerDesignation` defaults to an e
 Podlove. Cached DOTe cues use full `HH:MM:SS,mmm` strings: at least two hour digits, exactly two
 minute/second digits (00–59), and exactly three millisecond digits. Multi-day times are supported
 up to 9,007,199,254,740,991 milliseconds (`2501999792:59:00,991`), the largest safe integer for
-JSON consumers using double-precision numbers. The same limit applies when generating DOTe chunks
-from raw Whisper. Out-of-range times, suffixes, malformed widths and reversed cues are rejected
-before combining (including single-chunk copies) or writing any export. Existing output bytes
-are preserved on validation failure. Correct or remove the invalid DOTe cache and regenerate its
-combined exports before retrying.
+JSON consumers using double-precision numbers. The DOTe formatter accepts only nonnegative integer
+millisecond counts up to this limit and raises `ValueError` for other values. This range also
+applies when generating DOTe chunks from raw Whisper. Out-of-range times, suffixes, malformed
+widths and reversed cues are rejected before combining (including single-chunk copies) or writing
+any export. Existing output bytes are preserved on validation failure. Correct or remove the
+invalid DOTe cache and regenerate its combined exports before retrying.
 
 ## Output Formats
 

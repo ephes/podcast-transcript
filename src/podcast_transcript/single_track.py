@@ -37,6 +37,7 @@ from .transcript_validation import (
     seconds_to_milliseconds,
     load_whisper_transcript,
     load_dote,
+    _format_timecode,
     _iter_dote_file_cues,
     format_dote_timecode,
 )
@@ -321,8 +322,7 @@ def combine_dote_chunks(
             )
         except RuntimeError as exc:
             raise ValueError(str(exc)) from None
-        data = load_dote(source_dote_file, snapshot=snapshot)
-        _check_combined_budget(len(data["lines"]), len(snapshot))
+        load_dote(source_dote_file, snapshot=snapshot, max_lines=COMBINED_MAX_LINES)
         rprint(f"Copying {source_dote_file} to {output_path}")
         write_bytes_atomic(output_path, snapshot)
         return None
@@ -343,10 +343,16 @@ def combine_dote_chunks(
             raise ValueError(
                 f"DOTe chunk offset at position {position} exceeds {DOTE_MAX_MILLISECONDS} milliseconds."
             )
-        for line, start_ms, end_ms in list(_iter_dote_file_cues(filename)):
+        cues = list(_iter_dote_file_cues(filename))
+        for cue_position, (line, start_ms, end_ms) in enumerate(cues, 1):
             new_line = dict(line)
-            new_line["startTime"] = format_dote_timecode(start_ms + offset_ms)
-            new_line["endTime"] = format_dote_timecode(end_ms + offset_ms)
+            try:
+                new_line["startTime"] = format_dote_timecode(start_ms + offset_ms)
+                new_line["endTime"] = format_dote_timecode(end_ms + offset_ms)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{filename.name}: Invalid DOTe line {cue_position}: {exc}"
+                ) from None
             size += _json_size(new_line) + (2 if combined_lines else 0)
             _check_combined_budget(len(combined_lines) + 1, size)
             combined_lines.append(new_line)
@@ -424,8 +430,8 @@ def _write_webvtt(cues: tuple[_ExportCue, ...], vtt_path: Path) -> None:
                     continue
                 if cue.end_ms == cue.start_ms:
                     # Quantization can collapse an admitted span. Extend only this
-                    # rendered cue; source and DOTe timing evidence stays unchanged.
-                    end_time = format_dote_timecode(cue.start_ms + 1).replace(",", ".")
+                    # rendered cue, even if its end crosses the DOTe ceiling.
+                    end_time = _format_timecode(cue.start_ms + 1, separator=".")
                 text = escape(text, quote=False)
                 target.write(f"\n{cue.start_time} --> {end_time}\n{text}\n")
 

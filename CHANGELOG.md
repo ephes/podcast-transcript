@@ -3,6 +3,11 @@ Unreleased
 
 ### Fixes
 
+- Reject negative, non-integer and out-of-range DOTe timestamps at formatting time. A chunk cue
+  shifted past the limit names its chunk file and line.
+
+- Check the single-chunk DOTe line limit before validating cues, preserving existing output on refusal.
+
 - Report readability budget refusals before replacement and preserve the published transcripts and recovery copy.
 
 - Reap the Windows child after `taskkill` fails and preserve the original capture error.

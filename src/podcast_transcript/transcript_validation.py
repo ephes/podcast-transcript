@@ -143,10 +143,25 @@ def parse_dote_timecode(value: object) -> int:
 
 
 def format_dote_timecode(milliseconds: int) -> str:
+    """Serialize a nonnegative, JSON-safe integer millisecond count."""
+    if (
+        isinstance(milliseconds, bool)
+        or not isinstance(milliseconds, int)
+        or milliseconds < 0
+    ):
+        raise ValueError(
+            "Invalid DOTe timecode: require nonnegative integer milliseconds."
+        )
+    if milliseconds > DOTE_MAX_MILLISECONDS:
+        raise ValueError(f"DOTe timecode exceeds {DOTE_MAX_MILLISECONDS} milliseconds.")
+    return _format_timecode(milliseconds, separator=",")
+
+
+def _format_timecode(milliseconds: int, *, separator: str) -> str:
     hours, remainder = divmod(milliseconds, 3600000)
     minutes, remainder = divmod(remainder, 60000)
     seconds, millis = divmod(remainder, 1000)
-    return f"{hours:02}:{minutes:02}:{seconds:02},{millis:03}"
+    return f"{hours:02}:{minutes:02}:{seconds:02}{separator}{millis:03}"
 
 
 def _read_dote_json(path: Path, snapshot: bytes | None = None) -> object:
@@ -158,11 +173,13 @@ def _read_dote_json(path: Path, snapshot: bytes | None = None) -> object:
         raise ValueError(f"Invalid DOTe JSON in {path.name}.") from None
 
 
-def load_dote(path: Path, *, snapshot: bytes | None = None) -> dict:
-    """Validate DOTe JSON, using the path for diagnostics with a supplied snapshot."""
+def load_dote(
+    path: Path, *, snapshot: bytes | None = None, max_lines: int | None = None
+) -> dict:
+    """Validate DOTe JSON, optionally limiting the line count for episode assembly."""
     data = _read_dote_json(path, snapshot)
     try:
-        validate_dote(data)
+        validate_dote(data, max_lines=max_lines)
     except ValueError as exc:
         raise ValueError(f"{path.name}: {exc}") from None
     return cast(dict, data)
@@ -177,16 +194,21 @@ def _iter_dote_file_cues(path: Path) -> Iterator[tuple[dict, int, int]]:
         raise ValueError(f"{path.name}: {exc}") from None
 
 
-def validate_dote(data: object) -> None:
-    for _ in _iter_validated_dote_cues(data):
+def validate_dote(data: object, *, max_lines: int | None = None) -> None:
+    for _ in _iter_validated_dote_cues(data, max_lines=max_lines):
         pass
 
 
-def _iter_validated_dote_cues(data: object) -> Iterator[tuple[dict, int, int]]:
+def _iter_validated_dote_cues(
+    data: object, *, max_lines: int | None = None
+) -> Iterator[tuple[dict, int, int]]:
     if not isinstance(data, dict) or not isinstance(data.get("lines"), list):
         raise ValueError("Invalid DOTe: lines must be a list.")
+    lines = data["lines"]
+    if max_lines is not None and len(lines) > max_lines:
+        raise ValueError("Combined transcript exceeds episode line limit.")
     previous_start = -1
-    for position, line in enumerate(data["lines"], 1):
+    for position, line in enumerate(lines, 1):
         text = line.get("text") if isinstance(line, dict) else None
         if not isinstance(text, str):
             raise ValueError(f"Invalid DOTe line {position}: require a text string.")

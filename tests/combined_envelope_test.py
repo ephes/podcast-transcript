@@ -116,8 +116,8 @@ def test_single_chunk_publishes_admitted_bytes_after_replacement(tmp_path, monke
     replacement.write_bytes(invalid)
     validate = transcript_validation.validate_dote
 
-    def validate_then_replace(data):
-        validate(data)
+    def validate_then_replace(data, **kwargs):
+        validate(data, **kwargs)
         replacement.replace(source)
 
     monkeypatch.setattr(transcript_validation, "validate_dote", validate_then_replace)
@@ -135,6 +135,24 @@ def test_single_chunk_checks_byte_limit_before_parsing(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="Combined transcript.*limit"):
         single_track.combine_dote_chunks([source], output, [0])
+    assert output.read_bytes() == b"previous"
+
+
+def test_single_chunk_checks_line_limit_before_validating_cues(
+    tmp_path, monkeypatch, mocker
+):
+    source = chunk(tmp_path / "chunk.json")
+    lines = json.loads(source.read_bytes())["lines"]
+    source.write_text(json.dumps({"lines": lines * 2}))
+    output = tmp_path / "combined.json"
+    output.write_bytes(b"previous")
+    monkeypatch.setattr(single_track, "COMBINED_MAX_LINES", 1)
+    parse = mocker.spy(transcript_validation, "parse_dote_timecode")
+
+    with pytest.raises(ValueError, match="Combined transcript.*limit"):
+        single_track.combine_dote_chunks([source], output, [0])
+
+    parse.assert_not_called()
     assert output.read_bytes() == b"previous"
 
 
