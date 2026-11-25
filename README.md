@@ -664,9 +664,10 @@ Local commands also have finite budgets (positive finite seconds, environment or
 
 Increase these for unusually slow processing. On timeout or interruption, cleanup signals the Unix
 process group or invokes Windows `taskkill /T`, then reaps the direct subprocess. If `taskkill`
-fails, cleanup kills the direct child if it is still running and waits for it. A cleanup failure
-is logged as a bounded warning alongside the original capture error. Partial outputs are removed
-and previous final outputs preserved. Timeouts raise an error naming the operation;
+fails, cleanup kills the direct child if it is still running and waits for it. Cleanup failure
+warnings are best effort so a logging failure cannot mask the original capture error or prevent
+the remaining pipe and thread cleanup. Partial outputs are removed and previous final outputs
+preserved. Timeouts raise an error naming the operation;
 failed commands report a bounded stderr tail. Retrying reruns the unfinished step.
 
 The internal subprocess capture helper requires positive integer byte limits for
@@ -732,8 +733,8 @@ When writing fails before an atomic replacement, the destination retains its pri
 If a staged text or binary output stream cannot be opened, the writer closes its file descriptor
 and reports the stream error.
 A transcript copy retains its original failure if closing the source or staged output descriptor
-also fails. The close failure is logged separately. A close failure after a successful read or
-write stops publication.
+also fails, even if reporting the close failure fails. A close failure after a successful read
+or write stops publication.
 If syncing either parent directory fails after the rename, the command reports that the
 replacement is visible with uncertain durability and identifies the directory whose sync
 failed. Cache completion markers are written after their required artifacts are synced.
