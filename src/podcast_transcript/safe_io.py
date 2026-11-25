@@ -158,6 +158,10 @@ TRANSCRIPT_WORK_MAX_BYTES = 64 * 1024**3
 TRANSCRIPT_WORK_TIMEOUT_SECONDS = 3600.0
 
 
+class TranscriptWorkBudgetError(RuntimeError):
+    """The transcript inventory could not be processed within its work limits."""
+
+
 class TranscriptWorkBudget:
     """Aggregate enumeration, hash and copy work for one promotion/restore pass."""
 
@@ -168,7 +172,7 @@ class TranscriptWorkBudget:
 
     def check(self) -> None:
         if monotonic() >= self.deadline:
-            raise RuntimeError(
+            raise TranscriptWorkBudgetError(
                 "Transcript work exceeded elapsed limit; split the episode."
             )
 
@@ -176,7 +180,7 @@ class TranscriptWorkBudget:
         self.check()
         self.entries += 1
         if self.entries > TRANSCRIPT_WORK_MAX_ENTRIES:
-            raise RuntimeError(
+            raise TranscriptWorkBudgetError(
                 "Transcript work exceeded directory entry limit; narrow the inventory."
             )
 
@@ -184,7 +188,7 @@ class TranscriptWorkBudget:
         self.check()
         self.remaining -= size
         if self.remaining < 0:
-            raise RuntimeError(
+            raise TranscriptWorkBudgetError(
                 "Transcript work exceeded byte limit; split the episode."
             )
 
@@ -272,6 +276,7 @@ def _kill_owned_tree(process: subprocess.Popen) -> None:
             # that child, but do not suppress a real failure to stop a live one.
             if process.poll() is None:
                 raise
+        process.wait()
     else:
         # Windows has no killpg; taskkill /T is its process-tree API.
         try:
@@ -281,12 +286,12 @@ def _kill_owned_tree(process: subprocess.Popen) -> None:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=10,
-                check=False,
+                check=True,
             )
         finally:
             if process.poll() is None:
                 process.kill()
-    process.wait()
+            process.wait()
 
 
 def run_checked(
@@ -505,7 +510,10 @@ def capture_checked(
         except BaseException as exc:
             stop.set()
             if process.returncode is None:
-                _kill_owned_tree(process)
+                try:
+                    _kill_owned_tree(process)
+                except Exception:
+                    logger.warning("Could not complete owned command tree cleanup.")
             if isinstance(exc, subprocess.TimeoutExpired):
                 tail = diagnostic_tail()
                 raise RuntimeError(

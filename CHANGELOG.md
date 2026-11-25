@@ -3,6 +3,10 @@ Unreleased
 
 ### Fixes
 
+- Report readability budget refusals before replacement and preserve the published transcripts and recovery copy.
+
+- Reap the Windows child after `taskkill` fails and preserve the original capture error.
+
 - Charge local command startup and completion to the same elapsed capture deadline.
 
 - Require an owned-child exit notification or registration-time ESRCH when observing local commands with kqueue.
