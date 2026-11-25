@@ -233,6 +233,43 @@ def test_capture_shares_deadline_between_startup_and_exit(mocker, startup, exit_
 
 
 @pytest.mark.parametrize(
+    "taskkill_error",
+    [
+        subprocess.TimeoutExpired(["private-taskkill-detail"], 10),
+        OSError("private-taskkill-detail"),
+        subprocess.CalledProcessError(1, ["private-taskkill-detail"]),
+    ],
+    ids=["timeout", "launch-error", "nonzero-exit"],
+)
+def test_windows_taskkill_failure_reaps_child_and_preserves_capture_error(
+    mocker, tmp_path, caplog, taskkill_error
+):
+    process = mocker.MagicMock(pid=123, returncode=None, stdout=None, stderr=None)
+    process.__enter__.return_value = process
+    process.poll.return_value = None
+    mocker.patch.object(subprocess, "Popen", return_value=process)
+    mocker.patch.object(safe_io, "os", SimpleNamespace(name="nt"))
+    taskkill = mocker.patch.object(subprocess, "run", side_effect=taskkill_error)
+    output = tmp_path / "output"
+    output.write_bytes(b"too large")
+
+    with pytest.raises(RuntimeError, match="synthetic reached output byte limit"):
+        safe_io.capture_checked(
+            ["synthetic"], description="synthetic", timeout=10, output_limit=(output, 1)
+        )
+
+    taskkill.assert_called_once()
+    assert taskkill.call_args.kwargs["check"] is True
+    assert process.method_calls == [
+        mocker.call.poll(),
+        mocker.call.kill(),
+        mocker.call.wait(),
+    ]
+    assert "Could not complete owned command tree cleanup." in caplog.messages
+    assert "private-taskkill-detail" not in caplog.text
+
+
+@pytest.mark.parametrize(
     "observation", ["exit", "registration-event", "registration-error", "late-esrch"]
 )
 def test_capture_requires_owned_kqueue_exit_observation(mocker, observation):

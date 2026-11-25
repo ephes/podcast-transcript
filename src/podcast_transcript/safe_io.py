@@ -276,6 +276,7 @@ def _kill_owned_tree(process: subprocess.Popen) -> None:
             # that child, but do not suppress a real failure to stop a live one.
             if process.poll() is None:
                 raise
+        process.wait()
     else:
         # Windows has no killpg; taskkill /T is its process-tree API.
         try:
@@ -285,12 +286,12 @@ def _kill_owned_tree(process: subprocess.Popen) -> None:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=10,
-                check=False,
+                check=True,
             )
         finally:
             if process.poll() is None:
                 process.kill()
-    process.wait()
+            process.wait()
 
 
 def run_checked(
@@ -509,7 +510,10 @@ def capture_checked(
         except BaseException as exc:
             stop.set()
             if process.returncode is None:
-                _kill_owned_tree(process)
+                try:
+                    _kill_owned_tree(process)
+                except Exception:
+                    logger.warning("Could not complete owned command tree cleanup.")
             if isinstance(exc, subprocess.TimeoutExpired):
                 tail = diagnostic_tail()
                 raise RuntimeError(

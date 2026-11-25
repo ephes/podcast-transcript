@@ -660,9 +660,11 @@ Local commands also have finite budgets (positive finite seconds, environment or
 - `TRANSCRIPT_MEDIA_TIMEOUT`: 3600 (one hour) per ffmpeg resample, split or WAV conversion.
 - `TRANSCRIPT_LOCAL_TRANSCRIPTION_TIMEOUT`: 21600 (six hours) per whisper-cli or MLX chunk transcription.
 
-Increase these for unusually slow processing. On timeout or interruption the owned command tree is
-killed and the direct subprocess reaped (Unix process group; Windows `taskkill /T`). Partial outputs
-are removed and previous final outputs preserved. Timeouts raise an error naming the operation;
+Increase these for unusually slow processing. On timeout or interruption, cleanup signals the Unix
+process group or invokes Windows `taskkill /T`, then reaps the direct subprocess. If `taskkill`
+fails, cleanup kills the direct child if it is still running and waits for it. A cleanup failure
+is logged as a bounded warning alongside the original capture error. Partial outputs are removed
+and previous final outputs preserved. Timeouts raise an error naming the operation;
 failed commands report a bounded stderr tail. Retrying reruns the unfinished step.
 
 The internal subprocess capture helper requires positive integer byte limits for
