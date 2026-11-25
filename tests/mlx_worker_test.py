@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -55,6 +56,43 @@ def test_success_runs_in_worker_and_keeps_prompt_out_of_argv(
     assert commands[0][3] == str(backends.MLX_WORKER_PATH)
     assert "private-prompt" not in " ".join(commands[0])
     assert "mlx_whisper" not in sys.modules
+    assert not list(tmp_path.glob(".mlx-*"))
+
+
+@pytest.mark.parametrize("excess", [0, 1, 70_000])
+def test_worker_result_file_respects_byte_limit(
+    monkeypatch, tmp_path, fake_mlx, excess
+):
+    prompt = "ä😀" * 4096
+    data = {"segments": [{"start": 0, "end": 1, "text": prompt}]}
+    encoded = json.dumps(data).encode("utf-8")
+    limit = len(encoded) - excess
+    monkeypatch.setattr(backends, "LOCAL_TRANSCRIPT_MAX_BYTES", limit)
+    fake_mlx(SUCCESS)
+    real_run = backends.run_checked
+    results = []
+
+    def observe_result(cmd, **kwargs):
+        try:
+            return real_run(cmd, **kwargs)
+        finally:
+            results.append(Path(cmd[5]).read_bytes())
+
+    monkeypatch.setattr(backends, "run_checked", observe_result)
+    out = tmp_path / "chunk.json"
+    out.write_text("previous")
+    backend = backends.MLX(model_name=None, prompt=prompt)
+    if excess:
+        with pytest.raises(
+            RuntimeError, match="MLX transcript output exceeded byte limit"
+        ):
+            backend.transcribe(tmp_path / "chunk.mp3", out)
+        assert out.read_text() == "previous"
+        assert 0 < len(results[0]) <= limit
+    else:
+        backend.transcribe(tmp_path / "chunk.mp3", out)
+        assert json.loads(out.read_text()) == data
+        assert results == [encoded]
     assert not list(tmp_path.glob(".mlx-*"))
 
 

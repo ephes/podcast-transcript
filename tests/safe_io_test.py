@@ -1,12 +1,123 @@
+import logging
+import os
 import subprocess
 import sys
 import time
 import threading
+from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
+from podcast_transcript import safe_io
 from podcast_transcript.audio import resample_audio
 from podcast_transcript.safe_io import run_checked
+
+
+@pytest.fixture
+def failing_cleanup_log():
+    messages = []
+
+    class FailingHandler(logging.Handler):
+        def emit(self, record):
+            messages.append(record.getMessage())
+            raise RuntimeError("synthetic logging failure")
+
+    handler = FailingHandler()
+    safe_io.logger.addHandler(handler)
+    try:
+        yield messages
+    finally:
+        safe_io.logger.removeHandler(handler)
+        handler.close()
+
+
+def test_copy_cleanup_preserves_source_error(tmp_path, mocker, failing_cleanup_log):
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.write_bytes(b"replacement")
+    target.write_bytes(b"previous")
+    descriptors = {}
+    close_attempts = []
+    real_open, real_close = os.open, os.close
+    source_error = OSError("synthetic source read failure")
+    budget = safe_io.TranscriptWorkBudget()
+    mocker.patch.object(budget, "charge", side_effect=source_error)
+
+    def open_owned(path, flags, *args, **kwargs):
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if path == source or flags & os.O_EXCL:
+            descriptors[descriptor] = "input" if path == source else "output"
+        return descriptor
+
+    def close_owned(descriptor):
+        real_close(descriptor)
+        if descriptor in descriptors:
+            close_attempts.append(descriptors.pop(descriptor))
+            raise OSError("synthetic descriptor close failure")
+
+    mocker.patch.object(os, "open", side_effect=open_owned)
+    mocker.patch.object(os, "close", side_effect=close_owned)
+    with pytest.raises(OSError) as raised:
+        safe_io.copy_file_atomic(source, target, budget=budget)
+
+    assert raised.value is source_error
+    assert close_attempts == ["input", "output"]
+    assert failing_cleanup_log == [
+        "Could not close the transcript input descriptor.",
+        "Could not close the staged transcript output descriptor.",
+    ]
+    assert target.read_bytes() == b"previous"
+    assert not list(tmp_path.glob(".output-*"))
+
+
+def test_command_cleanup_preserves_timeout(mocker, failing_cleanup_log):
+    stdout, stderr = BytesIO(b"partial stdout"), BytesIO(b"bounded diagnostic")
+    process = mocker.MagicMock(pid=123, returncode=None, stdout=stdout, stderr=stderr)
+    process.__enter__.return_value = process
+    mocker.patch.object(subprocess, "Popen", return_value=process)
+    clock = mocker.patch.object(time, "monotonic", return_value=100)
+
+    def observe_running_child(*args):
+        clock.return_value = 110
+        return None
+
+    mocker.patch.object(
+        safe_io,
+        "os",
+        SimpleNamespace(
+            name="posix",
+            waitid=observe_running_child,
+            P_PID=1,
+            WEXITED=2,
+            WNOWAIT=4,
+            WNOHANG=8,
+        ),
+    )
+    retire = mocker.patch.object(
+        safe_io, "_kill_owned_tree", side_effect=OSError("synthetic retirement failure")
+    )
+    join = mocker.spy(threading.Thread, "join")
+
+    with pytest.raises(
+        RuntimeError, match="synthetic timed out after 10 seconds: bounded diagnostic"
+    ):
+        safe_io.capture_checked(["synthetic"], description="synthetic", timeout=10)
+
+    retire.assert_called_once_with(process)
+    process.__exit__.assert_called_once()
+    assert stdout.closed and stderr.closed
+    assert (
+        len(
+            {
+                call.args[0]
+                for call in join.call_args_list
+                if call.kwargs.get("timeout") == 0.2
+            }
+        )
+        == 2
+    )
+    assert failing_cleanup_log == ["Could not complete owned command tree cleanup."]
 
 
 @pytest.mark.parametrize("interrupt", [False, True])
@@ -129,9 +240,7 @@ def test_whisper_cli_uses_separate_transcription_budget(mocker, tmp_path):
 def test_completed_leader_retires_pipe_detached_descendants(
     tmp_path, monkeypatch, status
 ):
-    import os
     import signal
-    from podcast_transcript import safe_io
 
     ready = tmp_path / "ready"
     survived = tmp_path / "survived"
@@ -184,9 +293,6 @@ def test_completed_leader_retires_pipe_detached_descendants(
 
 
 def test_copy_refuses_source_rewritten_between_blocks(tmp_path, monkeypatch):
-    import os
-    from podcast_transcript import safe_io
-
     source, target = tmp_path / "source", tmp_path / "target"
     source.write_bytes(b"abcdefgh")
     target.write_bytes(b"previous completed transcript")

@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 
 from collections.abc import Iterator, Generator
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, suppress
 from pathlib import Path
 from time import monotonic
 
@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 
 STDERR_TAIL_LINES = 20
 STDERR_TAIL_CHARS = 2000
+
+
+def _warn_cleanup_failure(message: str) -> None:
+    """Keep a failing log handler from masking the active error."""
+    with suppress(Exception):
+        logger.warning(message)
 
 
 class PublicationUncertainError(OSError):
@@ -130,7 +136,9 @@ def _output_descriptor(path: Path) -> Iterator[int]:
         try:
             os.close(descriptor)
         except OSError:
-            logger.warning("Could not close the staged transcript output descriptor.")
+            _warn_cleanup_failure(
+                "Could not close the staged transcript output descriptor."
+            )
         raise
     else:
         os.close(descriptor)
@@ -237,7 +245,7 @@ def regular_file_blocks(
         try:
             os.close(descriptor)
         except OSError:
-            logger.warning("Could not close the transcript input descriptor.")
+            _warn_cleanup_failure("Could not close the transcript input descriptor.")
         raise
     else:
         os.close(descriptor)
@@ -513,7 +521,9 @@ def capture_checked(
                 try:
                     _kill_owned_tree(process)
                 except Exception:
-                    logger.warning("Could not complete owned command tree cleanup.")
+                    _warn_cleanup_failure(
+                        "Could not complete owned command tree cleanup."
+                    )
             if isinstance(exc, subprocess.TimeoutExpired):
                 tail = diagnostic_tail()
                 raise RuntimeError(
