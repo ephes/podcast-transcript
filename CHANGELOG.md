@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Check the single-chunk DOTe line limit before validating cues, preserving existing output on refusal.
+
 - Report readability budget refusals before replacement and preserve the published transcripts and recovery copy.
 
 - Reap the Windows child after `taskkill` fails and preserve the original capture error.

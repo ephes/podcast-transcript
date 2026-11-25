@@ -321,8 +321,7 @@ def combine_dote_chunks(
             )
         except RuntimeError as exc:
             raise ValueError(str(exc)) from None
-        data = load_dote(source_dote_file, snapshot=snapshot)
-        _check_combined_budget(len(data["lines"]), len(snapshot))
+        load_dote(source_dote_file, snapshot=snapshot, max_lines=COMBINED_MAX_LINES)
         rprint(f"Copying {source_dote_file} to {output_path}")
         write_bytes_atomic(output_path, snapshot)
         return None
