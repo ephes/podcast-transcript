@@ -69,6 +69,31 @@ def test_native_output_growth_after_fstat_is_bounded(monkeypatch, tmp_path):
         safe_io.read_regular_bounded(source, limit=8, description="Native output")
 
 
+@pytest.mark.parametrize(
+    "limit,reason",
+    [(3, "exceeded byte limit"), (4, "could not close after reading")],
+)
+def test_bounded_read_reports_close_failure_only_without_primary_error(
+    monkeypatch, tmp_path, limit, reason
+):
+    source = tmp_path / "transcript.json"
+    source.write_bytes(b"data")
+    real_close = os.close
+    close_attempts = []
+
+    def close_then_fail(descriptor):
+        close_attempts.append(descriptor)
+        real_close(descriptor)
+        raise OSError("synthetic close detail")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "close", close_then_fail)
+        with pytest.raises(RuntimeError, match=f"Transcript {reason}") as raised:
+            safe_io.read_regular_bounded(source, limit=limit, description="Transcript")
+    assert "synthetic close detail" not in str(raised.value)
+    assert len(close_attempts) == 1
+
+
 def test_deeply_nested_native_output_is_normalized(tmp_path):
     source = tmp_path / "native.json"
     source.write_text("[" * 200_000 + "]" * 200_000)

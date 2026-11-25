@@ -524,6 +524,8 @@ the exact admitted bytes, including whitespace.
 A source that changes during the read is refused. Exceeding either limit fails explicitly. Split
 unusually large episodes into separate inputs. A refused settings replacement preserves all previous
 completed exports.
+If closing a bounded input also fails, the reader reports the original refusal. A close failure
+on its own also rejects the read.
 Multi-chunk assembly reuses the validated cue times when shifting each chunk. It validates
 the combined cues before serializing directly to staging without another episode-sized join.
 

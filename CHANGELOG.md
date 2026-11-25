@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Preserve a bounded transcript read refusal when closing its input descriptor also fails.
+
 - Enforce the Groq and Voxhelm request deadline through construction of the in-memory response.
 
 - Reject oversized Groq and Voxhelm responses before reading the body when Content-Length declares their size unambiguously.

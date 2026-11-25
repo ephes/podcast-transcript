@@ -2,6 +2,7 @@
 
 import os
 import stat
+from contextlib import suppress
 from pathlib import Path
 
 
@@ -53,6 +54,14 @@ def read_regular_bounded(
             or len(data) != info.st_size
         ):
             raise RuntimeError(f"{description} changed during read.")
-        return bytes(data)
-    finally:
+        result = bytes(data)
+    except BaseException:
+        # Closing an owned descriptor must preserve the read or admission error.
+        with suppress(OSError):
+            os.close(descriptor)
+        raise
+    try:
         os.close(descriptor)
+    except OSError:
+        raise RuntimeError(f"{description} could not close after reading.") from None
+    return result
