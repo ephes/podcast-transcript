@@ -1397,6 +1397,7 @@ def test_webvtt_parses_each_dote_endpoint_once(tmp_path, monkeypatch, mocker):
     from podcast_transcript import single_track, transcript_validation
 
     dote = whisper_to_dote([{"start": 1.0001, "end": 1.0002, "text": "Quantized"}])
+    dote["lines"][0].update(startTime="000000:00:01,000", endTime="000000:00:01,000")
     dote["lines"].append(
         {"startTime": "00:00:02,000", "endTime": "00:00:03,000", "text": " "}
     )
@@ -1406,7 +1407,7 @@ def test_webvtt_parses_each_dote_endpoint_once(tmp_path, monkeypatch, mocker):
         end = f"000123:00:01,{index:03}"
         dote["lines"].append({"startTime": start, "endTime": end, "text": "Café &"})
         expected.append(
-            f"\n000123:00:00.{index:03} --> 000123:00:01.{index:03}\nCafé &amp;\n"
+            f"\n123:00:00.{index:03} --> 123:00:01.{index:03}\nCafé &amp;\n"
         )
 
     source = tmp_path / "input.dote.json"
