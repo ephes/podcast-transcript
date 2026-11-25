@@ -681,8 +681,10 @@ MLX inference runs in a separate worker process owned by the CLI, so the CLI pro
 and the current directory is removed from its import path. Model, language and prompt are passed
 through a private file rather than the command line. A stalled or crashed worker is killed and reaped
 like whisper-cli; the episode lock is released, previous transcripts are kept and a retry starts a
-new worker. The worker's JSON result is admitted with the same 64 MiB regular-file bound and
-validated before publication. Each chunk pays the worker start-up and model load time.
+new worker. The worker stops writing before its JSON result would exceed 64 MiB, and the CLI
+removes the partial result and preserves any previous transcript. The CLI also enforces the
+64 MiB regular-file bound when reading and validates the result before publication. Each chunk
+pays the worker start-up and model load time.
 
 The JSON that whisper-cli writes is admitted before parsing: it must be a regular file (no FIFO,
 symlink or directory) of at most 64 MiB, counted while reading even if it grows. Oversized,

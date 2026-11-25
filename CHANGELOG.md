@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Enforce the 64 MiB MLX result limit during writing and preserve the previous transcript on overflow.
+
 - Reject negative, non-integer and out-of-range DOTe timestamps at formatting time. A chunk cue
   shifted past the limit names its chunk file and line.
 

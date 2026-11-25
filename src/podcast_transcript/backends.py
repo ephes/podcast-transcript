@@ -362,6 +362,7 @@ class MLX:
                         "word_timestamps": self.word_timestamps,
                         "prompt": self.prompt,
                         "language": self.language,
+                        "result_max_bytes": LOCAL_TRANSCRIPT_MAX_BYTES,
                     }
                 )
             )

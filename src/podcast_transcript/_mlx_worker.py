@@ -29,8 +29,15 @@ def main(argv: list[str]) -> int:
         initial_prompt=params["prompt"],
         language=params["language"],
     )
-    with open(argv[1], "x", encoding="utf-8") as file:
-        json.dump(result, file)
+    remaining = params["result_max_bytes"]
+    with open(argv[1], "xb") as file:
+        for chunk in json.JSONEncoder().iterencode(result):
+            block = chunk.encode("utf-8")
+            if len(block) > remaining:
+                print("MLX transcript output exceeded byte limit.", file=sys.stderr)
+                return 4
+            file.write(block)
+            remaining -= len(block)
     return 0
 
 
