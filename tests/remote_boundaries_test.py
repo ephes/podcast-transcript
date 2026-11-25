@@ -95,10 +95,37 @@ class Blocks(httpx.SyncByteStream, httpx.AsyncByteStream):
         self.closed = True
 
 
+@pytest.mark.parametrize("status", [200, 429, 503])
+@pytest.mark.parametrize(
+    "length",
+    ["101", "0" * 5000 + "101", "9" * 5000],
+    ids=["decimal", "leading-zeroes", "huge-decimal"],
+)
+def test_remote_oversized_declared_length_skips_body(monkeypatch, status, length):
+    monkeypatch.setattr(backends, "REMOTE_RESPONSE_MAX_BYTES", 100)
+
+    class Unreadable(Blocks):
+        async def __aiter__(self):
+            pytest.fail("oversized response body was read")
+            yield b""
+
+    stream = Unreadable([])
+    transport(
+        monkeypatch,
+        lambda req: httpx.Response(
+            status, stream=stream, headers={"Content-Length": length}
+        ),
+    )
+    with pytest.raises(RuntimeError, match="response.*byte limit"):
+        backends.remote_response("Voxhelm", "https://example.test/transcribe")
+    assert stream.closed
+
+
 @pytest.mark.parametrize("name", ["groq", "voxhelm"])
 @pytest.mark.parametrize("status", [200, 503, 429])
 @pytest.mark.parametrize(
-    "encoding,length", [(None, None), (None, "1"), ("identity", "1")]
+    "encoding,length",
+    [(None, None), (None, "1"), ("identity", "1"), (None, "101, 1")],
 )
 def test_remote_decoded_budget_closes_and_preserves(
     monkeypatch, tmp_path, name, status, encoding, length

@@ -45,6 +45,20 @@ REMOTE_RESPONSE_MAX_BYTES = 32 * 1024 * 1024
 REMOTE_ERROR_MAX_CHARS = 2000
 
 
+def _declared_response_is_oversized(headers: httpx.Headers) -> bool:
+    # Transfer-Encoding takes precedence. Missing or ambiguous lengths leave
+    # admission to the byte counter.
+    if "Transfer-Encoding" in headers:
+        return False
+    length = headers.get("Content-Length", "").strip(" \t")
+    if not length.isascii() or not length.isdecimal():
+        return False
+    length = length.lstrip("0")
+    limit = str(REMOTE_RESPONSE_MAX_BYTES)
+    # Compare decimal digits without converting an unbounded integer.
+    return (len(length), length) > (len(limit), limit)
+
+
 def remote_response(backend: str, url: str, **kwargs) -> httpx.Response:
     """Bound the complete request, including server computation and body transfer.
 
@@ -76,12 +90,15 @@ def remote_response(backend: str, url: str, **kwargs) -> httpx.Response:
                         f"{backend} transcription response used an unsupported "
                         "Content-Encoding; identity is required."
                     )
+                overflow = (
+                    f"{backend} transcription response exceeded byte limit (32 MiB)."
+                )
+                if _declared_response_is_oversized(response.headers):
+                    raise RuntimeError(overflow)
                 body = bytearray()
                 async for block in response.aiter_bytes(chunk_size=64 * 1024):
                     if len(body) + len(block) > REMOTE_RESPONSE_MAX_BYTES:
-                        raise RuntimeError(
-                            f"{backend} transcription response exceeded byte limit (32 MiB)."
-                        )
+                        raise RuntimeError(overflow)
                     body.extend(block)
                 response_headers = dict(response.headers)
                 # Retain charset/rate-limit headers; the body is already complete.

@@ -188,7 +188,9 @@ You can also set the following environment variables or specify them in the .env
   excessively nested JSON, provides no usable delay and stops the run without another request.
 
 Remote Groq and Voxhelm responses (success and error) are streamed with a 32 MiB body limit,
-independent of Content-Length. Requests replace any supplied spelling of `Accept-Encoding`
+even when Content-Length is missing or ambiguous. An unambiguous Content-Length above the
+limit is refused before reading the body when Transfer-Encoding is absent. Requests replace
+any supplied spelling of `Accept-Encoding`
 with a single `identity` value and preserve other headers. A successful transcript response
 must use HTTP 200 without `Content-Range`. Other 2xx statuses (including 206) and HTTP 200
 with `Content-Range` are refused before reading or caching the transcript. A response with
