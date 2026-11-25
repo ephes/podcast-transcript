@@ -743,8 +743,11 @@ def fail_staged_text_write(monkeypatch):
     "texts, expected",
     [
         ([], ""),
-        (["first", "last"], "first\nlast"),
-        (["café\nline two", "", "日本語\n"], "café\nline two\n\n日本語\n"),
+        (["first", "last"], f"first{os.linesep}last"),
+        (
+            ["café\nline two", "", "日本語\n"],
+            f"café\nline two{os.linesep}{os.linesep}日本語\n",
+        ),
     ],
 )
 def test_plaintext_export_bytes(tmp_path, texts, expected):
@@ -758,7 +761,25 @@ def test_plaintext_export_bytes(tmp_path, texts, expected):
 
     convert_to_plaintext(source, output)
 
-    assert output.read_bytes() == expected.replace("\n", os.linesep).encode("utf-8")
+    assert output.read_bytes() == expected.encode("utf-8")
+
+
+def test_plaintext_reuses_existing_cue_breaks(tmp_path):
+    from podcast_transcript.single_track import convert_to_plaintext
+
+    source = _write_dote(
+        tmp_path / "input.dote.json",
+        [
+            ("00:00:00,000", "00:00:01,000", "intro\n\nparagraph\n"),
+            ("00:00:01,000", "00:00:02,000", "second\r\n"),
+            ("00:00:02,000", "00:00:03,000", "last\r\n"),
+        ],
+    )
+    output = tmp_path / "output.txt"
+
+    convert_to_plaintext(source, output)
+
+    assert output.read_bytes() == b"intro\n\nparagraph\nsecond\r\nlast\r\n"
 
 
 def test_plaintext_mid_write_failure_preserves_previous_export(
@@ -1397,6 +1418,7 @@ def test_webvtt_parses_each_dote_endpoint_once(tmp_path, monkeypatch, mocker):
     from podcast_transcript import single_track, transcript_validation
 
     dote = whisper_to_dote([{"start": 1.0001, "end": 1.0002, "text": "Quantized"}])
+    dote["lines"][0].update(startTime="000000:00:01,000", endTime="000000:00:01,000")
     dote["lines"].append(
         {"startTime": "00:00:02,000", "endTime": "00:00:03,000", "text": " "}
     )
@@ -1406,7 +1428,7 @@ def test_webvtt_parses_each_dote_endpoint_once(tmp_path, monkeypatch, mocker):
         end = f"000123:00:01,{index:03}"
         dote["lines"].append({"startTime": start, "endTime": end, "text": "Café &"})
         expected.append(
-            f"\n000123:00:00.{index:03} --> 000123:00:01.{index:03}\nCafé &amp;\n"
+            f"\n123:00:00.{index:03} --> 123:00:01.{index:03}\nCafé &amp;\n"
         )
 
     source = tmp_path / "input.dote.json"

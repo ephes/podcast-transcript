@@ -422,18 +422,18 @@ def _write_webvtt(cues: tuple[_ExportCue, ...], vtt_path: Path) -> None:
         with temporary.open("x", encoding="utf-8") as target:
             target.write("WEBVTT\n")
             for cue in cues:
-                end_time = cue.end_time
                 text = cue.text.replace("\0", "\ufffd")
                 text = text.replace("\r\n", "\n").replace("\r", "\n")
                 text = re.sub(r"\n(?:[ \t]*\n)+", "\n", text).strip("\n")
                 if not text.strip():
                     continue
-                if cue.end_ms == cue.start_ms:
-                    # Quantization can collapse an admitted span. Extend only this
-                    # rendered cue, even if its end crosses the DOTe ceiling.
-                    end_time = _format_timecode(cue.start_ms + 1, separator=".")
+                # Keep quantized zero spans visible, even at the DOTe ceiling.
+                start_time = _format_timecode(cue.start_ms, separator=".")
+                end_time = _format_timecode(
+                    max(cue.end_ms, cue.start_ms + 1), separator="."
+                )
                 text = escape(text, quote=False)
-                target.write(f"\n{cue.start_time} --> {end_time}\n{text}\n")
+                target.write(f"\n{start_time} --> {end_time}\n{text}\n")
 
 
 def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
@@ -443,10 +443,10 @@ def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
 
 def _write_plaintext(cues: tuple[_ExportCue, ...], plaintext_path: Path) -> None:
     with atomic_output(plaintext_path) as temporary:
-        with temporary.open("x", encoding="utf-8") as target:
+        with temporary.open("x", encoding="utf-8", newline="") as target:
             for index, cue in enumerate(cues):
-                if index:
-                    target.write("\n")
+                if index and not cues[index - 1].text.endswith(("\r", "\n")):
+                    target.write(os.linesep)
                 target.write(cue.text)
 
 

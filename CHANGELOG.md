@@ -3,6 +3,10 @@ Unreleased
 
 ### Fixes
 
+- Reuse a cue's trailing line break as the plaintext separator, preserving paragraphs and final line breaks.
+
+- Format WebVTT timestamps consistently when cached DOTe times contain extra leading hour zeros.
+
 - Refuse publication when a staged output changes between syncing the file and checking its name before rename.
 
 - Preserve a bounded transcript read refusal when closing its input descriptor also fails.
