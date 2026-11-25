@@ -443,10 +443,10 @@ def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
 
 def _write_plaintext(cues: tuple[_ExportCue, ...], plaintext_path: Path) -> None:
     with atomic_output(plaintext_path) as temporary:
-        with temporary.open("x", encoding="utf-8") as target:
+        with temporary.open("x", encoding="utf-8", newline="") as target:
             for index, cue in enumerate(cues):
-                if index:
-                    target.write("\n")
+                if index and not cues[index - 1].text.endswith(("\r", "\n")):
+                    target.write(os.linesep)
                 target.write(cue.text)
 
 

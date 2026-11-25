@@ -610,8 +610,9 @@ that snapshot does not affect these exports. Existing exports are reused.
   zeros in older DOTe files are removed from the WebVTT export.
   Cues are written as UTF-8 to a private staging file, then the export is published after writing succeeds.
 - **Plaintext**: UTF-8 transcript text, written one DOTe entry at a time to a private staging file.
-  Entries are separated by newlines, with embedded line breaks preserved. An empty transcript
-  produces a zero-byte file. The export is published after writing succeeds.
+  A trailing line break in a cue also separates it from the next cue. Otherwise the exporter inserts
+  a platform newline between cues. Line breaks within cue text and at the end of the final cue are
+  preserved. An empty transcript produces a zero-byte file. The export is published after writing succeeds.
 
 ## Troubleshooting
 
