@@ -1,5 +1,6 @@
 """Synthetic native tool admission tests."""
 
+import errno
 import json
 import subprocess
 import sys
@@ -228,6 +229,87 @@ def test_capture_shares_deadline_between_startup_and_exit(mocker, startup, exit_
             safe_io.capture_checked(cmd, description="synthetic", timeout=10)
             == b"complete"
         )
+    cleanup.assert_called_once_with(process)
+
+
+@pytest.mark.parametrize(
+    "observation", ["exit", "registration-event", "registration-error", "late-esrch"]
+)
+def test_capture_requires_owned_kqueue_exit_observation(mocker, observation):
+    process = mocker.MagicMock(pid=123, returncode=None, stdout=None, stderr=None)
+    process.__enter__.return_value = process
+    mocker.patch.object(subprocess, "Popen", return_value=process)
+    mocker.patch.object(safe_io, "os", SimpleNamespace(name="posix"))
+    clock = mocker.patch.object(time, "monotonic", return_value=0.0)
+    queue = mocker.Mock()
+    registration = object()
+    kqueue = SimpleNamespace(
+        kqueue=lambda: queue,
+        kevent=mocker.Mock(return_value=registration),
+        KQ_FILTER_PROC=-5,
+        KQ_EV_ADD=1,
+        KQ_EV_ONESHOT=16,
+        KQ_EV_ERROR=16384,
+        KQ_NOTE_EXIT=1 << 31,
+    )
+    mocker.patch.object(safe_io, "select", kqueue)
+
+    def event(*, pid=123, filter_id=kqueue.KQ_FILTER_PROC, flags=0, fflags=0, data=0):
+        return SimpleNamespace(
+            ident=pid, filter=filter_id, flags=flags, fflags=fflags, data=data
+        )
+
+    esrch = event(flags=kqueue.KQ_EV_ERROR, data=errno.ESRCH)
+    if observation == "exit":
+        results = iter(
+            [
+                [event()],
+                [event(pid=456, fflags=kqueue.KQ_NOTE_EXIT)],
+                [event(filter_id=-1, fflags=kqueue.KQ_NOTE_EXIT)],
+                [event(fflags=kqueue.KQ_NOTE_EXIT)],
+            ]
+        )
+    elif observation == "registration-event":
+        results = iter([[esrch]])
+    elif observation == "registration-error":
+        results = iter([ProcessLookupError(errno.ESRCH, "synthetic")])
+    else:
+        results = iter([[], [esrch]])
+
+    def control(changes, max_events, timeout):
+        clock.return_value += 0.02
+        result = next(results)
+        if isinstance(result, OSError):
+            raise result
+        return result
+
+    def retire(owned):
+        assert owned.returncode is None
+        owned.returncode = 0
+
+    queue.control.side_effect = control
+    cleanup = mocker.patch.object(safe_io, "_kill_owned_tree", side_effect=retire)
+    cmd = ["synthetic-probe"]
+    if observation == "late-esrch":
+        with pytest.raises(RuntimeError, match="Could not observe owned command exit"):
+            safe_io.capture_checked(cmd, description="synthetic", timeout=0.09)
+    else:
+        assert (
+            safe_io.capture_checked(cmd, description="synthetic", timeout=0.09) == b""
+        )
+    waits = [call.args[2] for call in queue.control.call_args_list]
+    expected_waits = {
+        "exit": [0.05, 0.05, 0.05, 0.03],
+        "registration-event": [0.05],
+        "registration-error": [0.05],
+        "late-esrch": [0.05, 0.05],
+    }
+    assert waits == pytest.approx(expected_waits[observation])
+    assert [call.args[0] for call in queue.control.call_args_list] == [
+        [registration],
+        *([[]] * (len(waits) - 1)),
+    ]
+    queue.close.assert_called_once_with()
     cleanup.assert_called_once_with(process)
 
 

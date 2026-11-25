@@ -414,6 +414,9 @@ pipe keeps the command incomplete, even if its parent exited successfully. This 
 identity until cleanup. On POSIX, exit is observed without reaping the leader, then the owned
 process group is killed before accepting any exit status, including zero. Children in that group
 are retired even if they close or redirect both pipes; unrelated process groups are not signaled.
+On macOS without `waitid`, the supervisor waits for the owned child's `NOTE_EXIT` kqueue
+notification or an `ESRCH` from registering that child. Other notifications leave the
+command waiting within its original deadline.
 Children that deliberately create a new session/group are outside this ownership contract.
 On Windows, timeout/error cleanup uses `taskkill /T`; successful pipe-detached descendants do not
 have the POSIX group-retirement guarantee.
