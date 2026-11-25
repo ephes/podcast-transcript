@@ -735,6 +735,10 @@ episode cache aside and process the source as separate, shorter files.
 ### Output durability errors
 
 When writing fails before an atomic replacement, the destination retains its prior contents.
+Immediately before rename, the staged name is checked against the generation that was synced.
+A detected change refuses publication and leaves the destination intact.
+On POSIX the synced descriptor stays open through rename. On Windows the descriptor is
+closed before the final name check because an open descriptor blocks rename.
 If a staged text or binary output stream cannot be opened, the writer closes its file descriptor
 and reports the stream error.
 A transcript copy retains its original failure if closing the source or staged output descriptor

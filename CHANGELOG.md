@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Refuse publication when a staged output changes between syncing the file and checking its name before rename.
+
 - Preserve a bounded transcript read refusal when closing its input descriptor also fails.
 
 - Enforce the Groq and Voxhelm request deadline through construction of the in-memory response.

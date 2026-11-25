@@ -84,15 +84,34 @@ def sync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _sync_regular_descriptor(
+    descriptor: int, *, expected_generation: tuple[int, ...] | None = None
+) -> None:
+    info = os.fstat(descriptor)
+    if not stat.S_ISREG(info.st_mode):
+        raise RuntimeError("Publication requires a regular file or symlink.")
+    if expected_generation is not None and file_generation(info) != expected_generation:
+        raise RuntimeError("Staged output changed before publication.")
+    os.fsync(descriptor)
+
+
 def sync_file(path: Path) -> None:
     """Sync an admitted regular artifact before its completion is recorded."""
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
     try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise RuntimeError("Publication requires a regular file or symlink.")
-        os.fsync(descriptor)
+        _sync_regular_descriptor(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _replace_staged(source: Path, target: Path, generation: tuple[int, ...]) -> None:
+    try:
+        current = source.lstat()
+    except FileNotFoundError:
+        raise RuntimeError("Staged output changed before publication.") from None
+    if file_generation(current) != generation:
+        raise RuntimeError("Staged output changed before publication.")
+    os.replace(source, target)
 
 
 def durable_replace(source: Path, target: Path) -> None:
@@ -103,9 +122,35 @@ def durable_replace(source: Path, target: Path) -> None:
 
     Raise ``PublicationUncertainError`` if a directory sync fails after rename.
     """
-    if not source.is_symlink():
-        sync_file(source)
-    os.replace(source, target)
+    staged = source.lstat()
+    generation = file_generation(staged)
+    if stat.S_ISLNK(staged.st_mode):
+        _replace_staged(source, target, generation)
+    else:
+        flags = (
+            os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+        )
+        descriptor = os.open(source, flags)
+        try:
+            _sync_regular_descriptor(descriptor, expected_generation=generation)
+            if os.name != "nt":
+                _replace_staged(source, target, generation)
+        except BaseException:
+            with suppress(OSError):
+                os.close(descriptor)
+            raise
+        if os.name == "nt":
+            # Windows CRT descriptors prevent renaming the open file.
+            os.close(descriptor)
+            _replace_staged(source, target, generation)
+        else:
+            # Closing the read-only pin cannot undo the publication.
+            try:
+                os.close(descriptor)
+            except OSError:
+                _warn_cleanup_failure(
+                    "Could not close the staged publication descriptor."
+                )
     directory = target.parent
     try:
         sync_directory(directory)

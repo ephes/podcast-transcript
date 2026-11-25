@@ -7,6 +7,7 @@ import os
 import shutil
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -168,12 +169,71 @@ def test_atomic_output_publishes_near_limit_media_name(tmp_path):
     assert not stage.parent.exists()
 
 
-def test_atomic_output_syncs_data_then_rename_then_directory(tmp_path, monkeypatch):
+@pytest.mark.parametrize("platform", ["posix", "nt"])
+def test_atomic_output_syncs_data_then_rename_then_directory(
+    tmp_path, monkeypatch, platform
+):
     events = record_publication(monkeypatch)
+    record_sync, record_replace = os.fsync, os.replace
+    synced_descriptor = None
+
+    def sync(descriptor):
+        nonlocal synced_descriptor
+        if stat.S_ISREG(os.fstat(descriptor).st_mode):
+            synced_descriptor = descriptor
+        record_sync(descriptor)
+
+    def replace(source, target):
+        assert synced_descriptor is not None
+        if platform == "nt":
+            with pytest.raises(OSError) as raised:
+                os.fstat(synced_descriptor)
+            assert raised.value.errno == errno.EBADF
+        else:
+            assert os.fstat(synced_descriptor).st_ino == source.lstat().st_ino
+        record_replace(source, target)
+
+    platform_os = SimpleNamespace(
+        **{**vars(os), "name": platform, "fsync": sync, "replace": replace}
+    )
+    monkeypatch.setattr(safe_io, "os", platform_os)
     safe_io.write_text_atomic(tmp_path / "result.json", "complete")
     assert events[0] == ("file", None)
     assert events[1] == ("replace", "result.json")
     assert events[2][0] == "directory"
+
+
+@pytest.mark.parametrize("change", ["replace", "rewrite", "unlink"])
+@pytest.mark.skipif(
+    os.name == "nt", reason="Fault mutates a file opened without delete sharing"
+)
+def test_atomic_output_refuses_stage_changed_after_sync(tmp_path, monkeypatch, change):
+    target = tmp_path / "result.json"
+    target.write_bytes(b"previous")
+    real_sync = os.fsync
+    synced = []
+
+    def sync_then_change(descriptor):
+        real_sync(descriptor)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return
+        synced.append(descriptor)
+        if change == "replace":
+            replacement = stage.with_name("different.json")
+            replacement.write_bytes(b"changed")
+            replacement.replace(stage)
+        elif change == "rewrite":
+            stage.write_bytes(b"changed size")
+        else:
+            stage.unlink()
+
+    monkeypatch.setattr(os, "fsync", sync_then_change)
+    with pytest.raises(RuntimeError, match="Staged output changed before publication"):
+        with safe_io.atomic_output(target) as stage:
+            stage.write_bytes(b"replacement")
+    assert len(synced) == 1
+    assert target.read_bytes() == b"previous"
+    assert not stage.parent.exists()
 
 
 @pytest.mark.parametrize(
