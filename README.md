@@ -751,6 +751,8 @@ episode cache aside and process the source as separate, shorter files.
 ### Output durability errors
 
 When writing fails before an atomic replacement, the destination retains its prior contents.
+Atomic text and binary writes reject incomplete writes before replacing the destination.
+Text written by the shared atomic writer, including JSON receipts, uses UTF-8.
 Immediately before rename, the staged name is checked against the generation that was synced.
 A detected change refuses publication and leaves the destination intact.
 On POSIX the synced descriptor stays open through rename. On Windows the descriptor is

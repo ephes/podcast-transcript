@@ -17,10 +17,11 @@ import stat
 import subprocess
 import tempfile
 
-from collections.abc import Iterator, Generator
+from collections.abc import Callable, Iterator, Generator
 from contextlib import closing, contextmanager, suppress
 from pathlib import Path
 from time import monotonic
+from typing import TypeVar
 
 from .config import private_mkdir, settings
 from .input_admission import file_generation
@@ -189,18 +190,27 @@ def _output_descriptor(path: Path) -> Iterator[int]:
         os.close(descriptor)
 
 
+_OutputData = TypeVar("_OutputData", str, bytes)
+
+
+def write_complete(write: Callable[[_OutputData], int], data: _OutputData) -> None:
+    """Refuse a staged write that did not accept all characters or bytes."""
+    if write(data) != len(data):
+        raise OSError("Incomplete output write.")
+
+
 def write_text_atomic(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` so that a crash never leaves a partial file."""
     with atomic_output(path) as tmp_path, _output_descriptor(tmp_path) as descriptor:
-        with os.fdopen(descriptor, "w", closefd=False) as file:
-            file.write(text)
+        with os.fdopen(descriptor, "w", encoding="utf-8", closefd=False) as file:
+            write_complete(file.write, text)
 
 
 def write_bytes_atomic(path: Path, data: bytes) -> None:
     """Write ``data`` exactly to ``path`` so that a crash never leaves a partial file."""
     with atomic_output(path) as tmp_path, _output_descriptor(tmp_path) as descriptor:
         with os.fdopen(descriptor, "wb", closefd=False) as file:
-            file.write(data)
+            write_complete(file.write, data)
 
 
 COPY_BUFFER_BYTES = 1024 * 1024

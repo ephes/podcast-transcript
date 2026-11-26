@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Refuse incomplete atomic text and binary writes before replacing the destination, and write JSON receipts as UTF-8.
+
 - Enforce the episode DOTe line limit when regenerating missing exports from a cached combined transcript.
 
 - Check each DOTe chunk against the remaining episode line budget before parsing its cue timestamps.
