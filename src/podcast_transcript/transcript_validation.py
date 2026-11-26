@@ -190,11 +190,13 @@ def load_dote(
     return cast(dict, data)
 
 
-def _iter_dote_file_cues(path: Path) -> Iterator[tuple[dict, int, int]]:
+def _iter_dote_file_cues(
+    path: Path, *, max_lines: int | None = None
+) -> Iterator[tuple[dict, int, int]]:
     """Yield validated cues from one admitted DOTe file."""
     data = _read_dote_json(path)
     try:
-        yield from _iter_validated_dote_cues(data)
+        yield from _iter_validated_dote_cues(data, max_lines=max_lines)
     except ValueError as exc:
         raise ValueError(f"{path.name}: {exc}") from None
 

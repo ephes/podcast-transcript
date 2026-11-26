@@ -66,6 +66,29 @@ def test_exact_episode_limits_preserve_bytes_and_timestamps(tmp_path, monkeypatc
     assert output.read_bytes() == expected_bytes
 
 
+def test_reject_chunk_before_parsing_cues_over_remaining_budget(
+    tmp_path, monkeypatch, mocker
+):
+    first = chunk(tmp_path / "first.json")
+    second = tmp_path / "second.json"
+    lines = [{"startTime": "00:00:02,000", "endTime": "00:00:02,001", "text": "second"}]
+    second.write_text(json.dumps({"lines": lines * 2}))
+    output = tmp_path / "combined.json"
+    output.write_bytes(b"previous")
+    monkeypatch.setattr(single_track, "COMBINED_MAX_LINES", 2)
+    parse = mocker.spy(transcript_validation, "parse_dote_timecode")
+
+    with pytest.raises(ValueError, match="Combined transcript.*limit") as error:
+        single_track.combine_dote_chunks([first, second], output, [1, 1])
+
+    assert [call.args[0] for call in parse.call_args_list] == [
+        "00:00:00,000",
+        "00:00:00,001",
+    ]
+    assert error.value.args[0].startswith("second.json: ")
+    assert output.read_bytes() == b"previous"
+
+
 def test_empty_chunk_inventory_preserves_existing_output(tmp_path):
     output = tmp_path / "combined.json"
     output.write_bytes(b'{"lines": [], "extra": true}')
