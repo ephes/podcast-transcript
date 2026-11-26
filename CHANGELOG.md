@@ -11,7 +11,7 @@ Unreleased
 
 - Report uncertain durability when a completion marker was removed but its parent sync failed, and repeat the sync before updating dependent files on retry, naming the absent marker and directory if it fails again.
 
-- Sync output directory entries in their parents before publishing files, including destinations already visible during concurrent creation or retained after a failed attempt. The parent of an existing output directory must now be readable.
+- Sync each output file's destination directory entry in its parent before publishing, including a destination already visible during concurrent creation or retained after a failed attempt. Existing intermediate ancestors are still treated as provisioned. The parent of an existing output directory must now be readable. Startup still only creates and syncs missing `TRANSCRIPT_HOME` and `TRANSCRIPT_DIR` directories.
 
 - Reject incomplete source audio writes before publishing the download and preserve any previous cached file.
 

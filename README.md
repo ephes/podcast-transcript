@@ -763,7 +763,8 @@ be published. The writer removes a directory it just created if it is still empt
 The parent of each output directory must therefore be readable and support directory fsync,
 even when the output directory already exists. A parent the writer can traverse but not read
 (for example mode `0711`) makes every write into that directory fail with this error until the
-parent is readable again.
+parent is readable again. Startup only creates and syncs `TRANSCRIPT_HOME` and `TRANSCRIPT_DIR`
+when they are missing, so commands that publish nothing do not depend on these checks.
 
 When writing fails before an atomic replacement, the destination retains its prior contents.
 Atomic text and binary writes reject incomplete writes before replacing the destination.

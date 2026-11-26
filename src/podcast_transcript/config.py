@@ -140,8 +140,10 @@ class Settings:
         else:
             self.transcript_home = Path.home() / ".podcast-transcripts"
 
-        # Create the transcript_home directory if it does not exist
-        private_mkdir(self.transcript_home)
+        # Create the transcript_home directory if it does not exist. Startup only
+        # provisions this root; publication syncs the entries it writes into.
+        if not self.transcript_home.is_dir():
+            private_mkdir(self.transcript_home)
 
         # Set the transcript directory - this is special because we want to create
         # the directory if it does not exist which is why we cannot wait until read_env_vars()
@@ -151,7 +153,8 @@ class Settings:
             self.transcript_dir = self.transcript_home / "transcripts"
 
         # Create the transcript directory if it does not exist
-        private_mkdir(self.transcript_dir)
+        if not self.transcript_dir.is_dir():
+            private_mkdir(self.transcript_dir)
 
         # Read the .env file
         env_file = self.transcript_home / ".env"

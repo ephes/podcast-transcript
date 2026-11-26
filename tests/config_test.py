@@ -24,6 +24,36 @@ def test_settings_initialization(tmp_path, monkeypatch):
     assert settings.transcript_dir.exists()
 
 
+def test_settings_startup_does_not_sync_existing_directories(tmp_path, monkeypatch):
+    from podcast_transcript import config
+
+    home = tmp_path / "home"
+    (home / "transcripts").mkdir(parents=True)
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(home))
+    monkeypatch.setenv("TRANSCRIPT_DIR", str(home / "transcripts"))
+    synced = []
+    monkeypatch.setattr(config, "sync_directory", synced.append)
+
+    Settings()
+
+    assert synced == []
+
+
+def test_settings_startup_syncs_new_directories(tmp_path, monkeypatch):
+    from podcast_transcript import config
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("TRANSCRIPT_HOME", str(home))
+    monkeypatch.setenv("TRANSCRIPT_DIR", str(home / "transcripts"))
+    synced = []
+    monkeypatch.setattr(config, "sync_directory", synced.append)
+
+    Settings()
+
+    assert synced == [tmp_path, home]
+    assert (home / "transcripts").is_dir()
+
+
 def test_env_file_value_containing_equals_round_trips(tmp_path, monkeypatch):
     monkeypatch.setenv("TRANSCRIPT_HOME", str(tmp_path))
     monkeypatch.setenv("TRANSCRIPT_DIR", str(tmp_path / "transcripts"))
