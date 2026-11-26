@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from podcast_transcript import audio, safe_io
+from podcast_transcript import audio, config, safe_io
 from podcast_transcript.config import settings
 from podcast_transcript.json_input import load_control_json
 
@@ -217,6 +217,63 @@ def test_atomic_output_syncs_new_ancestor_entries(
     ]
 
 
+def test_concurrent_output_checks_parent_before_publishing(tmp_path, monkeypatch):
+    directory = tmp_path / "transcripts"
+    first = directory / "first.txt"
+    second = directory / "second.txt"
+    mkdir = Path.mkdir
+    sync_directory = config.sync_directory
+    sync_error = OSError(errno.EIO, "synthetic parent sync failure")
+
+    def fail_parent_sync(path):
+        if path == tmp_path:
+            raise sync_error
+        sync_directory(path)
+
+    def mkdir_then_publish(path, *args, **kwargs):
+        mkdir(path, *args, **kwargs)
+        if path == directory:
+            # Run the second writer while the first is still inside mkdir.
+            with pytest.raises(OSError, match="Durability is uncertain") as raised:
+                safe_io.write_text_atomic(second, "second writer")
+            assert raised.value.__cause__ is sync_error
+            assert not second.exists()
+
+    monkeypatch.setattr(Path, "mkdir", mkdir_then_publish)
+    monkeypatch.setattr(config, "sync_directory", fail_parent_sync)
+    with pytest.raises(OSError, match="Durability is uncertain") as raised:
+        safe_io.write_text_atomic(first, "first writer")
+    assert raised.value.__cause__ is sync_error
+    assert not first.exists()
+
+
+def test_output_retry_checks_parent_of_retained_directory(tmp_path, monkeypatch):
+    directory = tmp_path / "transcripts"
+    previous = directory / "previous.txt"
+    target = directory / "result.txt"
+    sync_directory = config.sync_directory
+    sync_error = OSError(errno.EIO, "synthetic parent sync failure")
+
+    def fail_parent_sync(path):
+        if path == tmp_path:
+            if not previous.exists():
+                previous.write_text("previous")
+            raise sync_error
+        sync_directory(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(config, "sync_directory", fail_parent_sync)
+        for _ in range(2):
+            with pytest.raises(OSError, match="Durability is uncertain") as raised:
+                safe_io.write_text_atomic(target, "complete")
+            assert raised.value.__cause__ is sync_error
+            assert previous.read_text() == "previous"
+            assert not target.exists()
+
+    safe_io.write_text_atomic(target, "complete")
+    assert target.read_text() == "complete"
+
+
 @pytest.mark.parametrize("platform", ["posix", "nt"])
 def test_atomic_output_syncs_data_then_rename_then_directory(
     tmp_path, monkeypatch, platform
@@ -246,9 +303,12 @@ def test_atomic_output_syncs_data_then_rename_then_directory(
     )
     monkeypatch.setattr(safe_io, "os", platform_os)
     safe_io.write_text_atomic(tmp_path / "result.json", "complete")
-    assert events[0] == ("file", None)
-    assert events[1] == ("replace", "result.json")
-    assert events[2][0] == "directory"
+    assert events[:4] == [
+        ("directory", None),
+        ("file", None),
+        ("replace", "result.json"),
+        ("directory", None),
+    ]
 
 
 @pytest.mark.parametrize("change", ["replace", "rewrite", "unlink"])

@@ -37,28 +37,31 @@ def sync_directory(path: Path) -> None:
 
 
 def private_mkdir(path: Path) -> None:
-    """Create missing owner-only directories and sync their parent entries."""
-    if path.is_dir():
-        return
+    """Sync the requested directory entry and create any missing ancestors."""
     parent = path.parent
-    if parent != path:
+    if parent == path and path.is_dir():
+        return
+    # The first existing ancestor is provisioned by the caller. Always
+    # sync the requested entry, even when a prior mkdir made it visible.
+    if parent != path and not parent.is_dir():
         private_mkdir(parent)
     created = False
-    try:
-        path.mkdir(mode=0o700)
-        created = True
-    except FileExistsError:
-        if not path.is_dir():
-            raise
+    if not path.is_dir():
+        try:
+            path.mkdir(mode=0o700)
+            created = True
+        except FileExistsError:
+            if not path.is_dir():
+                raise
     try:
         sync_directory(parent)
     except OSError as exc:
         if created:
-            # Let a retry recreate and sync this entry if it is still empty.
+            # Remove only our own empty directory. A retry syncs a retained entry.
             with suppress(OSError):
                 path.rmdir()
         raise OSError(
-            f"Durability is uncertain for newly created directory {path} "
+            f"Durability is uncertain for output directory {path} "
             f"after directory sync failed for {parent}."
         ) from exc
 

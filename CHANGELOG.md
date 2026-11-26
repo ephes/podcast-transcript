@@ -9,7 +9,7 @@ Unreleased
 
 - Report uncertain durability when a completion marker was removed but its parent sync failed, and repeat the sync before updating dependent files on retry, naming the absent marker and directory if it fails again.
 
-- Sync each newly created output directory entry in its parent before publishing files.
+- Sync output directory entries in their parents before publishing files, including destinations already visible during concurrent creation or retained after a failed attempt.
 
 - Reject incomplete source audio writes before publishing the download and preserve any previous cached file.
 

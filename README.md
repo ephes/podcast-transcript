@@ -754,10 +754,12 @@ episode cache aside and process the source as separate, shorter files.
 
 ### Output durability errors
 
-On first use, each new output directory entry is synced in its parent before publishing
-files. If a parent sync fails during creation, the error names the directory with uncertain
-durability and the output has yet to be published. The newly created directory is removed if
-still empty so the next run can create it and retry the sync.
+Before staging an output, the writer syncs the destination directory entry in its parent.
+It repeats this step for existing destinations, including directories left behind by a failed
+attempt or created by another writer. It creates missing ancestors and syncs each new entry,
+treating the first existing ancestor above the destination as already provisioned. If a parent
+sync fails, the error names the directory with uncertain durability and the output has yet to
+be published. The writer removes a directory it just created if it is still empty.
 
 When writing fails before an atomic replacement, the destination retains its prior contents.
 Atomic text and binary writes reject incomplete writes before replacing the destination.
