@@ -923,6 +923,16 @@ def _chunk_directory_generation(audio: Audio) -> tuple[int, ...] | None:
         return None
 
 
+def _transcript_file_generation(
+    path: Path, budget: TranscriptWorkBudget
+) -> tuple[int, ...]:
+    budget.check()
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode):
+        raise OSError("Transcript backup requires a regular file.")
+    return file_generation(info)
+
+
 def _promote_transcripts(
     audio: Audio, staged: Audio, audio_generation: dict[str, str | None]
 ) -> None:
@@ -934,6 +944,10 @@ def _promote_transcripts(
     new_generation = _chunk_directory_generation(staged)
     old_files = _transcript_files(audio, budget=budget)
     new_files = _transcript_files(staged, budget=budget)
+    old_file_generations = {
+        path: _transcript_file_generation(path, budget)
+        for path in [*old_files, audio.cache_metadata_path]
+    }
     # Keep a durable recovery copy before touching any currently published file.
     recovery = audio.podcast_dir / ".previous-transcripts"
     with tempfile.TemporaryDirectory(
@@ -941,9 +955,11 @@ def _promote_transcripts(
     ) as directory:
         backup = Path(directory)
         _mark_stage(audio, backup)
-        for path in [*old_files, audio.cache_metadata_path]:
+        for path, generation in old_file_generations.items():
             target = backup / path.relative_to(audio.podcast_dir)
-            copy_file_atomic(path, target, budget=budget)
+            copy_file_atomic(
+                path, target, budget=budget, expected_generation=generation
+            )
         backup_audio = _generation_at(audio, backup)
         write_text_atomic(
             backup / "recovery.json",
@@ -957,12 +973,16 @@ def _promote_transcripts(
         )
         sync_directory(backup)
         budget.check()
-        # The lock covers cooperating writers. Detect external changes to the
-        # enumerated names during admission or backup before committing recovery.
+        # The lock covers cooperating writers. Detect external edits to both
+        # the published files and the inventory before committing recovery.
+        for path, generation in old_file_generations.items():
+            if _transcript_file_generation(path, budget) != generation:
+                raise RuntimeError("Transcript source changed during backup; retry.")
         if old_generation != _chunk_directory_generation(
             audio
         ) or new_generation != _chunk_directory_generation(staged):
             raise RuntimeError("Transcript inventory changed during backup; retry.")
+        budget.check()
         if recovery.exists():
             shutil.rmtree(recovery)
         os.replace(backup, recovery)

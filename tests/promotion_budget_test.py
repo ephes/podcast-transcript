@@ -235,3 +235,51 @@ def test_standalone_marker_digest_has_finite_work(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="Transcript work.*byte"):
         single_track._file_digest(path)
     assert len(reads) == 5
+
+
+@pytest.mark.parametrize(
+    "artifact", ["earlier-export", "later-export", "raw", "metadata"]
+)
+def test_promotion_refuses_file_changes_during_backup(episode, monkeypatch, artifact):
+    store, previous = episode
+    single_track.transcribe(store.url, RecordingBackend("second", "second"))
+    recovery = store.podcast_dir / ".previous-transcripts"
+    manifest = (recovery / "recovery.json").read_bytes()
+    current = {path: (store.podcast_dir / path).read_bytes() for path in previous}
+    first_export = store.output_path(".dote.json")
+    changed = {
+        "earlier-export": first_export,
+        "later-export": store.output_path(".txt"),
+        "raw": store.episode_chunks_dir / "chunk_000.json",
+        "metadata": store.cache_metadata_path,
+    }[artifact]
+    relative = changed.relative_to(store.podcast_dir)
+    edited = current[relative].replace(b"second", b"edited")
+    assert edited != current[relative]
+    copy = single_track.copy_file_atomic
+
+    def edit_after_first_export(source, target, **kwargs):
+        copy(source, target, **kwargs)
+        if source == first_export and target.parent.name.startswith(".backup-"):
+            changed.write_bytes(edited)
+
+    monkeypatch.setattr(single_track, "copy_file_atomic", edit_after_first_export)
+    with pytest.raises((OSError, RuntimeError), match="Transcript.*changed"):
+        single_track.transcribe(store.url, RecordingBackend("third", "third"))
+
+    assert changed.read_bytes() == edited
+    assert all(
+        (store.podcast_dir / path).read_bytes() == data
+        for path, data in current.items()
+        if path != relative
+    )
+    assert (recovery / "recovery.json").read_bytes() == manifest
+    assert all(
+        (recovery / path).read_bytes() == data for path, data in previous.items()
+    )
+    assert not list(store.podcast_dir.glob(".backup-*"))
+    single_track.restore_last_success(store.url)
+    assert all(
+        (store.podcast_dir / path).read_bytes() == data
+        for path, data in previous.items()
+    )

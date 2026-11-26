@@ -458,9 +458,11 @@ If a readability check reaches any of these limits, the run reports the limit an
 before starting replacement inference. The published transcripts, cache marker and any
 existing recovery copy are preserved.
 Settings replacement scans the current and staged transcript inventories once for promotion
-and reuses those lists for publication. It checks both chunk directory identities and timestamps
-again before replacing recovery; detected name changes stop promotion and preserve the current
-transcripts and prior recovery copy. The episode lock coordinates running commands. Avoid editing
+and reuses those lists for publication. It records file identities, sizes and modification and
+change times for all published exports, chunk transcripts and `cache.json`. Each backup copy must
+read the recorded generation. Before replacing recovery, promotion rechecks those files and both
+chunk directory generations. A detected change stops promotion before it writes public transcripts
+or replaces the previous recovery copy. The episode lock coordinates running commands. Avoid editing
 the episode or private staging while promotion is active.
 Inventories are bounded before sorting; growing files count against the same byte limit.
 Time is checked around reads/writes and at EOF; filesystem operations must return for

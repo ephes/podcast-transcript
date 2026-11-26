@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Refuse a last-success backup if a published transcript file or its cache marker changes during copying.
+
 - Follow source redirects without reading intermediate response bodies.
 
 - Require a single valid Content-Length when supplied for source audio and reject mismatches before caching.
