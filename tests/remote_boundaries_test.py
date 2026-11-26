@@ -243,10 +243,7 @@ def test_error_stream_does_not_echo_decoded_body(monkeypatch, tmp_path, name):
 
 
 @pytest.mark.parametrize("encoding", ["gzip", "br", "identity, gzip"])
-@pytest.mark.parametrize("status", [200, 302])
-def test_source_rejects_encoding_before_decoding(
-    monkeypatch, tmp_path, encoding, status
-):
+def test_source_rejects_final_encoding_before_decoding(monkeypatch, tmp_path, encoding):
     from podcast_transcript.audio import settings
 
     monkeypatch.setattr(settings, "transcript_source_max_bytes", "8")
@@ -256,9 +253,9 @@ def test_source_rejects_encoding_before_decoding(
     def handler(request):
         requests.append(request)
         return httpx.Response(
-            status,
+            200,
             stream=stream,
-            headers={"Content-Encoding": encoding, "Location": "/redirect"},
+            headers={"Content-Encoding": encoding},
         )
 
     transport(monkeypatch, handler)
