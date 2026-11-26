@@ -604,8 +604,8 @@ match. A regenerated DOTe chunk refreshes every export from the new combined DOT
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.
   The entire DOTe file is validated before publication. The export reuses the validated integer
-  milliseconds, keeps equal cue endpoints, and preserves the original timestamp spelling apart
-  from changing the decimal separator to a period.
+  milliseconds and keeps equal cue endpoints. It formats both timestamps as `HH:MM:SS.mmm`
+  with at least two hour digits, dropping redundant leading hour zeros from older DOTe files.
 - **WebVTT (*.webvtt)**: A subtitle format that can be used for captioning in media players.
   Cue text treats `&`, `<` and `>` as literal text, escaping them as entities. CRLF and CR
   become LF; consecutive blank or whitespace-only lines collapse to one line break, and leading
@@ -627,12 +627,11 @@ match. A regenerated DOTe chunk refreshes every export from the new combined DOT
 
 ## Troubleshooting
 
-### Regenerating cached WebVTT exports
+### Regenerating cached Podlove or WebVTT exports
 
-Existing `.webvtt` files remain cached. To apply current cue text and timing rules to an existing
-export, delete just that file in the episode cache directory and rerun the same transcription
-command with the same backend settings. The cached transcript is reused to generate the corrected
-WebVTT file.
+To apply current cue text and timing rules to a cached `.podlove.json` or `.webvtt` export,
+delete that file in the episode cache directory and rerun the same transcription command with
+the same backend settings. The cached transcript is reused to regenerate the export.
 
 ### Cache directories from versions before 0.2.0
 

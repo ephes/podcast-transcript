@@ -400,8 +400,6 @@ def combine_dote_chunks(
 
 
 class _ExportCue(NamedTuple):
-    start_time: str
-    end_time: str
     start_ms: int
     end_ms: int
     speaker: str
@@ -411,8 +409,6 @@ class _ExportCue(NamedTuple):
 def _load_export_cues(dote_path: Path) -> tuple[_ExportCue, ...]:
     return tuple(
         _ExportCue(
-            line["startTime"].replace(",", "."),
-            line["endTime"].replace(",", "."),
             start_ms,
             end_ms,
             line.get("speakerDesignation", ""),
@@ -430,9 +426,9 @@ def _write_podlove(cues: tuple[_ExportCue, ...], podlove_path: Path) -> None:
     transcripts = []
     for cue in cues:
         transcript = {
-            "start": cue.start_time,
+            "start": _format_timecode(cue.start_ms, separator="."),
             "start_ms": cue.start_ms,
-            "end": cue.end_time,
+            "end": _format_timecode(cue.end_ms, separator="."),
             "end_ms": cue.end_ms,
             "speaker": cue.speaker,
             "voice": "",  # assuming no voice data is available
