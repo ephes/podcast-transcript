@@ -183,8 +183,10 @@ def download(url: str, target_path: Path) -> None:
                 "Source download exceeded TRANSCRIPT_SOURCE_TOTAL_TIMEOUT."
             )
 
-    def check_response(response: httpx.Response) -> None:
+    def check_response_deadline(_response: httpx.Response) -> None:
         check_deadline()
+
+    def check_final_encoding(response: httpx.Response) -> None:
         encoding = response.headers.get("Content-Encoding", "identity")
         if encoding.strip().lower() != "identity":
             raise RuntimeError(
@@ -221,10 +223,11 @@ def download(url: str, target_path: Path) -> None:
             with httpx.Client(
                 follow_redirects=False,
                 timeout=timeout,
-                event_hooks={"response": [check_response]},
+                event_hooks={"response": [check_response_deadline]},
                 headers={"Accept-Encoding": "identity"},
             ) as client:
                 with stream_final_response(client) as response:
+                    check_final_encoding(response)
                     response.raise_for_status()
                     check_deadline()
                     if (

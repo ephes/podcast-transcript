@@ -507,7 +507,11 @@ def test_source_download_closes_redirects_without_reading(mocker, audio, outcome
         }[len(requests)]
         stream = RedirectBody()
         streams.append(stream)
-        return httpx.Response(302, headers={"Location": location}, stream=stream)
+        return httpx.Response(
+            302,
+            headers={"Location": location, "Content-Encoding": "gzip"},
+            stream=stream,
+        )
 
     real_client = httpx.Client
     mocker.patch.object(

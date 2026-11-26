@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Follow source redirects with compressed bodies without reading them, while still requiring identity encoding on the final response.
+
 - Preserve existing WebVTT and plaintext exports when any streaming write is incomplete.
 
 - Refuse incomplete atomic text and binary writes before replacing the destination, and write JSON receipts as UTF-8.

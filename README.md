@@ -229,10 +229,10 @@ Local admission opens one nonblocking descriptor and accepts only regular files;
 sockets are refused before reading. Actual bytes, including file growth, are counted. Elapsed time
 is checked before and after each bounded read/write and at EOF; filesystem I/O must return for the
 check to run. Rejection preserves previous completed files and does not require native inference.
-Source requests send `Accept-Encoding: identity`. Servers must return no `Content-Encoding`
-or `identity`; compressed responses (including gzip) are rejected before decoding to prevent
-decompression from allocating beyond the byte budget. Compressed audio formats such as MP3
-remain supported; this restriction concerns HTTP content encoding.
+Source requests send `Accept-Encoding: identity`. The downloader ignores the content encoding
+of intermediate redirects because it leaves their bodies unread. The final response must omit
+`Content-Encoding` or use `identity`. The downloader rejects HTTP compression (including gzip)
+before decoding to enforce the byte budget. Compressed audio formats such as MP3 remain supported.
 
 ## Usage
 
