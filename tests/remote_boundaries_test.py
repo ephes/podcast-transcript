@@ -309,7 +309,10 @@ def test_remote_trickle_deadline_preserves_outputs_and_releases_lock(
     responses = iter(
         [
             httpx.Response(200, stream=stream),
-            httpx.Response(200, json={"segments": []}),
+            httpx.Response(
+                200,
+                json={"segments": [{"start": 0, "end": 1, "text": "retry result"}]},
+            ),
         ]
     )
     transport(monkeypatch, lambda request: next(responses))
@@ -331,7 +334,7 @@ def test_remote_trickle_deadline_preserves_outputs_and_releases_lock(
     assert not (audio.episode_chunks_dir / "chunk_000.json").exists()
     # The failed request released the episode lock: a valid response can retry.
     paths = single_track.transcribe(url, backend)
-    assert paths["plain text"].read_text() == "previous completed transcript"
+    assert paths["plain text"].read_text() == "retry result"
 
 
 @pytest.mark.parametrize("name", ["groq", "voxhelm"])

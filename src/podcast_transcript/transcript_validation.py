@@ -97,18 +97,23 @@ def _read_transcript(path: Path, kind: str, *, name: str | None = None) -> bytes
 
 
 def load_whisper_transcript(
-    path: Path, *, name: str | None = None, cached: bool = True
+    path: Path,
+    *,
+    name: str | None = None,
+    cached: bool = True,
+    snapshot: bytes | None = None,
 ) -> dict:
     """Load raw Whisper JSON; ``name`` labels errors and ``cached`` picks the hint."""
     name = name or path.name
-    raw = _read_transcript(path, "Raw transcript", name=name)
+    if snapshot is None:
+        snapshot = _read_transcript(path, "Raw transcript", name=name)
     hint = (
         "remove the cached raw chunk and retry"
         if cached
         else "it was not cached, so retry once the backend response is corrected"
     )
     try:
-        data = loads_unique(raw.decode("utf-8"))
+        data = loads_unique(snapshot.decode("utf-8"))
     except (ValueError, UnicodeError, RecursionError):
         raise ValueError(f"Invalid transcript JSON in {name}; {hint}.") from None
     try:

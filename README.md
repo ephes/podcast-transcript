@@ -568,9 +568,15 @@ most 64 MiB each, counted during reading. This limit applies before JSON parsing
 cached chunks and DOTe inputs to multi-chunk combination or export.
 Cached raw chunks are validated before reuse. Whisper segment text and optional top-level `text`
 must contain only Unicode scalar values, so an escaped unpaired surrogate is rejected.
-If an older or edited raw chunk is rejected, remove that `chunks/chunk_NNN.json` and its
-derived `chunk_NNN.dote.json`, plus the combined episode outputs, then rerun to retranscribe
-that chunk. Valid prepared audio and other raw chunks are reused. Surrogate errors identify
+Per-chunk receipts record the digests of the validated raw Whisper bytes and the derived DOTe.
+Replacing raw JSON with valid corrected data under the same name refreshes the derived chunk,
+combined DOTe and all exports using the cached raw data. Legacy chunks without a receipt rebuild
+once. Receipts are written after all exports succeed, so an interrupted refresh is retried.
+If a `chunk_NNN.dote.receipt.json` file is unreadable or malformed, remove it and rerun to
+regenerate the derived files from raw JSON.
+If an older or edited raw chunk is rejected, correct `chunks/chunk_NNN.json` or remove it and
+rerun to retranscribe that chunk. The next successful run refreshes any affected derived files.
+Valid prepared audio and other raw chunks are reused. Surrogate errors identify
 the cached filename and the top-level field or segment position without including transcript text.
 
 DOTe cue text and optional `speakerDesignation` must be strings containing only Unicode scalar
@@ -592,13 +598,14 @@ Transcription and `--restore-last-success` report one path per published format 
 labels and file suffixes. The output inventory and both receipts share one suffix-to-label
 mapping in `audio.py`. During a transcription run, missing Podlove, WebVTT, and plaintext
 exports are generated from one validated snapshot of the combined DOTe. An edit after
-that snapshot does not affect these exports. Existing exports are reused.
+that snapshot does not affect these exports. Existing exports are reused when the chunk receipts
+match. A regenerated DOTe chunk refreshes every export from the new combined DOTe.
 
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.
   The entire DOTe file is validated before publication. The export reuses the validated integer
-  milliseconds, keeps equal cue endpoints, and preserves the original timestamp spelling apart
-  from changing the decimal separator to a period.
+  milliseconds and keeps equal cue endpoints. It formats both timestamps as `HH:MM:SS.mmm`
+  with at least two hour digits, dropping redundant leading hour zeros from older DOTe files.
 - **WebVTT (*.webvtt)**: A subtitle format that can be used for captioning in media players.
   Cue text treats `&`, `<` and `>` as literal text, escaping them as entities. CRLF and CR
   become LF; consecutive blank or whitespace-only lines collapse to one line break, and leading
@@ -620,12 +627,11 @@ that snapshot does not affect these exports. Existing exports are reused.
 
 ## Troubleshooting
 
-### Regenerating cached WebVTT exports
+### Regenerating cached Podlove or WebVTT exports
 
-Existing `.webvtt` files remain cached. To apply current cue text and timing rules to an existing
-export, delete just that file in the episode cache directory and rerun the same transcription
-command with the same backend settings. The cached transcript is reused to generate the corrected
-WebVTT file.
+To apply current cue text and timing rules to a cached `.podlove.json` or `.webvtt` export,
+delete that file in the episode cache directory and rerun the same transcription command with
+the same backend settings. The cached transcript is reused to regenerate the export.
 
 ### Cache directories from versions before 0.2.0
 

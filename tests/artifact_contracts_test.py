@@ -221,9 +221,9 @@ def test_podlove_reuses_validated_cue_times(tmp_path, monkeypatch, mocker):
         lines.append(line)
         transcripts.append(
             {
-                "start": start.replace(",", "."),
+                "start": f"125:00:00.{index:03}",
                 "start_ms": 450_000_000 + index,
-                "end": end.replace(",", "."),
+                "end": f"125:00:00.{index + index % 2:03}",
                 "end_ms": 450_000_000 + index + index % 2,
                 "speaker": line.get("speakerDesignation", ""),
                 "voice": "",
@@ -302,14 +302,14 @@ def test_webvtt_extends_zero_length_cue_at_dote_limit(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "timestamp,milliseconds",
+    "timestamp,canonical,milliseconds",
     [
-        ("125:00:00,001", 450_000_001),
-        ("0002501999792:59:00,991", 2**53 - 1),
+        ("125:00:00,001", "125:00:00.001", 450_000_001),
+        ("0002501999792:59:00,991", "2501999792:59:00.991", 2**53 - 1),
     ],
 )
 def test_podlove_exports_in_range_millisecond_integers(
-    tmp_path, timestamp, milliseconds
+    tmp_path, timestamp, canonical, milliseconds
 ):
     source = dote(tmp_path / "chunk.dote.json", timestamp, timestamp)
     out = tmp_path / "out.podlove.json"
@@ -318,7 +318,22 @@ def test_podlove_exports_in_range_millisecond_integers(
 
     [cue] = json.loads(out.read_bytes())["transcripts"]
     assert cue["start_ms"] == cue["end_ms"] == milliseconds
-    assert cue["start"] == cue["end"] == timestamp.replace(",", ".")
+    assert cue["start"] == cue["end"] == canonical
+
+
+def test_podlove_normalizes_equivalent_dote_timecodes(tmp_path):
+    short = dote(tmp_path / "short.json", "00:01:02,003", "00:01:02,003")
+    long = dote(tmp_path / "long.json", "00000:01:02,003", "0000:01:02,003")
+    short_output = tmp_path / "short.podlove.json"
+    long_output = tmp_path / "long.podlove.json"
+
+    track.convert_dote_to_podlove(short, short_output)
+    track.convert_dote_to_podlove(long, long_output)
+
+    assert long_output.read_bytes() == short_output.read_bytes()
+    [cue] = json.loads(long_output.read_bytes())["transcripts"]
+    assert cue["start"] == cue["end"] == "00:01:02.003"
+    assert cue["start_ms"] == cue["end_ms"] == 62_003
 
 
 def test_raw_conversion_refuses_to_publish_out_of_range_dote_chunk(tmp_path):

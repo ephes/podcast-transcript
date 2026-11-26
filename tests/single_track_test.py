@@ -590,6 +590,7 @@ def test_transcript_cache_without_metadata_is_discarded_but_audio_kept(tmp_path)
     stale = [
         chunks_dir / "chunk_000.json",
         chunks_dir / "chunk_000.dote.json",
+        chunks_dir / "chunk_000.dote.receipt.json",
         chunks_dir / "chunk_000.whisper-cpp.json",
         audio.output_path(".dote.json"),
         audio.output_path(".podlove.json"),
