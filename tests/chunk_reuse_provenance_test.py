@@ -6,7 +6,7 @@ import shutil
 
 import pytest
 
-from podcast_transcript import audio, single_track
+from podcast_transcript import audio, safe_io, single_track
 from single_track_test import RecordingBackend
 
 
@@ -99,6 +99,33 @@ def test_interrupted_export_refresh_retries_before_reusing_dote(prepared, monkey
         patch.setattr(single_track, "combine_dote_chunks", fail_export)
         single_track.transcribe(store.url, backend)
     assert not backend.calls
+
+
+def test_dote_receipt_retirement_retries_before_replacing_chunk(prepared, monkeypatch):
+    store = prepared
+    raw = store.episode_chunks_dir / "chunk_000.json"
+    dote = raw.with_suffix(".dote.json")
+    marker = raw.with_suffix(".dote.receipt.json")
+    previous = dote.read_bytes()
+    raw.write_text('{"segments": [{"start": 0, "end": 1, "text": "corrected"}]}')
+    real_sync = safe_io.sync_directory
+
+    def fail_sync(path):
+        if path == marker.parent:
+            raise OSError("synthetic retirement sync failure")
+        real_sync(path)
+
+    backend = RecordingBackend("model", "unused")
+    with monkeypatch.context() as patch:
+        patch.setattr(safe_io, "sync_directory", fail_sync)
+        for _ in range(2):
+            with pytest.raises(OSError):
+                single_track.transcribe(store.url, backend)
+            assert not marker.exists()
+            assert dote.read_bytes() == previous
+
+    outputs = single_track.transcribe(store.url, backend)
+    assert b"corrected" in outputs["plain text"].read_bytes()
 
 
 def test_legacy_cache_retranscribes_once_without_discarding_on_failure(prepared):

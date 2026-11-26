@@ -774,6 +774,10 @@ or write stops publication.
 If syncing either parent directory fails after the rename, the command reports that the
 replacement is visible with uncertain durability and identifies the directory whose sync
 failed. Cache completion markers are written after their required artifacts are synced.
+If a directory sync fails after a completion marker is removed, the error names the retired
+marker and the directory whose sync failed. The marker is already absent and its retirement
+has uncertain crash durability. Rerunning syncs the retained directory before changing
+dependent files, even when the marker is already absent.
 
 ### Starting an episode over
 

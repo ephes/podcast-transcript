@@ -538,7 +538,7 @@ class Audio:
         # split again so a partial chunk set is never reused.
         if self.chunks_manifest_path.exists():
             self._remove_cached_transcripts()
-            durable_unlink(self.chunks_manifest_path)
+        durable_unlink(self.chunks_manifest_path)
         self._remove_generated_chunks()
         if exceeds_limit:
             rprint(f"Splitting {self.resampled_episode_path} into chunks")

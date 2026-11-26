@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Report uncertain durability when a completion marker was removed but its parent sync failed, and repeat the sync before updating dependent files on retry.
+
 - Sync each newly created output directory entry in its parent before publishing files.
 
 - Reject incomplete source audio writes before publishing the download and preserve any previous cached file.

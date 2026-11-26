@@ -52,6 +52,18 @@ class PublicationUncertainError(OSError):
         )
 
 
+class RetirementUncertainError(OSError):
+    """The file was unlinked, and its parent directory sync failed."""
+
+    def __init__(self, target: Path) -> None:
+        self.target = target
+        self.directory = target.parent
+        super().__init__(
+            f"File was retired at {target}. "
+            f"Durability is uncertain after directory sync failed for {self.directory}."
+        )
+
+
 @contextmanager
 def atomic_output(path: Path) -> Iterator[Path]:
     """
@@ -157,9 +169,17 @@ def durable_replace(source: Path, target: Path) -> None:
 
 def durable_unlink(path: Path) -> None:
     """Retire a completion marker before changing the data it describes."""
-    path.unlink(missing_ok=True)
-    if path.parent.exists():
-        sync_directory(path.parent)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        # A previous attempt may have unlinked the marker without syncing it.
+        if path.parent.exists():
+            sync_directory(path.parent)
+    else:
+        try:
+            sync_directory(path.parent)
+        except OSError as exc:
+            raise RetirementUncertainError(path) from exc
 
 
 LOCAL_TRANSCRIPT_MAX_BYTES = 64 * 1024 * 1024

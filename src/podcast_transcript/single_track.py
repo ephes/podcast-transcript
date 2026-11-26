@@ -293,8 +293,7 @@ def _prepare_dote_chunks(
         rprint(f"Converting {chunk.name} to DOTe format")
         dote_transcript = whisper_to_dote(whisper_transcript["segments"])
         payload = json.dumps(dote_transcript).encode("utf-8")
-        if cached is not None:
-            durable_unlink(receipt_path)
+        durable_unlink(receipt_path)
         write_bytes_atomic(dote_path, payload)
         pending_receipts[receipt_path] = {
             "raw_sha256": raw_digest,
