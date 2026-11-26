@@ -484,13 +484,14 @@ Use the same source string and `TRANSCRIPT_DIR` as the interrupted run; the sour
 be available. Restore holds the episode lock, verifies the backup's exact inventory/byte digest,
 copies it to private owned staging, rechecks the copied inventory digest, validates the staged
 transcript schemas and checks the current source/chunk completion markers against
-the recorded audio generation. It restores all exports and chunk transcripts, removes stale
-transcript files, and publishes the original `cache.json` bytes last. It never swaps the recovery
-copy with a partial public generation. On failure that copy stays available for another restore.
-Snapshot/admission failures preserve current exports and metadata. Once publication starts,
-an interrupted data copy leaves the public cache marker absent. A sync error after the final
-metadata rename may leave a fully copied generation visible; the recovery copy still remains. Missing, edited or unmarked
-legacy backups are refused before publication. Such backups remain available for manual inspection
+the recorded audio generation. Restore uses the admitted DOTe transcript to regenerate Podlove,
+WebVTT and plaintext in staging with the same exporters as a new transcription. It publishes
+those exports alongside DOTe and the backed-up chunk transcripts, removes stale transcript files,
+and publishes the original `cache.json` bytes last. The recovery copy stays available for another
+restore. Snapshot admission and export conversion failures preserve current exports and metadata.
+Once publication starts, an interrupted data copy leaves the public cache marker absent. A sync
+error after the final metadata rename may leave a fully copied generation visible. Missing, edited
+or unmarked legacy backups are refused before publication. Such backups remain available for manual inspection
 and copying individual exports out. Version 2 recovery manifests also bind the resampled MP3,
 every admitted MP3 chunk (including the short-audio link's owned target), and any cached chunk WAVs
 to streamed SHA-256 byte evidence. The short-audio link is checked again during fingerprinting.

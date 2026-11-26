@@ -450,6 +450,16 @@ def _write_plaintext(cues: tuple[_ExportCue, ...], plaintext_path: Path) -> None
                 target.write(cue.text)
 
 
+def _derived_exports(
+    audio: Audio,
+) -> tuple[tuple[Path, Callable[[tuple[_ExportCue, ...], Path], None]], ...]:
+    return (
+        (audio.output_path(".podlove.json"), _write_podlove),
+        (audio.output_path(".webvtt"), _write_webvtt),
+        (audio.output_path(".txt"), _write_plaintext),
+    )
+
+
 @contextmanager
 def _episode_lock(audio: Audio):
     # Outside episode data so replacement cannot change the lock identity.
@@ -664,20 +674,28 @@ def restore_last_success(url: str) -> dict[str, Path]:
                 metadata.get("backend"), str
             ):
                 raise RuntimeError("Invalid recovery cache metadata.")
-            load_dote(snapshot.output_path(".dote.json"))
-            for path in _transcript_files(snapshot, budget=budget):
+            budget.check()
+            cues = _load_export_cues(snapshot.output_path(".dote.json"))
+            snapshot_files = _transcript_files(snapshot, budget=budget)
+            for path in snapshot_files:
                 if path.parent == snapshot.episode_chunks_dir:
                     if path.name.endswith(".dote.json"):
                         load_dote(path)
                     elif not path.name.endswith(".whisper-cpp.json"):
                         load_whisper_transcript(path)
+            # Legacy backups can contain readable derivatives from a different
+            # generation. Publish all formats from the same admitted DOTe cues.
+            for path, write in _derived_exports(snapshot):
+                budget.check()
+                write(cues, path)
+            budget.check()
             if manifest["audio"] != _audio_generation(audio):
                 raise RuntimeError("Changed prepared audio during recovery.")
             # Keep recovery untouched, even if a later copy/fsync fails.
             _publish_transcripts(
                 audio,
                 snapshot,
-                new_files=_transcript_files(snapshot, budget=budget),
+                new_files=snapshot_files,
                 old_files=_transcript_files(audio, budget=budget),
                 budget=budget,
             )
@@ -1048,13 +1066,8 @@ def _transcribe_prepared(
     dote_path = audio.output_path(".dote.json")
     if not dote_path.exists():
         combine_dote_chunks(dote_chunks, dote_path, chunk_durations)
-    exports = (
-        (audio.output_path(".podlove.json"), _write_podlove),
-        (audio.output_path(".webvtt"), _write_webvtt),
-        (audio.output_path(".txt"), _write_plaintext),
-    )
     cues = None
-    for path, write in exports:
+    for path, write in _derived_exports(audio):
         if path.exists():
             continue
         if cues is None:
