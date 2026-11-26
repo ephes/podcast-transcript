@@ -754,10 +754,17 @@ episode cache aside and process the source as separate, shorter files.
 
 ### Output durability errors
 
-On first use, each new output directory entry is synced in its parent before publishing
-files. If a parent sync fails during creation, the error names the directory with uncertain
-durability and the output has yet to be published. The newly created directory is removed if
-still empty so the next run can create it and retry the sync.
+Before staging an output, the writer syncs the destination directory entry in its parent.
+It repeats this step for existing destinations, including directories left behind by a failed
+attempt or created by another writer. It creates missing ancestors and syncs each new entry,
+treating the first existing ancestor above the destination as already provisioned. If a parent
+sync fails, the error names the directory with uncertain durability and the output has yet to
+be published. The writer removes a directory it just created if it is still empty.
+The parent of each output directory must therefore be readable and support directory fsync,
+even when the output directory already exists. A parent the writer can traverse but not read
+(for example mode `0711`) makes every write into that directory fail with this error until the
+parent is readable again. Startup only creates and syncs `TRANSCRIPT_HOME` and `TRANSCRIPT_DIR`
+when they are missing, so commands that publish nothing do not depend on these checks.
 
 When writing fails before an atomic replacement, the destination retains its prior contents.
 Atomic text and binary writes reject incomplete writes before replacing the destination.
@@ -773,7 +780,9 @@ also fails, even if reporting the close failure fails. A close failure after a s
 or write stops publication.
 If syncing either parent directory fails after the rename, the command reports that the
 replacement is visible with uncertain durability and identifies the directory whose sync
-failed. Cache completion markers are written after their required artifacts are synced.
+failed. If closing the directory descriptor also fails, the original sync error remains the
+cause. A close failure after successful directory fsync is logged as a warning and publication
+continues. Cache completion markers are written after their required artifacts are synced.
 If a directory sync fails after a completion marker is removed, the error names the retired
 marker and the directory whose sync failed. The marker is already absent and its retirement
 has uncertain crash durability. Rerunning syncs the retained directory before changing

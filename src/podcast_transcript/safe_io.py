@@ -73,7 +73,7 @@ def atomic_output(path: Path) -> Iterator[Path]:
     """
     Yield a temporary path to write to and move it to ``path`` on success.
 
-    Newly created directories are synced before staging. Errors before rename
+    The destination directory entry is synced before staging. Errors before rename
     leave ``path`` untouched. A missing temporary file
     raises ``RuntimeError``. A directory sync failure after rename raises
     ``PublicationUncertainError`` with the new output already visible at ``path``.

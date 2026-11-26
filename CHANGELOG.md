@@ -3,13 +3,15 @@ Unreleased
 
 ### Fixes
 
+- Preserve the original directory fsync failure when closing the descriptor also fails, and warn on a close failure after successful fsync.
+
 - Reject nonfinite numbers anywhere in MLX results before publishing, preserving any previous transcript.
 
 - Stage whisper-cpp WAV conversion privately per call, preserving the input and any same-stem WAV beside it.
 
 - Report uncertain durability when a completion marker was removed but its parent sync failed, and repeat the sync before updating dependent files on retry, naming the absent marker and directory if it fails again.
 
-- Sync each newly created output directory entry in its parent before publishing files.
+- Sync each output file's destination directory entry in its parent before publishing, including a destination already visible during concurrent creation or retained after a failed attempt. Existing intermediate ancestors are still treated as provisioned. The parent of an existing output directory must now be readable. Startup still only creates and syncs missing `TRANSCRIPT_HOME` and `TRANSCRIPT_DIR` directories.
 
 - Reject incomplete source audio writes before publishing the download and preserve any previous cached file.
 

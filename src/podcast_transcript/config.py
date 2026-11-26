@@ -1,3 +1,4 @@
+import logging
 import math
 import os
 import shutil
@@ -8,6 +9,8 @@ from pathlib import Path
 from rich.console import Console
 
 from .input_admission import read_regular_bounded
+
+logger = logging.getLogger(__name__)
 
 DOTENV_MAX_BYTES = 64 * 1024
 CONFIGURATION_KEYS = frozenset(
@@ -28,37 +31,52 @@ CONFIGURATION_KEYS = frozenset(
 
 
 def sync_directory(path: Path) -> None:
-    """Persist directory entries; propagate unsupported-filesystem errors."""
+    """Persist directory entries and warn if closing the synced descriptor fails."""
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
         os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    except BaseException:
+        with suppress(OSError):
+            os.close(descriptor)
+        raise
+    else:
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            with suppress(Exception):
+                logger.warning(
+                    "Could not close the synced directory descriptor for %s: %s",
+                    path,
+                    exc,
+                )
 
 
 def private_mkdir(path: Path) -> None:
-    """Create missing owner-only directories and sync their parent entries."""
-    if path.is_dir():
-        return
+    """Sync the requested directory entry and create any missing ancestors."""
     parent = path.parent
-    if parent != path:
+    if parent == path and path.is_dir():
+        return
+    # The first existing ancestor is provisioned by the caller. Always
+    # sync the requested entry, even when a prior mkdir made it visible.
+    if parent != path and not parent.is_dir():
         private_mkdir(parent)
     created = False
-    try:
-        path.mkdir(mode=0o700)
-        created = True
-    except FileExistsError:
-        if not path.is_dir():
-            raise
+    if not path.is_dir():
+        try:
+            path.mkdir(mode=0o700)
+            created = True
+        except FileExistsError:
+            if not path.is_dir():
+                raise
     try:
         sync_directory(parent)
     except OSError as exc:
         if created:
-            # Let a retry recreate and sync this entry if it is still empty.
+            # Remove only our own empty directory. A retry syncs a retained entry.
             with suppress(OSError):
                 path.rmdir()
         raise OSError(
-            f"Durability is uncertain for newly created directory {path} "
+            f"Durability is uncertain for output directory {path} "
             f"after directory sync failed for {parent}."
         ) from exc
 
@@ -122,8 +140,10 @@ class Settings:
         else:
             self.transcript_home = Path.home() / ".podcast-transcripts"
 
-        # Create the transcript_home directory if it does not exist
-        private_mkdir(self.transcript_home)
+        # Create the transcript_home directory if it does not exist. Startup only
+        # provisions this root; publication syncs the entries it writes into.
+        if not self.transcript_home.is_dir():
+            private_mkdir(self.transcript_home)
 
         # Set the transcript directory - this is special because we want to create
         # the directory if it does not exist which is why we cannot wait until read_env_vars()
@@ -133,7 +153,8 @@ class Settings:
             self.transcript_dir = self.transcript_home / "transcripts"
 
         # Create the transcript directory if it does not exist
-        private_mkdir(self.transcript_dir)
+        if not self.transcript_dir.is_dir():
+            private_mkdir(self.transcript_dir)
 
         # Read the .env file
         env_file = self.transcript_home / ".env"

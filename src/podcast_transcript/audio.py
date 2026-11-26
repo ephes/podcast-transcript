@@ -639,6 +639,7 @@ class Audio:
         segment_seconds = 0.9 * min(
             MAX_CHUNK_DURATION, duration * MAX_SIZE_IN_BYTES / max(size, 1)
         )
+        private_mkdir(self.episode_chunks_dir)
         split_dir = self.episode_chunks_dir / f".split-{uuid.uuid4().hex}"
         private_mkdir(split_dir)
         try:
