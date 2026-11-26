@@ -1,6 +1,7 @@
 """Unambiguous JSON decoding with input-free diagnostics."""
 
 import json
+import math
 from pathlib import Path
 
 from .input_admission import read_regular_bounded
@@ -17,7 +18,21 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict:
     return result
 
 
-def loads_unique(data: str | bytes):
+def _finite_float(token: str) -> float:
+    value = float(token)
+    if not math.isfinite(value):
+        raise ValueError("Nonfinite JSON number.")
+    return value
+
+
+def loads_unique(data: str | bytes, *, finite_numbers: bool = False):
+    if finite_numbers:
+        return json.loads(
+            data,
+            object_pairs_hook=_unique_object,
+            parse_float=_finite_float,
+            parse_constant=_finite_float,
+        )
     return json.loads(data, object_pairs_hook=_unique_object)
 
 

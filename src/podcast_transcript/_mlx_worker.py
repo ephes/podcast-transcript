@@ -31,13 +31,17 @@ def main(argv: list[str]) -> int:
     )
     remaining = params["result_max_bytes"]
     with open(argv[1], "xb") as file:
-        for chunk in json.JSONEncoder().iterencode(result):
-            block = chunk.encode("utf-8")
-            if len(block) > remaining:
-                print("MLX transcript output exceeded byte limit.", file=sys.stderr)
-                return 4
-            file.write(block)
-            remaining -= len(block)
+        try:
+            for chunk in json.JSONEncoder(allow_nan=False).iterencode(result):
+                block = chunk.encode("utf-8")
+                if len(block) > remaining:
+                    print("MLX transcript output exceeded byte limit.", file=sys.stderr)
+                    return 4
+                file.write(block)
+                remaining -= len(block)
+        except (TypeError, ValueError, RecursionError):
+            print("Invalid MLX transcript JSON.", file=sys.stderr)
+            return 5
     return 0
 
 

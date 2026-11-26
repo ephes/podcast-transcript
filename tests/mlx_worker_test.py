@@ -96,6 +96,53 @@ def test_worker_result_file_respects_byte_limit(
     assert not list(tmp_path.glob(".mlx-*"))
 
 
+@pytest.mark.parametrize("number", ["nan", "inf", "-inf", "0.75"])
+def test_mlx_worker_admits_only_finite_optional_metadata(tmp_path, fake_mlx, number):
+    fake_mlx(f"""
+    def transcribe(path, **kwargs):
+        return {{"segments": [{{
+            "start": 0, "end": 1, "text": "synthetic",
+            "words": [{{"word": "NaN", "probability": float({number!r})}}],
+        }}]}}
+    """)
+    out = tmp_path / "chunk.json"
+    source = tmp_path / "private-source.mp3"
+    backend = backends.MLX(model_name=None, prompt="private-prompt")
+
+    if number == "0.75":
+        backend.transcribe(source, out)
+        words = json.loads(out.read_text())["segments"][0]["words"]
+        assert words == [{"word": "NaN", "probability": 0.75}]
+    else:
+        with pytest.raises(RuntimeError, match="Invalid MLX transcript JSON") as error:
+            backend.transcribe(source, out)
+        assert source.name not in str(error.value)
+        assert "private-prompt" not in str(error.value)
+        assert not out.exists()
+    assert not list(tmp_path.glob(".mlx-*"))
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e999", "-1e999"])
+def test_mlx_parent_rejects_nonfinite_worker_output(
+    monkeypatch, tmp_path, fake_mlx, number
+):
+    fake_mlx(SUCCESS)
+
+    def run(cmd, **kwargs):
+        Path(cmd[-1]).write_text(
+            '{"segments":[{"start":0,"end":1,"text":"synthetic",'
+            f'"words":[{{"probability":{number}}}]}}]}}'
+        )
+
+    monkeypatch.setattr(backends, "run_checked", run)
+    out = tmp_path / "chunk.json"
+    out.write_bytes(b"previous")
+    with pytest.raises(ValueError, match=r"^Invalid MLX transcript JSON\.$"):
+        backends.MLX(model_name=None).transcribe(tmp_path / "private-source.mp3", out)
+    assert out.read_bytes() == b"previous"
+    assert not list(tmp_path.glob(".mlx-*"))
+
+
 @pytest.mark.parametrize("failure", ["crash", "oversized", "invalid"])
 def test_failed_worker_preserves_previous_transcript(
     monkeypatch, tmp_path, fake_mlx, failure

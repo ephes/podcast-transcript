@@ -279,18 +279,23 @@ def test_whisper_cpp_writes_transcript_via_temp_base(mocker, tmp_path):
     assert json.loads(intermediate.read_text()) == cpp_output
     read_native.assert_called_once()
     assert read_native.call_args.args[0].parent.name.startswith(".output-")
-    assert (tmp_path / "chunk_000.wav").exists()
+    assert not (tmp_path / "chunk_000.wav").exists()
     # No temporary files are left behind
     assert not [p for p in tmp_path.iterdir() if p.name.startswith(".")]
 
 
 def test_whisper_cpp_cli_failure_leaves_no_transcript(mocker, tmp_path):
+    wav_file = None
+
     def fake_run(cmd, **kwargs):
+        nonlocal wav_file
         if cmd[0] == "ffmpeg":
             from native_integrity_test import wav_bytes
 
             Path(cmd[-1]).write_bytes(wav_bytes())
             return subprocess.CompletedProcess(cmd, 0)
+        wav_file = Path(cmd[cmd.index("-f") + 1])
+        assert wav_file.is_file()
         raise RuntimeError("error: failed to open model")
 
     mocker.patch("podcast_transcript.backends.run_checked", side_effect=fake_run)
@@ -303,6 +308,7 @@ def test_whisper_cpp_cli_failure_leaves_no_transcript(mocker, tmp_path):
 
     assert not transcript_path.exists()
     assert not (tmp_path / "chunk_000.whisper-cpp.json").exists()
+    assert wav_file is not None and not wav_file.parent.exists()
 
 
 @pytest.mark.parametrize(
