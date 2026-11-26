@@ -1,7 +1,8 @@
 import hashlib
 import json
 import math
-from contextlib import nullcontext
+from collections.abc import Iterator
+from contextlib import closing, contextmanager, nullcontext
 from itertools import islice
 import os
 import re
@@ -176,7 +177,7 @@ def download(url: str, target_path: Path) -> None:
     total_seconds = settings.source_total_timeout_seconds
     deadline = monotonic() + total_seconds
 
-    def check_deadline(response: httpx.Response | None = None) -> None:
+    def check_deadline() -> None:
         if monotonic() >= deadline:
             raise RuntimeError(
                 "Source download exceeded TRANSCRIPT_SOURCE_TOTAL_TIMEOUT."
@@ -184,7 +185,6 @@ def download(url: str, target_path: Path) -> None:
 
     def check_response(response: httpx.Response) -> None:
         check_deadline()
-        # Runs before httpx consumes redirects as well as the final response.
         encoding = response.headers.get("Content-Encoding", "identity")
         if encoding.strip().lower() != "identity":
             raise RuntimeError(
@@ -192,18 +192,39 @@ def download(url: str, target_path: Path) -> None:
                 "compressed responses are not supported."
             )
 
+    @contextmanager
+    def stream_final_response(client: httpx.Client) -> Iterator[httpx.Response]:
+        request = client.build_request("GET", url)
+        for hop in range(client.max_redirects + 1):
+            check_deadline()
+            # HTTPX already applied its redirect header rules to next_request.
+            # Avoid running URL authentication again on that prepared request.
+            response = (
+                client.send(request, stream=True, auth=httpx.Auth())
+                if hop
+                else client.send(request, stream=True)
+            )
+            with closing(response):
+                if response.next_request is None:
+                    yield response
+                    return
+                request = response.next_request
+        raise httpx.TooManyRedirects(
+            "Exceeded maximum allowed redirects.", request=request
+        )
+
     # Each blocking operation is also bounded, even for very short total budgets.
     timeout = httpx.Timeout(min(60.0, total_seconds), connect=min(30.0, total_seconds))
     rprint(f"Downloading {safe_display_source(url)} to {target_path}")
     try:
         with atomic_output(target_path) as tmp_path:
             with httpx.Client(
-                follow_redirects=True,
+                follow_redirects=False,
                 timeout=timeout,
                 event_hooks={"response": [check_response]},
                 headers={"Accept-Encoding": "identity"},
             ) as client:
-                with client.stream("GET", url) as response:
+                with stream_final_response(client) as response:
                     response.raise_for_status()
                     check_deadline()
                     if (

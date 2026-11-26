@@ -217,11 +217,12 @@ Source admission has separate budgets (environment or `.env`):
 
 Raise these limits for exceptionally large episodes or slow connections, for example
 `TRANSCRIPT_SOURCE_MAX_BYTES=4294967296 TRANSCRIPT_SOURCE_TOTAL_TIMEOUT=7200 transcribe <url>`.
-After redirects, source downloads require HTTP 200 without a `Content-Range` header and a
+Source downloads close intermediate redirects without reading their bodies and follow at most
+20 redirects. The final response must use HTTP 200 without a `Content-Range` header and have a
 nonempty body. Partial responses (including 206), no-content responses (204/205) and empty bodies
 are refused before source publication or subsequent audio preparation. If supplied,
-`Content-Length` must be a single decimal value and match the streamed byte count. Rejected downloads close their response and remove partial files; an existing
-target is preserved. Previously cached sources are reused without a new HTTP request; if an older
+`Content-Length` must be a single decimal value and match the streamed byte count. Rejected downloads
+close their response and remove partial files, preserving any existing target. Previously cached sources are reused without a new HTTP request; if an older
 run cached a fragment, move that episode directory aside and rerun to download it again.
 These limits also bound each local-source hash/copy pass, excluding backend uploads and model hashing.
 Local admission opens one nonblocking descriptor and accepts only regular files; FIFOs, devices and
