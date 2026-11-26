@@ -24,6 +24,7 @@ from time import monotonic
 from typing import TypeVar
 
 from .config import private_mkdir, settings
+from .config import sync_directory as sync_directory
 from .input_admission import file_generation
 from .input_admission import read_regular_bounded as read_regular_bounded
 
@@ -51,12 +52,29 @@ class PublicationUncertainError(OSError):
         )
 
 
+class RetirementUncertainError(OSError):
+    """The file was unlinked, and its parent directory sync failed."""
+
+    def __init__(self, target: Path, *, already_absent: bool = False) -> None:
+        self.target = target
+        self.directory = target.parent
+        self.already_absent = already_absent
+        state = (
+            "File was already absent at" if already_absent else "File was retired at"
+        )
+        super().__init__(
+            f"{state} {target}. "
+            f"Durability is uncertain after directory sync failed for {self.directory}."
+        )
+
+
 @contextmanager
 def atomic_output(path: Path) -> Iterator[Path]:
     """
     Yield a temporary path to write to and move it to ``path`` on success.
 
-    Errors before rename leave ``path`` untouched. A missing temporary file
+    Newly created directories are synced before staging. Errors before rename
+    leave ``path`` untouched. A missing temporary file
     raises ``RuntimeError``. A directory sync failure after rename raises
     ``PublicationUncertainError`` with the new output already visible at ``path``.
     """
@@ -74,15 +92,6 @@ def atomic_output(path: Path) -> Iterator[Path]:
         if not tmp_path.is_symlink():
             tmp_path.chmod(mode)
         durable_replace(tmp_path, path)
-
-
-def sync_directory(path: Path) -> None:
-    """Persist directory entries; propagate unsupported-filesystem errors."""
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _sync_regular_descriptor(
@@ -164,9 +173,20 @@ def durable_replace(source: Path, target: Path) -> None:
 
 def durable_unlink(path: Path) -> None:
     """Retire a completion marker before changing the data it describes."""
-    path.unlink(missing_ok=True)
-    if path.parent.exists():
-        sync_directory(path.parent)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        # A previous attempt may have unlinked the marker without syncing it.
+        if path.parent.exists():
+            try:
+                sync_directory(path.parent)
+            except OSError as exc:
+                raise RetirementUncertainError(path, already_absent=True) from exc
+    else:
+        try:
+            sync_directory(path.parent)
+        except OSError as exc:
+            raise RetirementUncertainError(path) from exc
 
 
 LOCAL_TRANSCRIPT_MAX_BYTES = 64 * 1024 * 1024

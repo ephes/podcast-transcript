@@ -2,6 +2,7 @@ import math
 import os
 import shutil
 
+from contextlib import suppress
 from pathlib import Path
 
 from rich.console import Console
@@ -26,13 +27,40 @@ CONFIGURATION_KEYS = frozenset(
 )
 
 
+def sync_directory(path: Path) -> None:
+    """Persist directory entries; propagate unsupported-filesystem errors."""
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def private_mkdir(path: Path) -> None:
-    """Create missing directory components owner-only without changing umask."""
+    """Create missing owner-only directories and sync their parent entries."""
     if path.is_dir():
         return
-    if path.parent != path:
-        private_mkdir(path.parent)
-    path.mkdir(mode=0o700, exist_ok=True)
+    parent = path.parent
+    if parent != path:
+        private_mkdir(parent)
+    created = False
+    try:
+        path.mkdir(mode=0o700)
+        created = True
+    except FileExistsError:
+        if not path.is_dir():
+            raise
+    try:
+        sync_directory(parent)
+    except OSError as exc:
+        if created:
+            # Let a retry recreate and sync this entry if it is still empty.
+            with suppress(OSError):
+                path.rmdir()
+        raise OSError(
+            f"Durability is uncertain for newly created directory {path} "
+            f"after directory sync failed for {parent}."
+        ) from exc
 
 
 def parse_env_line(line: str) -> tuple[str, str] | None:

@@ -171,6 +171,52 @@ def test_atomic_output_publishes_near_limit_media_name(tmp_path):
     assert not stage.parent.exists()
 
 
+@pytest.mark.parametrize("fail_ancestor_sync", [False, True])
+def test_atomic_output_syncs_new_ancestor_entries(
+    tmp_path, monkeypatch, fail_ancestor_sync
+):
+    target = tmp_path / "new" / "nested" / "result.json"
+    real_open, real_sync = os.open, os.fsync
+    paths = {}
+    directory_syncs = []
+
+    def open_file(path, *args, **kwargs):
+        fd = real_open(path, *args, **kwargs)
+        paths[fd] = Path(path)
+        return fd
+
+    def sync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            path = paths[fd]
+            directory_syncs.append(path)
+            if fail_ancestor_sync and path == tmp_path and len(directory_syncs) == 1:
+                raise OSError(errno.EIO, "synthetic ancestor sync failure")
+        real_sync(fd)
+
+    monkeypatch.setattr(os, "open", open_file)
+    monkeypatch.setattr(os, "fsync", sync)
+    if fail_ancestor_sync:
+        with pytest.raises(OSError, match="Durability is uncertain") as raised:
+            safe_io.write_text_atomic(target, "complete")
+        assert str(tmp_path) in str(raised.value)
+        assert not isinstance(raised.value, safe_io.PublicationUncertainError)
+        assert not target.exists()
+        assert directory_syncs == [tmp_path]
+        directory_syncs.clear()
+        fail_ancestor_sync = False
+
+    with safe_io.atomic_output(target) as stage:
+        assert directory_syncs == [tmp_path, target.parent.parent]
+        stage.write_text("complete")
+    assert target.read_text() == "complete"
+    assert directory_syncs == [
+        tmp_path,
+        target.parent.parent,
+        target.parent,
+        stage.parent,
+    ]
+
+
 @pytest.mark.parametrize("platform", ["posix", "nt"])
 def test_atomic_output_syncs_data_then_rename_then_directory(
     tmp_path, monkeypatch, platform
@@ -471,8 +517,16 @@ def test_publication_failure_does_not_publish_completion(tmp_path, monkeypatch, 
 
     monkeypatch.setattr(os, "fsync", sync)
     monkeypatch.setattr(os, "replace", replace)
-    with pytest.raises(OSError, match="synthetic"):
+    with pytest.raises(OSError) as raised:
         store.split_into_chunks()
+    error = raised.value
+    if phase == "directory":
+        # The absent manifest is retired first; its directory sync fails.
+        assert isinstance(error, safe_io.RetirementUncertainError)
+        assert error.already_absent
+        assert error.target == store.chunks_manifest_path
+        error = error.__cause__
+    assert "synthetic" in str(error)
     assert faults
     assert not store.chunks_manifest_path.exists()
     assert store._load_chunk_manifest() is None
@@ -488,7 +542,17 @@ def test_source_completion_follows_durable_audio_and_chunk_marker(
     monkeypatch.setattr(audio, "resample_audio", shutil.copyfile)
     monkeypatch.setattr(audio, "get_audio_duration", lambda path: 1)
     events = record_publication(monkeypatch)
+    root = tmp_path.stat()
+    record_sync = os.fsync
+
+    def sync(fd):
+        record_sync(fd)
+        if os.path.samestat(os.fstat(fd), root):
+            events.append(("cache ancestor", None))
+
+    monkeypatch.setattr(os, "fsync", sync)
     store.prepare_audio_for_transcription()
+    assert events[:2] == [("directory", None), ("cache ancestor", None)]
     replacements = [
         (i, name) for i, (kind, name) in enumerate(events) if kind == "replace"
     ]
@@ -501,3 +565,91 @@ def test_source_completion_follows_durable_audio_and_chunk_marker(
     assert json.loads(store.source_metadata_path.read_text()) == {
         "sha256": hashlib.sha256(b"synthetic").hexdigest()
     }
+
+
+def test_source_retirement_sync_blocks_promotion_until_retry_passes(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source.mp3"
+    source.write_bytes(b"original")
+    store = audio.Audio(base_dir=tmp_path / "cache", url=str(source))
+    monkeypatch.setattr(audio, "resample_audio", shutil.copyfile)
+    monkeypatch.setattr(audio, "get_audio_duration", lambda path: 1)
+    store.prepare_audio_for_transcription()
+    source.write_bytes(b"replacement")
+
+    marker = store.source_metadata_path
+    real_sync = safe_io.sync_directory
+    sync_error = OSError(errno.EIO, "synthetic retirement sync failure")
+    fail = True
+    barrier_passed = False
+
+    def sync_directory(path):
+        nonlocal barrier_passed
+        if path == marker.parent and not barrier_passed:
+            assert not marker.exists()
+            assert store.episode_path.read_bytes() == b"original"
+            if fail:
+                raise sync_error
+            real_sync(path)
+            barrier_passed = True
+        else:
+            real_sync(path)
+
+    monkeypatch.setattr(safe_io, "sync_directory", sync_directory)
+    with pytest.raises(OSError, match="File was retired") as raised:
+        store.prepare_audio_for_transcription()
+
+    error = raised.value
+    assert isinstance(error, safe_io.RetirementUncertainError)
+    assert error.target == marker
+    assert error.directory == marker.parent
+    assert error.__cause__ is sync_error
+
+    with pytest.raises(OSError, match="File was already absent") as retry:
+        store.prepare_audio_for_transcription()
+    assert isinstance(retry.value, safe_io.RetirementUncertainError)
+    assert retry.value.already_absent
+    assert retry.value.target == marker
+    assert retry.value.directory == marker.parent
+    assert retry.value.__cause__ is sync_error
+    assert store.episode_path.read_bytes() == b"original"
+    assert not marker.exists()
+
+    fail = False
+    chunks = store.prepare_audio_for_transcription()
+    assert barrier_passed
+    assert chunks[0].read_bytes() == b"replacement"
+    assert json.loads(marker.read_text()) == {
+        "sha256": hashlib.sha256(b"replacement").hexdigest()
+    }
+
+
+def test_invalid_chunk_manifest_retirement_retries_before_removing_chunks(
+    tmp_path, monkeypatch
+):
+    store = audio.Audio(base_dir=tmp_path, url="https://example.test/episode.mp3")
+    store.episode_chunks_dir.mkdir(parents=True)
+    store.resampled_episode_path.write_bytes(b"audio")
+    stale = store.episode_chunks_dir / "chunk_001.mp3"
+    stale.write_bytes(b"stale")
+    marker = store.chunks_manifest_path
+    marker.write_text('["chunk_001.mp3"]')
+    monkeypatch.setattr(audio, "get_audio_duration", lambda path: 1)
+    real_sync = safe_io.sync_directory
+
+    def fail_sync(path):
+        if path == marker.parent:
+            raise OSError(errno.EIO, "synthetic retirement sync failure")
+        real_sync(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(safe_io, "sync_directory", fail_sync)
+        for _ in range(2):
+            with pytest.raises(OSError):
+                store.split_into_chunks()
+            assert not marker.exists()
+            assert stale.read_bytes() == b"stale"
+
+    assert store.split_into_chunks()[0].read_bytes() == b"audio"
+    assert not stale.exists()

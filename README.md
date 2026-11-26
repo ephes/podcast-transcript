@@ -754,6 +754,11 @@ episode cache aside and process the source as separate, shorter files.
 
 ### Output durability errors
 
+On first use, each new output directory entry is synced in its parent before publishing
+files. If a parent sync fails during creation, the error names the directory with uncertain
+durability and the output has yet to be published. The newly created directory is removed if
+still empty so the next run can create it and retry the sync.
+
 When writing fails before an atomic replacement, the destination retains its prior contents.
 Atomic text and binary writes reject incomplete writes before replacing the destination.
 Text written by the shared atomic writer, including JSON receipts, uses UTF-8.
@@ -769,6 +774,11 @@ or write stops publication.
 If syncing either parent directory fails after the rename, the command reports that the
 replacement is visible with uncertain durability and identifies the directory whose sync
 failed. Cache completion markers are written after their required artifacts are synced.
+If a directory sync fails after a completion marker is removed, the error names the retired
+marker and the directory whose sync failed. The marker is already absent and its retirement
+has uncertain crash durability. Rerunning syncs the retained directory before changing
+dependent files, even when the marker is already absent. If that sync fails again, the error
+names the absent marker and the directory as well.
 
 ### Starting an episode over
 
