@@ -700,8 +700,11 @@ through a private file rather than the command line. A stalled or crashed worker
 like whisper-cli; the episode lock is released, previous transcripts are kept and a retry starts a
 new worker. The worker stops writing before its JSON result would exceed 64 MiB, and the CLI
 removes the partial result and preserves any previous transcript. The CLI also enforces the
-64 MiB regular-file bound when reading and validates the result before publication. Each chunk
-pays the worker start-up and model load time.
+64 MiB regular-file bound when reading and validates the result before publication. Both the
+worker and CLI reject nonfinite numbers anywhere in the result, including optional metadata
+such as word probabilities. A refusal reports invalid MLX transcript JSON without naming
+the source or including result values and preserves the previous transcript. Each chunk pays
+the worker start-up and model load time.
 
 Whisper-cpp passes a supplied 16 kHz mono PCM16 WAV directly to whisper-cli after checking
 that the samples are nonempty and complete and that the path still names the inspected file.

@@ -404,7 +404,7 @@ class MLX:
                     str(params_path),
                     str(result_path),
                 ],
-                description=f"MLX transcription of {audio_file}",
+                description="MLX transcription",
                 timeout=settings.local_transcription_timeout_seconds,
             )
             raw = read_regular_bounded(
@@ -413,7 +413,7 @@ class MLX:
                 description="MLX transcript output",
             )
         try:
-            result = loads_unique(raw)
+            result = loads_unique(raw, finite_numbers=True)
         except (ValueError, UnicodeError, RecursionError):
             raise ValueError("Invalid MLX transcript JSON.") from None
         validate_whisper_transcript(result)
