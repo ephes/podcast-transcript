@@ -760,6 +760,10 @@ attempt or created by another writer. It creates missing ancestors and syncs eac
 treating the first existing ancestor above the destination as already provisioned. If a parent
 sync fails, the error names the directory with uncertain durability and the output has yet to
 be published. The writer removes a directory it just created if it is still empty.
+The parent of each output directory must therefore be readable and support directory fsync,
+even when the output directory already exists. A parent the writer can traverse but not read
+(for example mode `0711`) makes every write into that directory fail with this error until the
+parent is readable again.
 
 When writing fails before an atomic replacement, the destination retains its prior contents.
 Atomic text and binary writes reject incomplete writes before replacing the destination.

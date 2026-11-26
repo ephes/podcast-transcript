@@ -274,6 +274,28 @@ def test_output_retry_checks_parent_of_retained_directory(tmp_path, monkeypatch)
     assert target.read_text() == "complete"
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="needs a non-root POSIX user to make a directory unreadable",
+)
+def test_existing_output_directory_requires_readable_parent(tmp_path):
+    parent = tmp_path / "parent"
+    directory = parent / "transcripts"
+    directory.mkdir(parents=True)
+    target = directory / "result.txt"
+    parent.chmod(0o311)
+    try:
+        with pytest.raises(OSError, match="Durability is uncertain") as raised:
+            safe_io.write_text_atomic(target, "complete")
+        assert isinstance(raised.value.__cause__, PermissionError)
+        assert directory.is_dir()
+        assert not target.exists()
+    finally:
+        parent.chmod(0o700)
+    safe_io.write_text_atomic(target, "complete")
+    assert target.read_text() == "complete"
+
+
 @pytest.mark.parametrize("platform", ["posix", "nt"])
 def test_atomic_output_syncs_data_then_rename_then_directory(
     tmp_path, monkeypatch, platform
