@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Preserve existing WebVTT and plaintext exports when any streaming write is incomplete.
+
 - Refuse incomplete atomic text and binary writes before replacing the destination, and write JSON receipts as UTF-8.
 
 - Enforce the episode DOTe line limit when regenerating missing exports from a cached combined transcript.

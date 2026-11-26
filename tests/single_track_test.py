@@ -714,7 +714,7 @@ def test_changed_source_preparation_preserves_previous_generation(
 def fail_staged_text_write(monkeypatch):
     real_open = Path.open
 
-    def install(output, *, successful_writes):
+    def install(output, *, successful_writes, short_write=False):
         @contextmanager
         def open_with_write_failure(file):
             with file:
@@ -723,6 +723,8 @@ def fail_staged_text_write(monkeypatch):
                 def write(text):
                     nonlocal remaining
                     if remaining == 0:
+                        if short_write:
+                            return file.write(text[:-1])
                         raise OSError("injected stage write failure")
                     remaining -= 1
                     return file.write(text)
@@ -840,6 +842,47 @@ def test_webvtt_mid_write_failure_preserves_previous_export(
         convert_to_webvtt(source, output)
 
     assert output.read_bytes() == b"previous captions"
+    assert sorted(tmp_path.iterdir()) == [source, output]
+
+
+@pytest.mark.parametrize(
+    ("suffix", "successful_writes"),
+    [(".webvtt", 0), (".webvtt", 2), (".txt", 1), (".txt", 2)],
+)
+def test_short_streaming_write_preserves_previous_export(
+    tmp_path, fail_staged_text_write, suffix, successful_writes
+):
+    from podcast_transcript.single_track import convert_to_plaintext, convert_to_webvtt
+
+    source = _write_dote(
+        tmp_path / "input.dote.json",
+        [
+            ("00:00:00,000", "00:00:01,000", "first"),
+            ("00:00:01,000", "00:00:01,000", "café & <end>"),
+        ],
+    )
+    output = tmp_path / f"output{suffix}"
+    if suffix == ".webvtt":
+        convert = convert_to_webvtt
+        expected = (
+            "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nfirst\n"
+            "\n00:00:01.000 --> 00:00:01.001\ncafé &amp; &lt;end&gt;\n"
+        ).replace("\n", os.linesep)
+    else:
+        convert = convert_to_plaintext
+        expected = f"first{os.linesep}café & <end>"
+
+    convert(source, output)
+    previous = expected.encode("utf-8")
+    assert output.read_bytes() == previous
+
+    fail_staged_text_write(
+        output, successful_writes=successful_writes, short_write=True
+    )
+    with pytest.raises(OSError, match="Incomplete output write"):
+        convert(source, output)
+
+    assert output.read_bytes() == previous
     assert sorted(tmp_path.iterdir()) == [source, output]
 
 

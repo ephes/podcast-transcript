@@ -604,6 +604,8 @@ match. Repairing missing exports checks the combined DOTe against the 250,000-li
 limit before building export cues. If it exceeds the limit, existing files are preserved.
 Correct or remove the cached combined DOTe and rerun. A regenerated DOTe chunk refreshes
 every export from the new combined DOTe.
+WebVTT and plaintext exporters check each staged write for completeness. An incomplete write
+aborts that export and preserves any existing destination file.
 
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.
