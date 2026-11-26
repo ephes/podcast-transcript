@@ -171,6 +171,52 @@ def test_atomic_output_publishes_near_limit_media_name(tmp_path):
     assert not stage.parent.exists()
 
 
+@pytest.mark.parametrize("fail_ancestor_sync", [False, True])
+def test_atomic_output_syncs_new_ancestor_entries(
+    tmp_path, monkeypatch, fail_ancestor_sync
+):
+    target = tmp_path / "new" / "nested" / "result.json"
+    real_open, real_sync = os.open, os.fsync
+    paths = {}
+    directory_syncs = []
+
+    def open_file(path, *args, **kwargs):
+        fd = real_open(path, *args, **kwargs)
+        paths[fd] = Path(path)
+        return fd
+
+    def sync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            path = paths[fd]
+            directory_syncs.append(path)
+            if fail_ancestor_sync and path == tmp_path and len(directory_syncs) == 1:
+                raise OSError(errno.EIO, "synthetic ancestor sync failure")
+        real_sync(fd)
+
+    monkeypatch.setattr(os, "open", open_file)
+    monkeypatch.setattr(os, "fsync", sync)
+    if fail_ancestor_sync:
+        with pytest.raises(OSError, match="Durability is uncertain") as raised:
+            safe_io.write_text_atomic(target, "complete")
+        assert str(tmp_path) in str(raised.value)
+        assert not isinstance(raised.value, safe_io.PublicationUncertainError)
+        assert not target.exists()
+        assert directory_syncs == [tmp_path]
+        directory_syncs.clear()
+        fail_ancestor_sync = False
+
+    with safe_io.atomic_output(target) as stage:
+        assert directory_syncs == [tmp_path, target.parent.parent]
+        stage.write_text("complete")
+    assert target.read_text() == "complete"
+    assert directory_syncs == [
+        tmp_path,
+        target.parent.parent,
+        target.parent,
+        stage.parent,
+    ]
+
+
 @pytest.mark.parametrize("platform", ["posix", "nt"])
 def test_atomic_output_syncs_data_then_rename_then_directory(
     tmp_path, monkeypatch, platform
@@ -488,7 +534,17 @@ def test_source_completion_follows_durable_audio_and_chunk_marker(
     monkeypatch.setattr(audio, "resample_audio", shutil.copyfile)
     monkeypatch.setattr(audio, "get_audio_duration", lambda path: 1)
     events = record_publication(monkeypatch)
+    root = tmp_path.stat()
+    record_sync = os.fsync
+
+    def sync(fd):
+        record_sync(fd)
+        if os.path.samestat(os.fstat(fd), root):
+            events.append(("cache ancestor", None))
+
+    monkeypatch.setattr(os, "fsync", sync)
     store.prepare_audio_for_transcription()
+    assert events[:2] == [("directory", None), ("cache ancestor", None)]
     replacements = [
         (i, name) for i, (kind, name) in enumerate(events) if kind == "replace"
     ]

@@ -24,6 +24,7 @@ from time import monotonic
 from typing import TypeVar
 
 from .config import private_mkdir, settings
+from .config import sync_directory as sync_directory
 from .input_admission import file_generation
 from .input_admission import read_regular_bounded as read_regular_bounded
 
@@ -56,7 +57,8 @@ def atomic_output(path: Path) -> Iterator[Path]:
     """
     Yield a temporary path to write to and move it to ``path`` on success.
 
-    Errors before rename leave ``path`` untouched. A missing temporary file
+    Newly created directories are synced before staging. Errors before rename
+    leave ``path`` untouched. A missing temporary file
     raises ``RuntimeError``. A directory sync failure after rename raises
     ``PublicationUncertainError`` with the new output already visible at ``path``.
     """
@@ -74,15 +76,6 @@ def atomic_output(path: Path) -> Iterator[Path]:
         if not tmp_path.is_symlink():
             tmp_path.chmod(mode)
         durable_replace(tmp_path, path)
-
-
-def sync_directory(path: Path) -> None:
-    """Persist directory entries; propagate unsupported-filesystem errors."""
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _sync_regular_descriptor(

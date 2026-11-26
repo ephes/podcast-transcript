@@ -754,6 +754,11 @@ episode cache aside and process the source as separate, shorter files.
 
 ### Output durability errors
 
+On first use, each new output directory entry is synced in its parent before publishing
+files. If a parent sync fails during creation, the error names the directory with uncertain
+durability and the output has yet to be published. The newly created directory is removed if
+still empty so the next run can create it and retry the sync.
+
 When writing fails before an atomic replacement, the destination retains its prior contents.
 Atomic text and binary writes reject incomplete writes before replacing the destination.
 Text written by the shared atomic writer, including JSON receipts, uses UTF-8.
