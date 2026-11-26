@@ -777,7 +777,8 @@ failed. Cache completion markers are written after their required artifacts are 
 If a directory sync fails after a completion marker is removed, the error names the retired
 marker and the directory whose sync failed. The marker is already absent and its retirement
 has uncertain crash durability. Rerunning syncs the retained directory before changing
-dependent files, even when the marker is already absent.
+dependent files, even when the marker is already absent. If that sync fails again, the error
+names the absent marker and the directory as well.
 
 ### Starting an episode over
 

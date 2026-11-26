@@ -55,11 +55,15 @@ class PublicationUncertainError(OSError):
 class RetirementUncertainError(OSError):
     """The file was unlinked, and its parent directory sync failed."""
 
-    def __init__(self, target: Path) -> None:
+    def __init__(self, target: Path, *, already_absent: bool = False) -> None:
         self.target = target
         self.directory = target.parent
+        self.already_absent = already_absent
+        state = (
+            "File was already absent at" if already_absent else "File was retired at"
+        )
         super().__init__(
-            f"File was retired at {target}. "
+            f"{state} {target}. "
             f"Durability is uncertain after directory sync failed for {self.directory}."
         )
 
@@ -174,7 +178,10 @@ def durable_unlink(path: Path) -> None:
     except FileNotFoundError:
         # A previous attempt may have unlinked the marker without syncing it.
         if path.parent.exists():
-            sync_directory(path.parent)
+            try:
+                sync_directory(path.parent)
+            except OSError as exc:
+                raise RetirementUncertainError(path, already_absent=True) from exc
     else:
         try:
             sync_directory(path.parent)

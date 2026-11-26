@@ -517,8 +517,16 @@ def test_publication_failure_does_not_publish_completion(tmp_path, monkeypatch, 
 
     monkeypatch.setattr(os, "fsync", sync)
     monkeypatch.setattr(os, "replace", replace)
-    with pytest.raises(OSError, match="synthetic"):
+    with pytest.raises(OSError) as raised:
         store.split_into_chunks()
+    error = raised.value
+    if phase == "directory":
+        # The absent manifest is retired first; its directory sync fails.
+        assert isinstance(error, safe_io.RetirementUncertainError)
+        assert error.already_absent
+        assert error.target == store.chunks_manifest_path
+        error = error.__cause__
+    assert "synthetic" in str(error)
     assert faults
     assert not store.chunks_manifest_path.exists()
     assert store._load_chunk_manifest() is None
@@ -598,9 +606,13 @@ def test_source_retirement_sync_blocks_promotion_until_retry_passes(
     assert error.directory == marker.parent
     assert error.__cause__ is sync_error
 
-    with pytest.raises(OSError) as retry:
+    with pytest.raises(OSError, match="File was already absent") as retry:
         store.prepare_audio_for_transcription()
-    assert retry.value is sync_error
+    assert isinstance(retry.value, safe_io.RetirementUncertainError)
+    assert retry.value.already_absent
+    assert retry.value.target == marker
+    assert retry.value.directory == marker.parent
+    assert retry.value.__cause__ is sync_error
     assert store.episode_path.read_bytes() == b"original"
     assert not marker.exists()
 

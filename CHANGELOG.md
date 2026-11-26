@@ -3,7 +3,7 @@ Unreleased
 
 ### Fixes
 
-- Report uncertain durability when a completion marker was removed but its parent sync failed, and repeat the sync before updating dependent files on retry.
+- Report uncertain durability when a completion marker was removed but its parent sync failed, and repeat the sync before updating dependent files on retry, naming the absent marker and directory if it fails again.
 
 - Sync each newly created output directory entry in its parent before publishing files.
 
