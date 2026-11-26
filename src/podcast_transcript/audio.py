@@ -26,6 +26,7 @@ from .safe_io import (
     capture_checked,
     run_checked,
     write_text_atomic,
+    write_complete,
     durable_replace,
     durable_unlink,
     sync_file,
@@ -266,7 +267,7 @@ def download(url: str, target_path: Path) -> None:
                                 raise RuntimeError(
                                     "Source download exceeded TRANSCRIPT_SOURCE_MAX_BYTES."
                                 )
-                            file.write(data)
+                            write_complete(file.write, data)
                     check_deadline()
                     if declared_bytes is not None and received != declared_bytes:
                         raise RuntimeError(

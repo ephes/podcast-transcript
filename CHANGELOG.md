@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Reject incomplete source audio writes before publishing the download and preserve any previous cached file.
+
 - Follow source redirects with compressed bodies without reading them, while still requiring identity encoding on the final response.
 
 - Preserve existing WebVTT and plaintext exports when any streaming write is incomplete.

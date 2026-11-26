@@ -221,9 +221,11 @@ Source downloads close intermediate redirects without reading their bodies and f
 20 redirects. The final response must use HTTP 200 without a `Content-Range` header and have a
 nonempty body. Partial responses (including 206), no-content responses (204/205) and empty bodies
 are refused before source publication or subsequent audio preparation. If supplied,
-`Content-Length` must be a single decimal value and match the streamed byte count. Rejected downloads
-close their response and remove partial files, preserving any existing target. Previously cached sources are reused without a new HTTP request; if an older
-run cached a fragment, move that episode directory aside and rerun to download it again.
+`Content-Length` must be a single decimal value and match the streamed byte count. Every block
+must be written completely to the staging file before the download can be published. Rejected
+downloads close their response and remove partial files, preserving any existing target.
+Previously cached sources are reused without a new HTTP request; if an older run cached a fragment,
+move that episode directory aside and rerun to download it again.
 These limits also bound each local-source hash/copy pass, excluding backend uploads and model hashing.
 Local admission opens one nonblocking descriptor and accepts only regular files; FIFOs, devices and
 sockets are refused before reading. Actual bytes, including file growth, are counted. Elapsed time

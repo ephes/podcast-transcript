@@ -1,5 +1,7 @@
 import json
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -471,6 +473,40 @@ def test_source_download_requires_length_agreement(mock_http, audio, lengths, re
         assert audio.episode_path.read_bytes() == b"abc"
     assert stream.closed
     assert list(audio.episode_chunks_dir.iterdir()) == [audio.episode_path]
+
+
+def test_source_download_refuses_short_stage_write(mock_http, audio, monkeypatch):
+    routes, seen = mock_http
+    target = audio.episode_path
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"previous")
+    body = b"replacement"
+    routes[audio.url] = httpx.Response(
+        200,
+        headers={"Content-Length": str(len(body))},
+        stream=httpx.ByteStream(body),
+    )
+    real_open = Path.open
+
+    @contextmanager
+    def short_open(path, mode):
+        assert path.parent.name.startswith(".output-")
+        assert mode == "wb"
+        with real_open(path, mode) as stream:
+            yield SimpleNamespace(write=lambda data: stream.write(data[:-1]))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "open", short_open)
+        with pytest.raises(OSError, match="Incomplete output write"):
+            download(audio.url, target)
+
+    assert target.read_bytes() == b"previous"
+    assert list(target.parent.iterdir()) == [target]
+
+    routes[audio.url] = httpx.Response(200, content=b"new audio")
+    download(audio.url, target)
+    assert seen == [audio.url, audio.url]
+    assert target.read_bytes() == b"new audio"
 
 
 @pytest.mark.parametrize("outcome", ["success", "limit", "timeout"])
