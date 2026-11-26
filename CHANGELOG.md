@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Preserve the original directory fsync failure when closing the descriptor also fails, and warn on a close failure after successful fsync.
+
 - Reject nonfinite numbers anywhere in MLX results before publishing, preserving any previous transcript.
 
 - Stage whisper-cpp WAV conversion privately per call, preserving the input and any same-stem WAV beside it.

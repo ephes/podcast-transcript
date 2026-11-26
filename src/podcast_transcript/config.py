@@ -1,3 +1,4 @@
+import logging
 import math
 import os
 import shutil
@@ -8,6 +9,8 @@ from pathlib import Path
 from rich.console import Console
 
 from .input_admission import read_regular_bounded
+
+logger = logging.getLogger(__name__)
 
 DOTENV_MAX_BYTES = 64 * 1024
 CONFIGURATION_KEYS = frozenset(
@@ -28,12 +31,24 @@ CONFIGURATION_KEYS = frozenset(
 
 
 def sync_directory(path: Path) -> None:
-    """Persist directory entries; propagate unsupported-filesystem errors."""
+    """Persist directory entries and warn if closing the synced descriptor fails."""
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
         os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    except BaseException:
+        with suppress(OSError):
+            os.close(descriptor)
+        raise
+    else:
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            with suppress(Exception):
+                logger.warning(
+                    "Could not close the synced directory descriptor for %s: %s",
+                    path,
+                    exc,
+                )
 
 
 def private_mkdir(path: Path) -> None:

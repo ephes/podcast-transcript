@@ -553,6 +553,59 @@ def test_atomic_output_reports_visible_output_after_directory_sync_failure(
     assert error.__cause__ is original_error
 
 
+@pytest.mark.parametrize(
+    "sync_error",
+    [OSError(errno.EIO, "synthetic fsync failure"), KeyboardInterrupt(), None],
+    ids=["fsync-failed", "fsync-interrupted", "fsync-succeeded"],
+)
+def test_published_output_when_directory_close_fails(
+    tmp_path, monkeypatch, caplog, sync_error
+):
+    target = tmp_path / "result.json"
+    descriptor = -17
+    events = []
+
+    def open_directory(path, flags):
+        return descriptor if path == target.parent else os.open(path, flags)
+
+    def sync(fd):
+        if fd != descriptor:
+            return os.fsync(fd)
+        events.append("fsync")
+        if sync_error is not None:
+            raise sync_error
+
+    def close(fd):
+        if fd != descriptor:
+            return os.close(fd)
+        events.append("close")
+        raise OSError(errno.EIO, "synthetic close failure")
+
+    monkeypatch.setattr(
+        config,
+        "os",
+        SimpleNamespace(
+            **{**vars(os), "open": open_directory, "fsync": sync, "close": close}
+        ),
+    )
+    if isinstance(sync_error, OSError):
+        with pytest.raises(safe_io.PublicationUncertainError) as raised:
+            safe_io.write_text_atomic(target, "complete")
+        assert raised.value.directory == target.parent
+        assert raised.value.__cause__ is sync_error
+    elif isinstance(sync_error, KeyboardInterrupt):
+        with pytest.raises(KeyboardInterrupt) as raised:
+            safe_io.write_text_atomic(target, "complete")
+        assert raised.value is sync_error
+    else:
+        safe_io.write_text_atomic(target, "complete")
+        assert "Could not close the synced directory descriptor" in caplog.text
+        assert str(target.parent) in caplog.text
+
+    assert target.read_text() == "complete"
+    assert events == ["fsync", "close"]
+
+
 @pytest.mark.parametrize("phase", ["file", "directory", "replace"])
 def test_publication_failure_does_not_publish_completion(tmp_path, monkeypatch, phase):
     store = audio.Audio(base_dir=tmp_path, url="https://example.test/episode.mp3")

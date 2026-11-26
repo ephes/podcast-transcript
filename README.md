@@ -775,7 +775,9 @@ also fails, even if reporting the close failure fails. A close failure after a s
 or write stops publication.
 If syncing either parent directory fails after the rename, the command reports that the
 replacement is visible with uncertain durability and identifies the directory whose sync
-failed. Cache completion markers are written after their required artifacts are synced.
+failed. If closing the directory descriptor also fails, the original sync error remains the
+cause. A close failure after successful directory fsync is logged as a warning and publication
+continues. Cache completion markers are written after their required artifacts are synced.
 If a directory sync fails after a completion marker is removed, the error names the retired
 marker and the directory whose sync failed. The marker is already absent and its retirement
 has uncertain crash durability. Rerunning syncs the retained directory before changing
