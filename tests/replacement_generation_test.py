@@ -512,6 +512,42 @@ def test_generation_and_restore_receipts_follow_output_inventory(episode, monkey
     )
 
 
+def test_missing_export_repair_checks_episode_line_limit(episode, monkeypatch, mocker):
+    store, previous = episode
+    dote = store.output_path(".dote.json")
+    dote_key = dote.relative_to(store.podcast_dir)
+    missing = store.output_path(".txt")
+    missing_key = missing.relative_to(store.podcast_dir)
+    missing.unlink()
+
+    legacy = json.loads(previous[dote_key])
+    monkeypatch.setattr(single_track, "COMBINED_MAX_LINES", len(legacy["lines"]))
+    legacy["lines"].append(legacy["lines"][-1])
+    oversized = json.dumps(legacy).encode("utf-8")
+    dote.write_bytes(oversized)
+    export_cue = mocker.spy(single_track, "_ExportCue")
+    backend = RecordingBackend("old", "unused")
+
+    with pytest.raises(ValueError, match="episode line limit") as error:
+        single_track.transcribe(store.url, backend)
+
+    assert dote.name in str(error.value)
+    assert "Correct or remove the cached combined DOTe and rerun." in str(error.value)
+    export_cue.assert_not_called()
+    assert not missing.exists()
+    assert dote.read_bytes() == oversized
+    for path, content in previous.items():
+        if path not in (dote_key, missing_key):
+            assert (store.podcast_dir / path).read_bytes() == content
+
+    dote.write_bytes(previous[dote_key])
+    single_track.transcribe(store.url, backend)
+
+    assert not backend.calls
+    for path, content in previous.items():
+        assert (store.podcast_dir / path).read_bytes() == content
+
+
 def test_missing_exports_use_one_dote_snapshot(episode, monkeypatch):
     store, _ = episode
     dote = store.output_path(".dote.json")

@@ -408,7 +408,10 @@ class _ExportCue(NamedTuple):
     text: str
 
 
-def _load_export_cues(dote_path: Path) -> tuple[_ExportCue, ...]:
+def _load_export_cues(
+    dote_path: Path, *, max_lines: int | None = None
+) -> tuple[_ExportCue, ...]:
+    cues = _iter_dote_file_cues(dote_path, max_lines=max_lines)
     return tuple(
         _ExportCue(
             start_ms,
@@ -416,7 +419,7 @@ def _load_export_cues(dote_path: Path) -> tuple[_ExportCue, ...]:
             line.get("speakerDesignation", ""),
             line["text"],
         )
-        for line, start_ms, end_ms in _iter_dote_file_cues(dote_path)
+        for line, start_ms, end_ms in cues
     )
 
 
@@ -1102,7 +1105,12 @@ def _transcribe_prepared(
         if not pending_receipts and path.exists():
             continue
         if cues is None:
-            cues = _load_export_cues(dote_path)
+            try:
+                cues = _load_export_cues(dote_path, max_lines=COMBINED_MAX_LINES)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{exc} Correct or remove the cached combined DOTe and rerun."
+                ) from None
         write(cues, path)
     # A failed or interrupted export leaves a missing receipt, so the next
     # run refreshes all formats even if the new DOTe was already written.
