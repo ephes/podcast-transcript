@@ -530,8 +530,9 @@ unusually large episodes into separate inputs. A refused settings replacement pr
 completed exports.
 If closing a bounded input also fails, the reader reports the original refusal. A close failure
 on its own also rejects the read.
-Multi-chunk assembly reuses the validated cue times when shifting each chunk. It validates
-the combined cues before serializing directly to staging without another episode-sized join.
+Multi-chunk assembly checks each decoded chunk's line count against the remaining episode
+budget before parsing its cue timestamps. It reuses the validated cue times when shifting
+each chunk and validates the combined cues before serializing directly to staging.
 
 ### Transcript and cached-artifact validation
 

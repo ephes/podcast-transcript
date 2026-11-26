@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Check each DOTe chunk against the remaining episode line budget before parsing its cue timestamps.
+
 - Format Podlove cue timestamps consistently from validated milliseconds, including zero-length cues.
 
 - Refresh DOTe chunks and all transcript exports after valid raw Whisper chunks are replaced, using receipts to verify cache reuse.

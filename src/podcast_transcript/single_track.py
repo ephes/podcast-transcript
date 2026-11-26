@@ -374,7 +374,9 @@ def combine_dote_chunks(
             raise ValueError(
                 f"DOTe chunk offset at position {position} exceeds {DOTE_MAX_MILLISECONDS} milliseconds."
             )
-        cues = list(_iter_dote_file_cues(filename))
+        cues = _iter_dote_file_cues(
+            filename, max_lines=COMBINED_MAX_LINES - len(combined_lines)
+        )
         for cue_position, (line, start_ms, end_ms) in enumerate(cues, 1):
             new_line = dict(line)
             try:
