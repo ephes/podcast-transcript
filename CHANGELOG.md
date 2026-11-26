@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Refresh DOTe chunks and all transcript exports after valid raw Whisper chunks are replaced, using receipts to verify cache reuse.
+
 - Regenerate Podlove, WebVTT and plaintext from the admitted DOTe when restoring last-success transcripts.
 
 - Refuse a last-success backup if a published transcript file or its cache marker changes during copying.

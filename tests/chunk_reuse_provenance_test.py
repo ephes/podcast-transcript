@@ -54,6 +54,53 @@ def test_chunk_digests_recorded_and_unchanged_audio_reuses(prepared):
     assert not backend.calls
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_replaced_raw_chunk_refreshes_all_transcript_formats(prepared, legacy):
+    store = prepared
+    raw = store.episode_chunks_dir / "chunk_000.json"
+    dote = raw.with_suffix(".dote.json")
+    if legacy:
+        raw.with_suffix(".dote.receipt.json").unlink(missing_ok=True)
+    data = json.loads(raw.read_bytes())
+    for segment in data["segments"]:
+        segment["text"] = "corrected"
+    replacement = raw.with_name("repair.json")
+    replacement.write_text(json.dumps(data))
+    replacement.replace(raw)
+
+    backend = RecordingBackend("model", "unused")
+    outputs = single_track.transcribe(store.url, backend)
+
+    assert not backend.calls
+    for path in [dote, *outputs.values()]:
+        assert b"corrected" in path.read_bytes(), path.name
+        assert b"original" not in path.read_bytes(), path.name
+
+
+def test_interrupted_export_refresh_retries_before_reusing_dote(prepared, monkeypatch):
+    store = prepared
+    raw = store.episode_chunks_dir / "chunk_000.json"
+    raw.write_text('{"segments": [{"start": 0, "end": 1, "text": "corrected"}]}')
+    backend = RecordingBackend("model", "unused")
+
+    def fail_export(*args):
+        raise RuntimeError("synthetic export failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(single_track, "_write_webvtt", fail_export)
+        with pytest.raises(RuntimeError, match="synthetic export failure"):
+            single_track.transcribe(store.url, backend)
+
+    assert not raw.with_suffix(".dote.receipt.json").exists()
+    outputs = single_track.transcribe(store.url, backend)
+    assert all(b"corrected" in path.read_bytes() for path in outputs.values())
+
+    with monkeypatch.context() as patch:
+        patch.setattr(single_track, "combine_dote_chunks", fail_export)
+        single_track.transcribe(store.url, backend)
+    assert not backend.calls
+
+
 def test_legacy_cache_retranscribes_once_without_discarding_on_failure(prepared):
     store = prepared
     metadata = json.loads(store.cache_metadata_path.read_text())

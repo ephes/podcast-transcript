@@ -61,9 +61,9 @@ class ModelBudget:
 GENERATED_CHUNK_RE = re.compile(r"chunk_\d{3,}\.(?:mp3|wav)")
 # Per-chunk transcript files written by the transcription step: the backend's
 # ``chunk_NNN.json``, whisper-cpp's intermediate ``chunk_NNN.whisper-cpp.json``
-# and the ``chunk_NNN.dote.json`` derived from it.
+# and the derived DOTe chunk and its receipt.
 GENERATED_TRANSCRIPT_RE = re.compile(
-    r"chunk_\d{3,}\.(?:json|whisper-cpp\.json|dote\.json)"
+    r"chunk_\d{3,}\.(?:json|whisper-cpp\.json|dote\.json|dote\.receipt\.json)"
 )
 CACHE_KEY_HASH_LENGTH = 12
 TRANSCRIPT_OUTPUT_LABELS = {

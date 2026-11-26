@@ -39,6 +39,7 @@ from .transcript_validation import (
     load_dote,
     _format_timecode,
     _iter_dote_file_cues,
+    _read_transcript,
     format_dote_timecode,
 )
 from .safe_io import (
@@ -256,19 +257,49 @@ def whisper_to_dote(input_data):
 
 def whisper_text_chunks_to_dote(raw_text_chunks: list[Path]) -> list[Path]:
     """Transform the raw Whisper text chunks to DOTe format."""
+    paths, _ = _prepare_dote_chunks(raw_text_chunks)
+    return paths
+
+
+def _prepare_dote_chunks(
+    raw_text_chunks: list[Path],
+) -> tuple[list[Path], dict[Path, dict[str, str]]]:
     dote_paths = []
+    pending_receipts = {}
     for chunk in raw_text_chunks:
         dote_path = chunk.with_suffix(".dote.json")
-        if dote_path.exists():
-            load_dote(dote_path)
-            dote_paths.append(dote_path)
-            continue
-        whisper_transcript = load_whisper_transcript(chunk)
+        dote_paths.append(dote_path)
+        receipt_path = chunk.with_suffix(".dote.receipt.json")
+        raw = _read_transcript(chunk, "Raw transcript")
+        raw_digest = hashlib.sha256(raw).hexdigest()
+        whisper_transcript = load_whisper_transcript(chunk, snapshot=raw)
+        del raw
+        try:
+            cached = load_control_json(receipt_path, expected_type=dict)
+        except FileNotFoundError:
+            cached = None
+        if (
+            cached is not None
+            and cached.get("raw_sha256") == raw_digest
+            and dote_path.exists()
+        ):
+            dote = _read_transcript(dote_path, "DOTe transcript")
+            if cached.get("dote_sha256") == hashlib.sha256(dote).hexdigest():
+                load_dote(dote_path, snapshot=dote)
+                del dote
+                continue
+            del dote
         rprint(f"Converting {chunk.name} to DOTe format")
         dote_transcript = whisper_to_dote(whisper_transcript["segments"])
-        write_text_atomic(dote_path, json.dumps(dote_transcript))
-        dote_paths.append(dote_path)
-    return dote_paths
+        payload = json.dumps(dote_transcript).encode("utf-8")
+        if cached is not None:
+            durable_unlink(receipt_path)
+        write_bytes_atomic(dote_path, payload)
+        pending_receipts[receipt_path] = {
+            "raw_sha256": raw_digest,
+            "dote_sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    return dote_paths, pending_receipts
 
 
 # Bound both object overhead and all serialized content (including unknown fields).
@@ -681,6 +712,8 @@ def restore_last_success(url: str) -> dict[str, Path]:
                 if path.parent == snapshot.episode_chunks_dir:
                     if path.name.endswith(".dote.json"):
                         load_dote(path)
+                    elif path.name.endswith(".dote.receipt.json"):
+                        load_control_json(path, expected_type=dict)
                     elif not path.name.endswith(".whisper-cpp.json"):
                         load_whisper_transcript(path)
             # Legacy backups can contain readable derivatives from a different
@@ -1062,15 +1095,19 @@ def _transcribe_prepared(
         backend, audio_chunks, validate_chunk=validate_inputs
     )
     validate_audio(None)
-    dote_chunks = whisper_text_chunks_to_dote(text_chunks)
+    dote_chunks, pending_receipts = _prepare_dote_chunks(text_chunks)
     dote_path = audio.output_path(".dote.json")
-    if not dote_path.exists():
+    if pending_receipts or not dote_path.exists():
         combine_dote_chunks(dote_chunks, dote_path, chunk_durations)
     cues = None
     for path, write in _derived_exports(audio):
-        if path.exists():
+        if not pending_receipts and path.exists():
             continue
         if cues is None:
             cues = _load_export_cues(dote_path)
         write(cues, path)
+    # A failed or interrupted export leaves a missing receipt, so the next
+    # run refreshes all formats even if the new DOTe was already written.
+    for path, receipt in pending_receipts.items():
+        write_text_atomic(path, json.dumps(receipt))
     return _transcript_paths(audio)

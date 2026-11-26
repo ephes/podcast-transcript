@@ -15,6 +15,7 @@ from single_track_test import RecordingBackend
         "Chunks.JSON",
         "chunk_000.json",
         "chunk_000.dote.json",
+        "chunk_000.dote.receipt.json",
         "chunk_000.whisper-cpp.json",
         "chunk_000.mp3",
         "CHUNK_000.WAV",
