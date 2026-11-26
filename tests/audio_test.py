@@ -430,3 +430,122 @@ def test_refused_source_never_reaches_preparation(
     resample.assert_not_called()
     split.assert_not_called()
     assert list(audio.episode_chunks_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "lengths, refusal",
+    [
+        (["5"], "does not match Content-Length"),
+        (["2"], "does not match Content-Length"),
+        (["3", "3"], "one decimal Content-Length"),
+        (["3, 3"], "one decimal Content-Length"),
+        (["+3"], "one decimal Content-Length"),
+        ([""], "one decimal Content-Length"),
+        (["003"], None),
+        ([], None),
+    ],
+)
+def test_source_download_requires_length_agreement(mock_http, audio, lengths, refusal):
+    class Stream(httpx.SyncByteStream):
+        closed = False
+
+        def __iter__(self):
+            yield b"abc"
+
+        def close(self):
+            self.closed = True
+
+    stream = Stream()
+    routes, _ = mock_http
+    routes[audio.url] = httpx.Response(
+        200, headers=[("Content-Length", length) for length in lengths], stream=stream
+    )
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.episode_path.write_bytes(b"previous")
+    if refusal:
+        with pytest.raises(RuntimeError, match=refusal):
+            download(audio.url, audio.episode_path)
+        assert audio.episode_path.read_bytes() == b"previous"
+    else:
+        download(audio.url, audio.episode_path)
+        assert audio.episode_path.read_bytes() == b"abc"
+    assert stream.closed
+    assert list(audio.episode_chunks_dir.iterdir()) == [audio.episode_path]
+
+
+@pytest.mark.parametrize("outcome", ["success", "limit", "timeout"])
+def test_source_download_closes_redirects_without_reading(mocker, audio, outcome):
+    class RedirectBody(httpx.SyncByteStream):
+        reads = 0
+        closes = 0
+
+        def __iter__(self):
+            self.reads += 1
+            yield b"x" * 256
+
+        def close(self):
+            self.closes += 1
+
+    clock = [0.0]
+    mocker.patch.object(audio_module, "monotonic", side_effect=lambda: clock[0])
+    mocker.patch.object(settings, "transcript_source_total_timeout", "5")
+    mocker.patch.object(settings, "transcript_source_max_bytes", "8")
+    requests = []
+    streams = []
+
+    def handler(request):
+        assert all(stream.closes == 1 for stream in streams)
+        requests.append(request)
+        if len(requests) == 3 and outcome == "success":
+            return httpx.Response(200, content=b"audio")
+        if len(requests) == 2 and outcome == "timeout":
+            clock[0] = 5.0
+        location = {
+            1: "/relative.mp3",
+            2: "https://cdn.example.com/final.mp3",
+            3: "/one-hop-too-many.mp3",
+        }[len(requests)]
+        stream = RedirectBody()
+        streams.append(stream)
+        return httpx.Response(302, headers={"Location": location}, stream=stream)
+
+    real_client = httpx.Client
+    mocker.patch.object(
+        audio_module.httpx,
+        "Client",
+        side_effect=lambda **kwargs: real_client(
+            transport=httpx.MockTransport(handler), max_redirects=2, **kwargs
+        ),
+    )
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.episode_path.write_bytes(b"previous")
+    url = "https://synthetic:secret@example.com/test.mp3"
+    if outcome == "success":
+        download(url, audio.episode_path)
+        assert audio.episode_path.read_bytes() == b"audio"
+    else:
+        error = (
+            "TooManyRedirects"
+            if outcome == "limit"
+            else "TRANSCRIPT_SOURCE_TOTAL_TIMEOUT"
+        )
+        with pytest.raises(RuntimeError, match=error):
+            download(url, audio.episode_path)
+        assert audio.episode_path.read_bytes() == b"previous"
+
+    assert all(stream.reads == 0 and stream.closes == 1 for stream in streams)
+    expected_urls = [
+        ("example.com", "/test.mp3"),
+        ("example.com", "/relative.mp3"),
+        ("cdn.example.com", "/final.mp3"),
+    ]
+    assert [(r.url.host, r.url.path) for r in requests] == (
+        expected_urls[:2] if outcome == "timeout" else expected_urls
+    )
+    assert requests[0].headers["Authorization"] == requests[1].headers["Authorization"]
+    if len(requests) == 3:
+        assert "Authorization" not in requests[2].headers
+    for request in requests:
+        assert set(request.extensions["timeout"].values()) == {5.0}
+        assert request.headers["Accept-Encoding"] == "identity"
+    assert list(audio.episode_chunks_dir.iterdir()) == [audio.episode_path]

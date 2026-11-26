@@ -450,6 +450,16 @@ def _write_plaintext(cues: tuple[_ExportCue, ...], plaintext_path: Path) -> None
                 target.write(cue.text)
 
 
+def _derived_exports(
+    audio: Audio,
+) -> tuple[tuple[Path, Callable[[tuple[_ExportCue, ...], Path], None]], ...]:
+    return (
+        (audio.output_path(".podlove.json"), _write_podlove),
+        (audio.output_path(".webvtt"), _write_webvtt),
+        (audio.output_path(".txt"), _write_plaintext),
+    )
+
+
 @contextmanager
 def _episode_lock(audio: Audio):
     # Outside episode data so replacement cannot change the lock identity.
@@ -664,20 +674,28 @@ def restore_last_success(url: str) -> dict[str, Path]:
                 metadata.get("backend"), str
             ):
                 raise RuntimeError("Invalid recovery cache metadata.")
-            load_dote(snapshot.output_path(".dote.json"))
-            for path in _transcript_files(snapshot, budget=budget):
+            budget.check()
+            cues = _load_export_cues(snapshot.output_path(".dote.json"))
+            snapshot_files = _transcript_files(snapshot, budget=budget)
+            for path in snapshot_files:
                 if path.parent == snapshot.episode_chunks_dir:
                     if path.name.endswith(".dote.json"):
                         load_dote(path)
                     elif not path.name.endswith(".whisper-cpp.json"):
                         load_whisper_transcript(path)
+            # Legacy backups can contain readable derivatives from a different
+            # generation. Publish all formats from the same admitted DOTe cues.
+            for path, write in _derived_exports(snapshot):
+                budget.check()
+                write(cues, path)
+            budget.check()
             if manifest["audio"] != _audio_generation(audio):
                 raise RuntimeError("Changed prepared audio during recovery.")
             # Keep recovery untouched, even if a later copy/fsync fails.
             _publish_transcripts(
                 audio,
                 snapshot,
-                new_files=_transcript_files(snapshot, budget=budget),
+                new_files=snapshot_files,
                 old_files=_transcript_files(audio, budget=budget),
                 budget=budget,
             )
@@ -923,6 +941,16 @@ def _chunk_directory_generation(audio: Audio) -> tuple[int, ...] | None:
         return None
 
 
+def _transcript_file_generation(
+    path: Path, budget: TranscriptWorkBudget
+) -> tuple[int, ...]:
+    budget.check()
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode):
+        raise OSError("Transcript backup requires a regular file.")
+    return file_generation(info)
+
+
 def _promote_transcripts(
     audio: Audio, staged: Audio, audio_generation: dict[str, str | None]
 ) -> None:
@@ -934,6 +962,10 @@ def _promote_transcripts(
     new_generation = _chunk_directory_generation(staged)
     old_files = _transcript_files(audio, budget=budget)
     new_files = _transcript_files(staged, budget=budget)
+    old_file_generations = {
+        path: _transcript_file_generation(path, budget)
+        for path in [*old_files, audio.cache_metadata_path]
+    }
     # Keep a durable recovery copy before touching any currently published file.
     recovery = audio.podcast_dir / ".previous-transcripts"
     with tempfile.TemporaryDirectory(
@@ -941,9 +973,11 @@ def _promote_transcripts(
     ) as directory:
         backup = Path(directory)
         _mark_stage(audio, backup)
-        for path in [*old_files, audio.cache_metadata_path]:
+        for path, generation in old_file_generations.items():
             target = backup / path.relative_to(audio.podcast_dir)
-            copy_file_atomic(path, target, budget=budget)
+            copy_file_atomic(
+                path, target, budget=budget, expected_generation=generation
+            )
         backup_audio = _generation_at(audio, backup)
         write_text_atomic(
             backup / "recovery.json",
@@ -957,12 +991,16 @@ def _promote_transcripts(
         )
         sync_directory(backup)
         budget.check()
-        # The lock covers cooperating writers. Detect external changes to the
-        # enumerated names during admission or backup before committing recovery.
+        # The lock covers cooperating writers. Detect external edits to both
+        # the published files and the inventory before committing recovery.
+        for path, generation in old_file_generations.items():
+            if _transcript_file_generation(path, budget) != generation:
+                raise RuntimeError("Transcript source changed during backup; retry.")
         if old_generation != _chunk_directory_generation(
             audio
         ) or new_generation != _chunk_directory_generation(staged):
             raise RuntimeError("Transcript inventory changed during backup; retry.")
+        budget.check()
         if recovery.exists():
             shutil.rmtree(recovery)
         os.replace(backup, recovery)
@@ -1028,13 +1066,8 @@ def _transcribe_prepared(
     dote_path = audio.output_path(".dote.json")
     if not dote_path.exists():
         combine_dote_chunks(dote_chunks, dote_path, chunk_durations)
-    exports = (
-        (audio.output_path(".podlove.json"), _write_podlove),
-        (audio.output_path(".webvtt"), _write_webvtt),
-        (audio.output_path(".txt"), _write_plaintext),
-    )
     cues = None
-    for path, write in exports:
+    for path, write in _derived_exports(audio):
         if path.exists():
             continue
         if cues is None:

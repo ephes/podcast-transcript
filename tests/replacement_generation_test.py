@@ -541,3 +541,47 @@ def test_missing_exports_use_one_dote_snapshot(episode, monkeypatch):
     assert not backend.calls
     assert json.loads(dote.read_text()) == updated
     assert {path: path.read_bytes() for path in expected} == expected
+
+
+@pytest.mark.parametrize("conversion_fails", [False, True])
+def test_restore_regenerates_derivatives_from_admitted_dote(
+    episode, monkeypatch, conversion_fails
+):
+    store, previous = episode
+    single_track.transcribe(store.url, RecordingBackend("new", "new transcript"))
+    recovery = store.podcast_dir / ".previous-transcripts"
+    snapshot = single_track._generation_at(store, recovery)
+    for suffix in (".podlove.json", ".webvtt", ".txt"):
+        snapshot.output_path(suffix).write_bytes(store.output_path(suffix).read_bytes())
+    manifest_path = recovery / "recovery.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["inventory_sha256"] = single_track._generation_digest(snapshot)
+    manifest_path.write_text(json.dumps(manifest))
+    evidence = {
+        path: path.read_bytes() for path in recovery.rglob("*") if path.is_file()
+    }
+    current = {path: (store.podcast_dir / path).read_bytes() for path in previous}
+
+    if conversion_fails:
+
+        def fail_conversion(cues, path):
+            raise RuntimeError("synthetic export conversion failure")
+
+        monkeypatch.setattr(single_track, "_write_plaintext", fail_conversion)
+        with pytest.raises(RuntimeError, match="synthetic export conversion failure"):
+            single_track.restore_last_success(store.url)
+        assert all(
+            (store.podcast_dir / path).read_bytes() == data
+            for path, data in current.items()
+        )
+    else:
+        single_track.restore_last_success(store.url)
+        assert all(
+            (store.podcast_dir / path).read_bytes() == data
+            for path, data in previous.items()
+        )
+
+    assert {
+        path: path.read_bytes() for path in recovery.rglob("*") if path.is_file()
+    } == evidence
+    assert not list(store.podcast_dir.glob(".replacement-*"))

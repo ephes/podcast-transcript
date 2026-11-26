@@ -3,6 +3,14 @@ Unreleased
 
 ### Fixes
 
+- Regenerate Podlove, WebVTT and plaintext from the admitted DOTe when restoring last-success transcripts.
+
+- Refuse a last-success backup if a published transcript file or its cache marker changes during copying.
+
+- Follow source redirects without reading intermediate response bodies.
+
+- Require a single valid Content-Length when supplied for source audio and reject mismatches before caching.
+
 - Reuse a cue's trailing line break as the plaintext separator, preserving paragraphs and final line breaks.
 
 - Format WebVTT timestamps consistently when cached DOTe times contain extra leading hour zeros.

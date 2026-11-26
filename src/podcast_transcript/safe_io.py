@@ -297,12 +297,20 @@ def regular_file_blocks(
 
 
 def copy_file_atomic(
-    source: Path, target: Path, *, budget: TranscriptWorkBudget | None = None
+    source: Path,
+    target: Path,
+    *,
+    budget: TranscriptWorkBudget | None = None,
+    expected_generation: tuple[int, ...] | None = None,
 ) -> None:
     """Copy exact bytes with bounded memory into the owned durable writer."""
     with atomic_output(target) as temporary:
         with _output_descriptor(temporary) as descriptor:
-            with closing(regular_file_blocks(source, budget=budget)) as blocks:
+            with closing(
+                regular_file_blocks(
+                    source, budget=budget, expected_generation=expected_generation
+                )
+            ) as blocks:
                 for block in blocks:
                     remaining = memoryview(block)
                     while remaining:

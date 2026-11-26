@@ -217,11 +217,12 @@ Source admission has separate budgets (environment or `.env`):
 
 Raise these limits for exceptionally large episodes or slow connections, for example
 `TRANSCRIPT_SOURCE_MAX_BYTES=4294967296 TRANSCRIPT_SOURCE_TOTAL_TIMEOUT=7200 transcribe <url>`.
-After redirects, source downloads require HTTP 200 without a `Content-Range` header and a
+Source downloads close intermediate redirects without reading their bodies and follow at most
+20 redirects. The final response must use HTTP 200 without a `Content-Range` header and have a
 nonempty body. Partial responses (including 206), no-content responses (204/205) and empty bodies
-are refused before source publication or subsequent audio preparation, even when their declared
-length is consistent. Rejected downloads close their response and remove partial files; an existing
-target is preserved. Previously cached sources are reused without a new HTTP request; if an older
+are refused before source publication or subsequent audio preparation. If supplied,
+`Content-Length` must be a single decimal value and match the streamed byte count. Rejected downloads
+close their response and remove partial files, preserving any existing target. Previously cached sources are reused without a new HTTP request; if an older
 run cached a fragment, move that episode directory aside and rerun to download it again.
 These limits also bound each local-source hash/copy pass, excluding backend uploads and model hashing.
 Local admission opens one nonblocking descriptor and accepts only regular files; FIFOs, devices and
@@ -457,9 +458,11 @@ If a readability check reaches any of these limits, the run reports the limit an
 before starting replacement inference. The published transcripts, cache marker and any
 existing recovery copy are preserved.
 Settings replacement scans the current and staged transcript inventories once for promotion
-and reuses those lists for publication. It checks both chunk directory identities and timestamps
-again before replacing recovery; detected name changes stop promotion and preserve the current
-transcripts and prior recovery copy. The episode lock coordinates running commands. Avoid editing
+and reuses those lists for publication. It records file identities, sizes and modification and
+change times for all published exports, chunk transcripts and `cache.json`. Each backup copy must
+read the recorded generation. Before replacing recovery, promotion rechecks those files and both
+chunk directory generations. A detected change stops promotion before it writes public transcripts
+or replaces the previous recovery copy. The episode lock coordinates running commands. Avoid editing
 the episode or private staging while promotion is active.
 Inventories are bounded before sorting; growing files count against the same byte limit.
 Time is checked around reads/writes and at EOF; filesystem operations must return for
@@ -481,13 +484,14 @@ Use the same source string and `TRANSCRIPT_DIR` as the interrupted run; the sour
 be available. Restore holds the episode lock, verifies the backup's exact inventory/byte digest,
 copies it to private owned staging, rechecks the copied inventory digest, validates the staged
 transcript schemas and checks the current source/chunk completion markers against
-the recorded audio generation. It restores all exports and chunk transcripts, removes stale
-transcript files, and publishes the original `cache.json` bytes last. It never swaps the recovery
-copy with a partial public generation. On failure that copy stays available for another restore.
-Snapshot/admission failures preserve current exports and metadata. Once publication starts,
-an interrupted data copy leaves the public cache marker absent. A sync error after the final
-metadata rename may leave a fully copied generation visible; the recovery copy still remains. Missing, edited or unmarked
-legacy backups are refused before publication. Such backups remain available for manual inspection
+the recorded audio generation. Restore uses the admitted DOTe transcript to regenerate Podlove,
+WebVTT and plaintext in staging with the same exporters as a new transcription. It publishes
+those exports alongside DOTe and the backed-up chunk transcripts, removes stale transcript files,
+and publishes the original `cache.json` bytes last. The recovery copy stays available for another
+restore. Snapshot admission and export conversion failures preserve current exports and metadata.
+Once publication starts, an interrupted data copy leaves the public cache marker absent. A sync
+error after the final metadata rename may leave a fully copied generation visible. Missing, edited
+or unmarked legacy backups are refused before publication. Such backups remain available for manual inspection
 and copying individual exports out. Version 2 recovery manifests also bind the resampled MP3,
 every admitted MP3 chunk (including the short-audio link's owned target), and any cached chunk WAVs
 to streamed SHA-256 byte evidence. The short-audio link is checked again during fingerprinting.
