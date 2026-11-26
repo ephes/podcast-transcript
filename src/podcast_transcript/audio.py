@@ -214,14 +214,21 @@ def download(url: str, target_path: Path) -> None:
                             "Source download requires a complete HTTP 200 response "
                             "without Content-Range."
                         )
-                    length = response.headers.get("Content-Length")
-                    if length is not None:
+                    lengths = response.headers.get_list("Content-Length")
+                    declared_bytes = None
+                    if lengths:
+                        if len(lengths) != 1 or not re.fullmatch(r"[0-9]+", lengths[0]):
+                            raise RuntimeError(
+                                "Source download requires one decimal Content-Length."
+                            )
+                        length = lengths[0].lstrip("0") or "0"
                         try:
                             declared_bytes = int(length)
                         except ValueError:
-                            declared_bytes = (
-                                0  # Enforce the actual byte count regardless.
-                            )
+                            # A decimal too large for int also exceeds the byte budget.
+                            raise RuntimeError(
+                                "Source download exceeded TRANSCRIPT_SOURCE_MAX_BYTES."
+                            ) from None
                         if declared_bytes > max_bytes:
                             raise RuntimeError(
                                 "Source download exceeded TRANSCRIPT_SOURCE_MAX_BYTES."
@@ -237,6 +244,10 @@ def download(url: str, target_path: Path) -> None:
                                 )
                             file.write(data)
                     check_deadline()
+                    if declared_bytes is not None and received != declared_bytes:
+                        raise RuntimeError(
+                            "Source download size does not match Content-Length."
+                        )
                     if received == 0:
                         raise RuntimeError("Source download requires nonempty audio.")
     except httpx.HTTPError as exc:

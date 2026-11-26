@@ -430,3 +430,44 @@ def test_refused_source_never_reaches_preparation(
     resample.assert_not_called()
     split.assert_not_called()
     assert list(audio.episode_chunks_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "lengths, refusal",
+    [
+        (["5"], "does not match Content-Length"),
+        (["2"], "does not match Content-Length"),
+        (["3", "3"], "one decimal Content-Length"),
+        (["3, 3"], "one decimal Content-Length"),
+        (["+3"], "one decimal Content-Length"),
+        ([""], "one decimal Content-Length"),
+        (["003"], None),
+        ([], None),
+    ],
+)
+def test_source_download_requires_length_agreement(mock_http, audio, lengths, refusal):
+    class Stream(httpx.SyncByteStream):
+        closed = False
+
+        def __iter__(self):
+            yield b"abc"
+
+        def close(self):
+            self.closed = True
+
+    stream = Stream()
+    routes, _ = mock_http
+    routes[audio.url] = httpx.Response(
+        200, headers=[("Content-Length", length) for length in lengths], stream=stream
+    )
+    audio.episode_chunks_dir.mkdir(parents=True)
+    audio.episode_path.write_bytes(b"previous")
+    if refusal:
+        with pytest.raises(RuntimeError, match=refusal):
+            download(audio.url, audio.episode_path)
+        assert audio.episode_path.read_bytes() == b"previous"
+    else:
+        download(audio.url, audio.episode_path)
+        assert audio.episode_path.read_bytes() == b"abc"
+    assert stream.closed
+    assert list(audio.episode_chunks_dir.iterdir()) == [audio.episode_path]

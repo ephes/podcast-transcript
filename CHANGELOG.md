@@ -3,6 +3,8 @@ Unreleased
 
 ### Fixes
 
+- Require a single valid Content-Length when supplied for source audio and reject mismatches before caching.
+
 - Reuse a cue's trailing line break as the plaintext separator, preserving paragraphs and final line breaks.
 
 - Format WebVTT timestamps consistently when cached DOTe times contain extra leading hour zeros.

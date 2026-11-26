@@ -219,8 +219,8 @@ Raise these limits for exceptionally large episodes or slow connections, for exa
 `TRANSCRIPT_SOURCE_MAX_BYTES=4294967296 TRANSCRIPT_SOURCE_TOTAL_TIMEOUT=7200 transcribe <url>`.
 After redirects, source downloads require HTTP 200 without a `Content-Range` header and a
 nonempty body. Partial responses (including 206), no-content responses (204/205) and empty bodies
-are refused before source publication or subsequent audio preparation, even when their declared
-length is consistent. Rejected downloads close their response and remove partial files; an existing
+are refused before source publication or subsequent audio preparation. If supplied,
+`Content-Length` must be a single decimal value and match the streamed byte count. Rejected downloads close their response and remove partial files; an existing
 target is preserved. Previously cached sources are reused without a new HTTP request; if an older
 run cached a fragment, move that episode directory aside and rerun to download it again.
 These limits also bound each local-source hash/copy pass, excluding backend uploads and model hashing.
