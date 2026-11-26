@@ -604,6 +604,8 @@ match. Repairing missing exports checks the combined DOTe against the 250,000-li
 limit before building export cues. If it exceeds the limit, existing files are preserved.
 Correct or remove the cached combined DOTe and rerun. A regenerated DOTe chunk refreshes
 every export from the new combined DOTe.
+WebVTT and plaintext exporters check each staged write for completeness. An incomplete write
+aborts that export and preserves any existing destination file.
 
 - **DOTe JSON (*.dote.json)**: A JSON format suitable for further processing or integration with other tools.
 - **Podlove JSON (*.podlove.json)**: A JSON format compatible with [Podlove](https://podlove.org/) transcripts.
@@ -751,6 +753,8 @@ episode cache aside and process the source as separate, shorter files.
 ### Output durability errors
 
 When writing fails before an atomic replacement, the destination retains its prior contents.
+Atomic text and binary writes reject incomplete writes before replacing the destination.
+Text written by the shared atomic writer, including JSON receipts, uses UTF-8.
 Immediately before rename, the staged name is checked against the generation that was synced.
 A detected change refuses publication and leaves the destination intact.
 On POSIX the synced descriptor stays open through rename. On Windows the descriptor is

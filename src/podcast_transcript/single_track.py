@@ -52,6 +52,7 @@ from .safe_io import (
     read_regular_bounded,
     regular_file_blocks,
     write_bytes_atomic,
+    write_complete,
     write_text_atomic,
 )
 
@@ -452,7 +453,7 @@ def convert_to_webvtt(dote_path: Path, vtt_path: Path) -> None:
 def _write_webvtt(cues: tuple[_ExportCue, ...], vtt_path: Path) -> None:
     with atomic_output(vtt_path) as temporary:
         with temporary.open("x", encoding="utf-8") as target:
-            target.write("WEBVTT\n")
+            write_complete(target.write, "WEBVTT\n")
             for cue in cues:
                 text = cue.text.replace("\0", "\ufffd")
                 text = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -465,7 +466,7 @@ def _write_webvtt(cues: tuple[_ExportCue, ...], vtt_path: Path) -> None:
                     max(cue.end_ms, cue.start_ms + 1), separator="."
                 )
                 text = escape(text, quote=False)
-                target.write(f"\n{start_time} --> {end_time}\n{text}\n")
+                write_complete(target.write, f"\n{start_time} --> {end_time}\n{text}\n")
 
 
 def convert_to_plaintext(dote_path: Path, plaintext_path: Path) -> None:
@@ -478,8 +479,8 @@ def _write_plaintext(cues: tuple[_ExportCue, ...], plaintext_path: Path) -> None
         with temporary.open("x", encoding="utf-8", newline="") as target:
             for index, cue in enumerate(cues):
                 if index and not cues[index - 1].text.endswith(("\r", "\n")):
-                    target.write(os.linesep)
-                target.write(cue.text)
+                    write_complete(target.write, os.linesep)
+                write_complete(target.write, cue.text)
 
 
 def _derived_exports(

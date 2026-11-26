@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import stat
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +14,7 @@ import pytest
 
 from podcast_transcript import audio, safe_io
 from podcast_transcript.config import settings
+from podcast_transcript.json_input import load_control_json
 
 
 @pytest.mark.parametrize("operation", ["hash", "copy"])
@@ -271,6 +273,48 @@ def test_atomic_writer_closes_descriptor_when_stream_construction_fails(
     assert raised.value is error
     assert target.read_bytes() == b"previous"
     assert not list(tmp_path.glob(".output-*"))
+
+
+@pytest.mark.parametrize(
+    ("writer", "data"),
+    [
+        (safe_io.write_text_atomic, '{"cue":"replacement"}'),
+        (safe_io.write_bytes_atomic, b'{"cue":"replacement"}'),
+    ],
+)
+def test_atomic_writer_refuses_short_write(tmp_path, monkeypatch, writer, data):
+    target = tmp_path / "transcript.json"
+    previous = b'{"cue":"previous"}'
+    target.write_bytes(previous)
+    real_fdopen = os.fdopen
+
+    @contextmanager
+    def short_fdopen(fd, mode, **kwargs):
+        with real_fdopen(fd, mode, **kwargs) as stream:
+            yield SimpleNamespace(write=lambda payload: stream.write(payload[:-1]))
+
+    monkeypatch.setattr(os, "fdopen", short_fdopen)
+    with pytest.raises(OSError, match="Incomplete output write"):
+        writer(target, data)
+
+    assert target.read_bytes() == previous
+    assert not list(tmp_path.glob(".output-*"))
+
+
+def test_atomic_text_writer_round_trips_utf8_receipt(tmp_path, monkeypatch):
+    target = tmp_path / "chunk_000.dote.receipt.json"
+    receipt = {"label": "café 日本語"}
+    text = json.dumps(receipt, ensure_ascii=False)
+    real_fdopen = os.fdopen
+
+    def fdopen_with_ascii_default(fd, mode, *, encoding="ascii", **kwargs):
+        return real_fdopen(fd, mode, encoding=encoding, **kwargs)
+
+    monkeypatch.setattr(os, "fdopen", fdopen_with_ascii_default)
+    safe_io.write_text_atomic(target, text)
+
+    assert target.read_bytes() == text.encode("utf-8")
+    assert load_control_json(target, expected_type=dict) == receipt
 
 
 @pytest.mark.parametrize("exhaust_budget", [True, False])
