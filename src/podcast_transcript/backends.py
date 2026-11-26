@@ -544,7 +544,7 @@ class WhisperCpp:
 
     @staticmethod
     def valid_wav(path: Path) -> bool:
-        """Validate cached PCM and verify that the path still names that file."""
+        """Validate WAV PCM and verify that the path still names that file."""
         try:
             with open(
                 path,
@@ -715,12 +715,14 @@ class WhisperCpp:
         write_text_atomic(output_path, json.dumps(result))
 
     def transcribe(self, audio_file: Path, transcript_path: Path) -> None:
-        # Convert the audio file to WAV format
-        wav_file = audio_file.with_suffix(".wav")
-        if not self.valid_wav(wav_file):
-            self.convert_to_wav(audio_file, wav_file)
         whisper_transcript_path = transcript_path.with_suffix(
             ".whisper-cpp"
         )  # .json is automatically appended
-        result = self.transcribe_wav(wav_file, whisper_transcript_path)
+        if audio_file.suffix.lower() == ".wav" and self.valid_wav(audio_file):
+            result = self.transcribe_wav(audio_file, whisper_transcript_path)
+        else:
+            with tempfile.TemporaryDirectory(prefix="whisper-cpp-") as directory:
+                wav_file = Path(directory) / "audio.wav"
+                self.convert_to_wav(audio_file, wav_file)
+                result = self.transcribe_wav(wav_file, whisper_transcript_path)
         write_text_atomic(transcript_path, json.dumps(result))

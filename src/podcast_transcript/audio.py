@@ -556,9 +556,9 @@ class Audio:
 
     def _remove_generated_chunks(self) -> None:
         """
-        Remove chunk files this tool generated (``chunk_NNN.mp3`` and the
-        ``chunk_NNN.wav`` derived from them). The downloaded and resampled
-        episode files are never touched, even if their names look similar.
+        Remove generated ``chunk_NNN.mp3`` files and legacy ``chunk_NNN.wav``
+        conversions. The downloaded and resampled episode files are never
+        touched, even if their names look similar.
         """
         keep = {self.episode_path, self.resampled_episode_path}
         for path in self.episode_chunks_dir.glob("chunk_*"):

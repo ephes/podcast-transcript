@@ -341,10 +341,7 @@ recursive deletion retain stages for inspection. Unmarked legacy stages, copied/
 changed identities and unrelated matching-prefix directories are left untouched. Inspect these and
 remove them manually only when no invocation is active; the prefix alone does not prove ownership.
 Ordinary transcript reuse also records each prepared MP3 chunk's SHA-256 in `cache.json`,
-binding raw chunks and all derived exports to their admitted MP3 bytes. whisper-cpp's cached
-`chunk_NNN.wav` conversions are not hashed. Reuse requires a valid WAV and a cache path that
-still resolves to the inspected generation after the frame read. A replacement detected during
-inspection triggers reconversion. Delete cached WAVs if you edit them directly. Each invocation hashes
+binding raw chunks and all derived exports to their admitted MP3 bytes. Each invocation hashes
 the prepared MP3 bytes before reuse, including the owned short-audio symlink target. Hashing streams
 1 MiB blocks with a shared 64 GiB and one-hour budget per pass. New inference is checked
 again before publishing its raw chunk and before exports. Same-name, same-size edits are
@@ -426,12 +423,6 @@ command waiting within its original deadline.
 Children that deliberately create a new session/group are outside this ownership contract.
 On Windows, timeout/error cleanup uses `taskkill /T`; successful pipe-detached descendants do not
 have the POSIX group-retirement guarantee.
-
-whisper-cpp reuses a WAV only after checking nonempty, complete mono 16kHz PCM16 samples through
-the standard WAV reader in bounded blocks. The size check uses the opened regular file, and
-changes to that file during validation cause rejection. Corrupt, truncated or differently shaped WAV caches
-are rebuilt from the source MP3. New conversions are validated before publication; failed repairs
-preserve the source, old WAV and previous final transcript. A valid WAV is reused unchanged.
 
 Native ffprobe metadata capture is limited to 64 KiB each for stdout and stderr during execution.
 Overflow terminates and reaps the probe's process tree; the existing 60-second timeout also applies.
@@ -711,6 +702,12 @@ new worker. The worker stops writing before its JSON result would exceed 64 MiB,
 removes the partial result and preserves any previous transcript. The CLI also enforces the
 64 MiB regular-file bound when reading and validates the result before publication. Each chunk
 pays the worker start-up and model load time.
+
+Whisper-cpp passes a supplied 16 kHz mono PCM16 WAV directly to whisper-cli after checking
+that the samples are nonempty and complete and that the path still names the inspected file.
+Other inputs are converted to a validated WAV in a private temporary directory for that call.
+The temporary WAV is removed after inference or failure. The source and any same-stem WAV
+beside it are preserved. Retrying a failed transcription repeats the conversion.
 
 The JSON that whisper-cli writes is admitted before parsing: it must be a regular file (no FIFO,
 symlink or directory) of at most 64 MiB, counted while reading even if it grows. Oversized,

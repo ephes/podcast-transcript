@@ -23,40 +23,23 @@ def wav_bytes(*, channels=1, rate=16000, width=2, frames=80):
     return stream.getvalue()
 
 
-def test_cached_wav_replaced_during_frame_read_is_rebuilt(monkeypatch, tmp_path):
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    audio = cache / "chunk.mp3"
-    audio.write_bytes(b"original-audio")
-    wav = cache / "chunk.wav"
-    original = wav_bytes()
-    rebuilt = wav_bytes(frames=40)
-    wav.write_bytes(original)
+def test_wav_replaced_during_frame_read_is_refused(monkeypatch, tmp_path):
+    directory = tmp_path / "audio"
+    directory.mkdir()
+    wav = directory / "chunk.wav"
+    wav.write_bytes(wav_bytes())
     readframes = wave.Wave_read.readframes
 
     def replace_path_after_read(source, count):
         frames = readframes(source, count)
-        monkeypatch.setattr(wave.Wave_read, "readframes", readframes)
         # Replace the containing directory to keep the opened inode unchanged.
-        cache.rename(tmp_path / "old-cache")
-        cache.mkdir()
-        audio.write_bytes(b"original-audio")
-        wav.write_bytes(b"invalid replacement")
+        directory.rename(tmp_path / "old-audio")
+        directory.mkdir()
+        wav.write_bytes(wav_bytes(frames=40))
         return frames
 
-    def convert(cmd, **kwargs):
-        assert cmd[0] == "ffmpeg"
-        Path(cmd[-1]).write_bytes(rebuilt)
-
-    def infer(self, source, target):
-        assert source.read_bytes() == rebuilt
-        target.with_suffix(".json").write_text(json.dumps({"transcription": []}))
-
     monkeypatch.setattr(wave.Wave_read, "readframes", replace_path_after_read)
-    monkeypatch.setattr(backends, "run_checked", convert)
-    monkeypatch.setattr(backends.WhisperCpp, "run_whisper_cli", infer)
-    backends.WhisperCpp().transcribe(audio, cache / "transcript.json")
-    assert (tmp_path / "old-cache" / wav.name).read_bytes() == original
+    assert not backends.WhisperCpp.valid_wav(wav)
 
 
 def test_wav_changed_in_place_during_frame_read_is_refused(monkeypatch, tmp_path):
@@ -74,61 +57,62 @@ def test_wav_changed_in_place_during_frame_read_is_refused(monkeypatch, tmp_path
     assert not backends.WhisperCpp.valid_wav(wav)
 
 
-@pytest.mark.parametrize(
-    "content",
-    [
-        b"",
-        b"not wav",
-        wav_bytes(channels=2),
-        wav_bytes(rate=44100),
-        wav_bytes(width=1),
-        wav_bytes()[:-2],
-    ],
-)
-def test_bad_cached_wav_is_rebuilt_before_inference(monkeypatch, tmp_path, content):
-    source = tmp_path / "chunk.mp3"
-    source.write_bytes(b"original-audio")
-    cached = source.with_suffix(".wav")
-    cached.write_bytes(content)
-    rebuilt = []
+@pytest.mark.parametrize("normalize_wav", [False, True])
+def test_whisper_cpp_stages_conversion_from_its_own_source(
+    monkeypatch, tmp_path, normalize_wav
+):
+    source = tmp_path / ("chunk.wav" if normalize_wav else "chunk.mp3")
+    original = wav_bytes(rate=44100) if normalize_wav else b"original-audio"
+    source.write_bytes(original)
+    sibling = tmp_path / "chunk.wav"
+    sibling_bytes = original if normalize_wav else wav_bytes()
+    if not normalize_wav:
+        sibling.write_bytes(sibling_bytes)
+    converted = wav_bytes(frames=40)
+    inputs = []
 
-    def convert(source, target):
-        rebuilt.append(source)
-        target.write_bytes(wav_bytes())
+    def run(cmd, **kwargs):
+        if cmd[0] == "ffmpeg":
+            assert Path(cmd[cmd.index("-i") + 1]) == source
+            assert source.read_bytes() == original
+            Path(cmd[-1]).write_bytes(converted)
+        else:
+            wav = Path(cmd[cmd.index("-f") + 1])
+            assert wav.read_bytes() == converted
+            inputs.append(wav)
+            base = cmd[cmd.index("-of") + 1]
+            Path(f"{base}.json").write_text(json.dumps({"transcription": []}))
 
-    monkeypatch.setattr(backends.WhisperCpp, "convert_to_wav", staticmethod(convert))
-    consumed = []
-
-    def infer(self, source, target):
-        consumed.append(source.read_bytes())
-        Path(str(target) + ".json").write_text(json.dumps({"transcription": []}))
-
-    monkeypatch.setattr(backends.WhisperCpp, "run_whisper_cli", infer)
-    backends.WhisperCpp().transcribe(source, source.with_suffix(".json"))
-    assert rebuilt == [source]
-    assert consumed == [wav_bytes()]
-    assert source.read_bytes() == b"original-audio"
+    monkeypatch.setattr(backends, "run_checked", run)
+    target = tmp_path / "transcript.json"
+    backend = backends.WhisperCpp()
+    for _ in range(2):
+        backend.transcribe(source, target)
+        assert source.read_bytes() == original
+        assert sibling.read_bytes() == sibling_bytes
+    assert len(inputs) == 2
+    assert len({wav.parent for wav in inputs}) == 2
+    assert all(wav.parent != tmp_path and not wav.parent.exists() for wav in inputs)
 
 
-def test_valid_cached_wav_is_reused(monkeypatch, tmp_path):
-    source = tmp_path / "chunk.mp3"
-    source.write_bytes(b"original-audio")
-    source.with_suffix(".wav").write_bytes(wav_bytes())
-    monkeypatch.setattr(
-        backends.WhisperCpp,
-        "convert_to_wav",
-        staticmethod(lambda *a: pytest.fail("valid WAV rebuilt")),
-    )
+def test_valid_input_wav_is_used_directly(monkeypatch, tmp_path):
+    source = tmp_path / "chunk.WAV"
+    source.write_bytes(wav_bytes())
 
-    def infer(self, source, target):
-        Path(str(target) + ".json").write_text(json.dumps({"transcription": []}))
+    def run(cmd, **kwargs):
+        assert cmd[0] == "whisper-cli"
+        assert Path(cmd[cmd.index("-f") + 1]) == source
+        base = cmd[cmd.index("-of") + 1]
+        Path(f"{base}.json").write_text(json.dumps({"transcription": []}))
 
-    monkeypatch.setattr(backends.WhisperCpp, "run_whisper_cli", infer)
+    monkeypatch.setattr(backends, "run_checked", run)
     backends.WhisperCpp().transcribe(source, source.with_suffix(".json"))
 
 
 @pytest.mark.parametrize("outcome", ["conversion-error", "bad-conversion"])
-def test_failed_wav_repair_preserves_final_and_source(monkeypatch, tmp_path, outcome):
+def test_failed_wav_conversion_preserves_final_and_source(
+    monkeypatch, tmp_path, outcome
+):
     source = tmp_path / "chunk.mp3"
     source.write_bytes(b"original-audio")
     cached = source.with_suffix(".wav")
